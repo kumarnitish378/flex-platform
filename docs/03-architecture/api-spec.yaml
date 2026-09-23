@@ -1,0 +1,1158 @@
+openapi: 3.1.0
+info:
+  title: Smart Cab API
+  version: 0.1.0
+  description: |
+    Contract between the Flutter app, simulator and FastAPI backend.
+    RULE: change this file first, regenerate the Dart client (`make api-client`), then implement.
+    Phase 1 endpoints are complete. Phase 2+ endpoints are marked `x-phase` and may be refined before implementation.
+    All times are ISO 8601 UTC. All requests except /auth/* need `Authorization: Bearer <access token>` and `X-Active-Role`.
+    Errors use the `Error` schema. Pagination: `limit` (max 100) + `cursor`.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: local dev
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: admin
+  - name: employee
+  - name: driver
+  - name: dispatch
+  - name: tracking
+  - name: alerts
+  - name: reports
+  - name: simctl
+paths:
+  /auth/otp/request:
+    post:
+      tags: [auth]
+      security: []
+      summary: Request OTP for a registered phone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OtpRequest'}
+      responses:
+        '202': {description: OTP sent}
+        '404': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+  /auth/otp/verify:
+    post:
+      tags: [auth]
+      security: []
+      summary: Verify OTP and obtain tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OtpVerify'}
+      responses:
+        '200':
+          description: Tokens
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenPair'}
+        '401': {$ref: '#/components/responses/Error'}
+  /auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        '200':
+          description: New token pair (refresh token rotated)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenPair'}
+        '401': {$ref: '#/components/responses/Error'}
+  /auth/logout:
+    post:
+      tags: [auth]
+      responses:
+        '204': {description: Refresh token revoked}
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current user, roles and permissions (drives app navigation)
+      responses:
+        '200':
+          description: Me
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Me'}
+  /devices:
+    post:
+      tags: [auth]
+      summary: Register or update device push token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeviceRegister'}
+      responses:
+        '204': {description: Registered}
+
+  /admin/vehicles:
+    get:
+      tags: [admin]
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/VehicleStatus'}}
+      responses:
+        '200':
+          description: Vehicles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Vehicle'}}
+                  next_cursor: {type: [string, 'null']}
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VehicleInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Vehicle'}
+        '409': {$ref: '#/components/responses/Error'}
+  /admin/vehicles/{vehicle_id}:
+    parameters: [{$ref: '#/components/parameters/VehicleId'}]
+    patch:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VehicleInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Vehicle'}
+  /admin/drivers:
+    get:
+      tags: [admin]
+      parameters: [{$ref: '#/components/parameters/Limit'}, {$ref: '#/components/parameters/Cursor'}]
+      responses:
+        '200':
+          description: Drivers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Driver'}}
+                  next_cursor: {type: [string, 'null']}
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DriverInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Driver'}
+  /admin/drivers/{driver_id}:
+    parameters: [{name: driver_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    patch:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DriverInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Driver'}
+  /admin/clients:
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: Clients
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Client'}}
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClientInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Client'}
+  /admin/clients/{client_id}/offices:
+    parameters: [{$ref: '#/components/parameters/ClientId'}]
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: Offices
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Office'}}
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OfficeInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Office'}
+  /admin/clients/{client_id}/employees:
+    parameters: [{$ref: '#/components/parameters/ClientId'}]
+    get:
+      tags: [admin]
+      description: operator_admin, or client_admin of this client
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {name: q, in: query, schema: {type: string}, description: search name or phone}
+      responses:
+        '200':
+          description: Employees
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Employee'}}
+                  next_cursor: {type: [string, 'null']}
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmployeeInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Employee'}
+  /admin/clients/{client_id}/employees/import:
+    parameters: [{$ref: '#/components/parameters/ClientId'}]
+    post:
+      tags: [admin]
+      summary: CSV import (name,phone,office_name,home_lat,home_lng,landmark,priority,is_vip)
+      parameters:
+        - {name: dry_run, in: query, schema: {type: boolean, default: true}}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        '200':
+          description: Validation report (and created counts if not dry run)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ImportReport'}
+  /admin/employees/{employee_id}:
+    parameters: [{name: employee_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    patch:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmployeeInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Employee'}
+  /admin/users/invite:
+    post:
+      tags: [admin]
+      summary: Invite supervisor or client_admin by phone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, name, role]
+              properties:
+                phone: {$ref: '#/components/schemas/Phone'}
+                name: {type: string}
+                role: {type: string, enum: [supervisor, client_admin, operator_admin]}
+                client_id: {type: [string, 'null'], format: uuid}
+      responses:
+        '201': {description: Invited}
+  /admin/config:
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: Operator config key/values
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+    patch:
+      tags: [admin]
+      description: Validates ranges from allocation-rules.md; audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '200': {description: Updated}
+        '422': {$ref: '#/components/responses/Error'}
+
+  /ride-requests:
+    post:
+      tags: [employee]
+      summary: Create ride request (employee for self; supervisor/client_admin on behalf)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RideRequestInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RideRequest'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+  /ride-requests/mine:
+    get:
+      tags: [employee]
+      parameters:
+        - {name: active, in: query, schema: {type: boolean}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200':
+          description: Own requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/RideRequest'}}
+                  next_cursor: {type: [string, 'null']}
+  /ride-requests/{request_id}:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    get:
+      tags: [employee]
+      responses:
+        '200':
+          description: Request with assignment details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RideRequest'}
+  /ride-requests/{request_id}/cancel:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    post:
+      tags: [employee]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, maxLength: 200}
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RideRequest'}
+        '409': {$ref: '#/components/responses/Error'}
+  /ride-requests/{request_id}/rating:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    post:
+      tags: [employee]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: {type: integer, minimum: 1, maximum: 5}
+                comment: {type: string, maxLength: 500}
+      responses:
+        '201': {description: Saved}
+        '409': {$ref: '#/components/responses/Error'}
+  /sos:
+    post:
+      tags: [employee, driver]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                trip_id: {type: [string, 'null'], format: uuid}
+                lat: {type: number}
+                lng: {type: number}
+      responses:
+        '201': {description: Alert raised}
+
+  /driver/duty:
+    post:
+      tags: [driver]
+      summary: Go on or off duty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [on_duty]
+              properties:
+                on_duty: {type: boolean}
+                vehicle_id: {type: [string, 'null'], format: uuid, description: defaults to driver's default vehicle}
+      responses:
+        '200':
+          description: Duty state with MQTT credentials when on duty
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DutyState'}
+        '409': {$ref: '#/components/responses/Error'}
+  /driver/trips:
+    get:
+      tags: [driver]
+      parameters:
+        - {name: scope, in: query, schema: {type: string, enum: [active, upcoming, history], default: active}}
+      responses:
+        '200':
+          description: Own trips
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+  /driver/trips/{trip_id}/start:
+    parameters: [{$ref: '#/components/parameters/TripId'}]
+    post:
+      tags: [driver]
+      requestBody: {$ref: '#/components/requestBodies/DriverEvent'}
+      responses:
+        '200': {$ref: '#/components/responses/TripResponse'}
+        '409': {$ref: '#/components/responses/Error'}
+  /driver/stops/{stop_id}/{action}:
+    parameters:
+      - {name: stop_id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: action, in: path, required: true, schema: {type: string, enum: [arrived, done, no_show]}}
+    post:
+      tags: [driver]
+      description: Idempotent via client_event_id. Offline events carry the original occurred_at.
+      requestBody: {$ref: '#/components/requestBodies/DriverEvent'}
+      responses:
+        '200': {$ref: '#/components/responses/TripResponse'}
+        '409': {$ref: '#/components/responses/Error'}
+  /driver/trips/{trip_id}/complete:
+    parameters: [{$ref: '#/components/parameters/TripId'}]
+    post:
+      tags: [driver]
+      requestBody: {$ref: '#/components/requestBodies/DriverEvent'}
+      responses:
+        '200': {$ref: '#/components/responses/TripResponse'}
+  /driver/issues:
+    post:
+      tags: [driver]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: {type: string, enum: [breakdown, accident, traffic_block, rider_issue, other]}
+                note: {type: string, maxLength: 300}
+                trip_id: {type: [string, 'null'], format: uuid}
+                lat: {type: number}
+                lng: {type: number}
+      responses:
+        '201': {description: Alert raised}
+  /driver/location:
+    post:
+      tags: [driver]
+      summary: HTTPS fallback for GPS when MQTT is unavailable (batch)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 500
+              items: {$ref: '#/components/schemas/LocationPing'}
+      responses:
+        '202': {description: Accepted}
+
+  /dispatch/requests:
+    get:
+      tags: [dispatch]
+      summary: Pending and active requests for the operator
+      parameters:
+        - {name: status, in: query, schema: {type: array, items: {$ref: '#/components/schemas/RequestStatus'}}, style: form, explode: true}
+        - {name: client_id, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Requests
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/RideRequest'}}
+  /dispatch/requests/{request_id}/candidates:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    get:
+      tags: [dispatch]
+      summary: Candidate vehicles with ETA and load (Phase 1); with cost and reasons (Phase 2)
+      responses:
+        '200':
+          description: Candidates, best first
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+  /dispatch/assign:
+    post:
+      tags: [dispatch]
+      summary: Manual assign a request to a vehicle (new trip) or existing trip
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_id, vehicle_id]
+              properties:
+                request_id: {type: string, format: uuid}
+                vehicle_id: {type: string, format: uuid}
+                trip_id: {type: [string, 'null'], format: uuid, description: add to this existing trip}
+                reason_code: {$ref: '#/components/schemas/ReasonCode'}
+                note: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/TripResponse'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+  /dispatch/vehicles:
+    get:
+      tags: [dispatch]
+      summary: Snapshot of vehicles with live position and state
+      responses:
+        '200':
+          description: Vehicles
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/VehicleLive'}}
+  /dispatch/trips:
+    get:
+      tags: [dispatch]
+      parameters:
+        - {name: status, in: query, schema: {type: array, items: {$ref: '#/components/schemas/TripStatus'}}, style: form, explode: true}
+      responses:
+        '200':
+          description: Trips
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+  /dispatch/automation:
+    get:
+      tags: [dispatch]
+      responses:
+        '200':
+          description: Pause state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  automation_paused: {type: boolean}
+    put:
+      tags: [dispatch]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [automation_paused, reason_code]
+              properties:
+                automation_paused: {type: boolean}
+                reason_code: {$ref: '#/components/schemas/ReasonCode'}
+                note: {type: string}
+      responses:
+        '200': {description: Updated}
+  /dispatch/overrides:
+    x-phase: 2
+    post:
+      tags: [dispatch]
+      summary: Apply an override action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OverrideInput'}
+      responses:
+        '200':
+          description: Result with impact summary
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OverrideResult'}
+  /dispatch/overrides/preview:
+    x-phase: 2
+    post:
+      tags: [dispatch]
+      summary: Impact preview without applying
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OverrideInput'}
+      responses:
+        '200':
+          description: Impact
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Impact'}
+  /dispatch/suggestions/{suggestion_id}/decision:
+    x-phase: 2
+    parameters: [{name: suggestion_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      tags: [dispatch]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: {type: string, enum: [approve, choose_other, reject]}
+                vehicle_id: {type: [string, 'null'], format: uuid}
+                reason_code: {$ref: '#/components/schemas/ReasonCode'}
+      responses:
+        '200': {$ref: '#/components/responses/TripResponse'}
+  /dispatch/modes:
+    x-phase: 2
+    get:
+      tags: [dispatch]
+      responses:
+        '200':
+          description: Mode settings
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/ModeSetting'}}
+    post:
+      tags: [dispatch]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModeSetting'}
+      responses:
+        '201': {description: Created}
+
+  /alerts:
+    get:
+      tags: [alerts]
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [open, acknowledged, resolved]}}
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+  /alerts/{alert_id}/{action}:
+    parameters:
+      - {name: alert_id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: action, in: path, required: true, schema: {type: string, enum: [acknowledge, resolve]}}
+    post:
+      tags: [alerts]
+      responses:
+        '200': {description: Updated}
+
+  /reports/trips:
+    get:
+      tags: [reports]
+      parameters:
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+        - {name: client_id, in: query, schema: {type: string, format: uuid}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200':
+          description: Trip report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TripReport'}
+            text/csv:
+              schema: {type: string}
+
+  /simctl/clock:
+    x-env: sim-only
+    get:
+      tags: [simctl]
+      responses:
+        '200':
+          description: Current sim time
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SimClock'}
+    put:
+      tags: [simctl]
+      summary: Set or advance sim time (APP_ENV=sim only; 404 otherwise)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SimClock'}
+      responses:
+        '200': {description: Updated}
+  /simctl/reset:
+    x-env: sim-only
+    post:
+      tags: [simctl]
+      summary: Truncate operator data and load scenario seed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scenario_yaml: {type: string}
+      responses:
+        '200':
+          description: Seeded entity ids and test user tokens
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+    Cursor: {name: cursor, in: query, schema: {type: string}}
+    VehicleId: {name: vehicle_id, in: path, required: true, schema: {type: string, format: uuid}}
+    ClientId: {name: client_id, in: path, required: true, schema: {type: string, format: uuid}}
+    RequestId: {name: request_id, in: path, required: true, schema: {type: string, format: uuid}}
+    TripId: {name: trip_id, in: path, required: true, schema: {type: string, format: uuid}}
+  requestBodies:
+    DriverEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [client_event_id, occurred_at]
+            properties:
+              client_event_id: {type: string, format: uuid, description: idempotency key generated on device}
+              occurred_at: {type: string, format: date-time}
+              lat: {type: number}
+              lng: {type: number}
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    TripResponse:
+      description: Trip after change
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Trip'}
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, examples: [not_found, forbidden, invalid_transition, conflict, validation_error, rate_limited]}
+        message: {type: string}
+        details: {type: object, additionalProperties: true}
+    Phone: {type: string, pattern: '^\+[1-9][0-9]{7,14}$', examples: ['+919812345678']}
+    LatLng:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: {type: number, minimum: -90, maximum: 90}
+        lng: {type: number, minimum: -180, maximum: 180}
+    OtpRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: {$ref: '#/components/schemas/Phone'}
+    OtpVerify:
+      type: object
+      required: [phone, code]
+      properties:
+        phone: {$ref: '#/components/schemas/Phone'}
+        code: {type: string, pattern: '^[0-9]{6}$'}
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: {type: string}
+        refresh_token: {type: string}
+        expires_in: {type: integer, description: seconds}
+    Role: {type: string, enum: [platform_admin, operator_admin, supervisor, driver, client_admin, employee]}
+    Me:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        name: {type: string}
+        phone: {$ref: '#/components/schemas/Phone'}
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              role: {$ref: '#/components/schemas/Role'}
+              operator_id: {type: [string, 'null'], format: uuid}
+              client_id: {type: [string, 'null'], format: uuid}
+              employee_id: {type: [string, 'null'], format: uuid}
+              driver_id: {type: [string, 'null'], format: uuid}
+              permissions: {type: array, items: {type: string}}
+    DeviceRegister:
+      type: object
+      required: [platform, push_token, app_version]
+      properties:
+        platform: {type: string, enum: [android, ios, web]}
+        push_token: {type: string}
+        app_version: {type: string}
+    VehicleType: {type: string, enum: [sedan_4, suv_6, vip]}
+    VehicleStatus: {type: string, enum: [off_duty, available, on_trip, out_of_service]}
+    VehicleInput:
+      type: object
+      required: [registration_no, vehicle_type, seat_capacity]
+      properties:
+        registration_no: {type: string}
+        model: {type: string}
+        vehicle_type: {$ref: '#/components/schemas/VehicleType'}
+        seat_capacity: {type: integer, minimum: 1, maximum: 12}
+        tracker_type: {type: string, enum: [app, esp32], default: app}
+    Vehicle:
+      allOf:
+        - $ref: '#/components/schemas/VehicleInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            status: {$ref: '#/components/schemas/VehicleStatus'}
+            current_driver_id: {type: [string, 'null'], format: uuid}
+    VehicleLive:
+      allOf:
+        - $ref: '#/components/schemas/Vehicle'
+        - type: object
+          properties:
+            position: {oneOf: [{$ref: '#/components/schemas/LatLng'}, {type: 'null'}]}
+            position_at: {type: [string, 'null'], format: date-time}
+            stale: {type: boolean}
+            active_trip_id: {type: [string, 'null'], format: uuid}
+            seats_free: {type: integer}
+    DriverInput:
+      type: object
+      required: [name, phone]
+      properties:
+        name: {type: string}
+        phone: {$ref: '#/components/schemas/Phone'}
+        licence_last4: {type: string, pattern: '^[A-Za-z0-9]{4}$'}
+        default_vehicle_id: {type: [string, 'null'], format: uuid}
+        active: {type: boolean, default: true}
+    Driver:
+      allOf:
+        - $ref: '#/components/schemas/DriverInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+    ClientInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        contact_name: {type: string}
+        contact_phone: {$ref: '#/components/schemas/Phone'}
+    Client:
+      allOf:
+        - $ref: '#/components/schemas/ClientInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+    OfficeInput:
+      type: object
+      required: [name, location]
+      properties:
+        name: {type: string}
+        location: {$ref: '#/components/schemas/LatLng'}
+        address_text: {type: string}
+    Office:
+      allOf:
+        - $ref: '#/components/schemas/OfficeInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            client_id: {type: string, format: uuid}
+    EmployeeInput:
+      type: object
+      required: [name, phone, office_id, home_location]
+      properties:
+        name: {type: string}
+        phone: {$ref: '#/components/schemas/Phone'}
+        office_id: {type: string, format: uuid}
+        home_location: {$ref: '#/components/schemas/LatLng'}
+        home_landmark: {type: string, maxLength: 200}
+        priority: {type: integer, minimum: 1, maximum: 10, default: 5}
+        is_vip: {type: boolean, default: false}
+        night_escort_required: {type: boolean, default: false}
+        active: {type: boolean, default: true}
+    Employee:
+      allOf:
+        - $ref: '#/components/schemas/EmployeeInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            client_id: {type: string, format: uuid}
+            zone_id: {type: [string, 'null'], format: uuid}
+    ImportReport:
+      type: object
+      properties:
+        total_rows: {type: integer}
+        valid_rows: {type: integer}
+        created: {type: integer}
+        updated: {type: integer}
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row: {type: integer}
+              field: {type: string}
+              message: {type: string}
+    Direction: {type: string, enum: [to_office, from_office]}
+    Urgency: {type: string, enum: [high, medium, low]}
+    RequestStatus: {type: string, enum: [requested, queued, suggested, assigned, picked_up, dropped, no_show, cancelled, expired]}
+    TripStatus: {type: string, enum: [planned, dispatched, in_progress, completed, cancelled, aborted]}
+    StopStatus: {type: string, enum: [pending, en_route, arrived, done, skipped]}
+    ReasonCode: {type: string, enum: [driver_issue, local_knowledge, client_request, traffic, vehicle_issue, safety, other]}
+    RideRequestInput:
+      type: object
+      required: [direction, requested_time]
+      properties:
+        employee_id: {type: [string, 'null'], format: uuid, description: required when created on behalf; ignored for employee role}
+        direction: {$ref: '#/components/schemas/Direction'}
+        requested_time: {type: string, format: date-time, description: pickup time for to_office; ready-to-leave time for from_office}
+        location: {oneOf: [{$ref: '#/components/schemas/LatLng'}, {type: 'null'}], description: defaults to employee home}
+        landmark: {type: string, maxLength: 200}
+        urgency: {$ref: '#/components/schemas/Urgency'}
+        no_sharing: {type: boolean, default: false}
+    RideRequest:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        employee_id: {type: string, format: uuid}
+        employee_name: {type: string}
+        client_id: {type: string, format: uuid}
+        direction: {$ref: '#/components/schemas/Direction'}
+        office_id: {type: string, format: uuid}
+        location: {$ref: '#/components/schemas/LatLng'}
+        landmark: {type: [string, 'null']}
+        requested_time: {type: string, format: date-time}
+        urgency: {$ref: '#/components/schemas/Urgency'}
+        no_sharing: {type: boolean}
+        status: {$ref: '#/components/schemas/RequestStatus'}
+        waiting_since: {type: string, format: date-time}
+        trip_id: {type: [string, 'null'], format: uuid}
+        assignment:
+          oneOf:
+            - type: 'null'
+            - type: object
+              properties:
+                vehicle_registration_no: {type: string}
+                vehicle_model: {type: string}
+                driver_name: {type: string}
+                driver_phone: {$ref: '#/components/schemas/Phone'}
+                pickup_eta: {type: string, format: date-time}
+        locked: {type: boolean}
+        cancel_reason: {type: [string, 'null']}
+    TripStop:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        sequence: {type: integer}
+        stop_type: {type: string, enum: [pickup, drop]}
+        request_id: {type: string, format: uuid}
+        rider_first_name: {type: string}
+        rider_phone: {type: [string, 'null'], description: only for assigned driver during active trip}
+        location: {$ref: '#/components/schemas/LatLng'}
+        landmark: {type: [string, 'null']}
+        status: {$ref: '#/components/schemas/StopStatus'}
+        planned_eta: {type: string, format: date-time}
+        latest_eta: {type: string, format: date-time}
+        arrived_at: {type: [string, 'null'], format: date-time}
+        done_at: {type: [string, 'null'], format: date-time}
+    Trip:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        vehicle_id: {type: string, format: uuid}
+        driver_id: {type: string, format: uuid}
+        direction: {$ref: '#/components/schemas/Direction'}
+        status: {$ref: '#/components/schemas/TripStatus'}
+        pooling_blocked: {type: boolean}
+        mode_used: {type: string, enum: [manual, semi_auto, full_auto, failsafe]}
+        stops: {type: array, items: {$ref: '#/components/schemas/TripStop'}}
+    Candidate:
+      type: object
+      properties:
+        vehicle_id: {type: string, format: uuid}
+        registration_no: {type: string}
+        trip_id: {type: [string, 'null'], format: uuid, description: existing trip if en-route reuse}
+        eta_to_pickup_seconds: {type: integer}
+        seats_free_after: {type: integer}
+        added_minutes_existing:
+          type: array
+          items:
+            type: object
+            properties:
+              request_id: {type: string, format: uuid}
+              minutes: {type: number}
+        empty_km_added: {type: number}
+        new_trip: {type: boolean}
+        cost: {type: [number, 'null'], description: Phase 2+}
+        reasons: {type: array, items: {type: string}, description: Phase 2+ human-readable}
+        violations: {type: array, items: {type: string}, description: hard rules violated (shown for manual only, blocks auto)}
+    DutyState:
+      type: object
+      properties:
+        on_duty: {type: boolean}
+        vehicle_id: {type: [string, 'null'], format: uuid}
+        mqtt:
+          oneOf:
+            - type: 'null'
+            - type: object
+              properties:
+                host: {type: string}
+                port: {type: integer}
+                username: {type: string}
+                password: {type: string}
+                topic_prefix: {type: string}
+    LocationPing:
+      type: object
+      required: [ts, lat, lng]
+      properties:
+        ts: {type: string, format: date-time}
+        lat: {type: number}
+        lng: {type: number}
+        speed_mps: {type: number}
+        heading_deg: {type: number}
+        accuracy_m: {type: number}
+        battery_pct: {type: integer}
+    OverrideInput:
+      type: object
+      required: [action, reason_code]
+      properties:
+        action: {type: string, enum: [reassign, lock, unlock, force_priority, block_pooling, hold, cancel, vehicle_out_of_service]}
+        request_id: {type: [string, 'null'], format: uuid}
+        trip_id: {type: [string, 'null'], format: uuid}
+        vehicle_id: {type: [string, 'null'], format: uuid}
+        target_vehicle_id: {type: [string, 'null'], format: uuid}
+        hold_until: {type: [string, 'null'], format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        reason_code: {$ref: '#/components/schemas/ReasonCode'}
+        note: {type: string}
+    Impact:
+      type: object
+      properties:
+        affected_requests:
+          type: array
+          items:
+            type: object
+            properties:
+              request_id: {type: string, format: uuid}
+              eta_change_minutes: {type: number}
+        zones_without_available_vehicle: {type: array, items: {type: string}}
+        hard_rule_violations: {type: array, items: {type: string}}
+    OverrideResult:
+      type: object
+      properties:
+        override_id: {type: string, format: uuid}
+        impact: {$ref: '#/components/schemas/Impact'}
+    ModeSetting:
+      type: object
+      required: [mode]
+      properties:
+        id: {type: string, format: uuid}
+        client_id: {type: [string, 'null'], format: uuid}
+        zone_id: {type: [string, 'null'], format: uuid}
+        direction: {oneOf: [{$ref: '#/components/schemas/Direction'}, {type: 'null'}]}
+        weekdays: {type: [integer, 'null'], description: bitmask Mon=1..Sun=64}
+        start_time: {type: [string, 'null'], pattern: '^[0-2][0-9]:[0-5][0-9]$'}
+        end_time: {type: [string, 'null'], pattern: '^[0-2][0-9]:[0-5][0-9]$'}
+        mode: {type: string, enum: [manual, semi_auto, full_auto]}
+    Alert:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        type: {type: string, enum: [sos, driver_issue, request_near_expiry, vip_no_vehicle, failsafe, stale_vehicle, mode_prompt, system]}
+        severity: {type: string, enum: [critical, high, normal]}
+        status: {type: string, enum: [open, acknowledged, resolved]}
+        created_at: {type: string, format: date-time}
+        request_id: {type: [string, 'null'], format: uuid}
+        trip_id: {type: [string, 'null'], format: uuid}
+        vehicle_id: {type: [string, 'null'], format: uuid}
+        data: {type: object, additionalProperties: true}
+    TripReport:
+      type: object
+      properties:
+        trips: {type: integer}
+        requests: {type: integer}
+        median_wait_minutes: {type: number}
+        p90_wait_minutes: {type: number}
+        no_shows: {type: integer}
+        cancellations: {type: integer}
+        rows: {type: array, items: {type: object, additionalProperties: true}}
+    SimClock:
+      type: object
+      properties:
+        now: {type: string, format: date-time}
+        advance_seconds: {type: integer, description: PUT only, alternative to now}
