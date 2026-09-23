@@ -3,7 +3,7 @@
 ## 1. Overview
 A **modular monolith** backend (FastAPI) with background workers, a single universal Flutter app, and OpenStreetMap map services. A closed-loop simulator talks to the same API and MQTT broker as real apps.
 
-Map services are reached through URLs from config (`OSRM_URL`, `NOMINATIM_URL`, `TILES_URL`): the **public OSM servers** in early phases, self-hosted containers later, with no code change (ADR-0010).
+Map services are reached through URLs from config (`OSRM_URL`, `TILES_URL`): the **public OSM servers** in early phases, self-hosted containers later, with no code change (ADR-0010). There is **no geocoding in Phase 1** — locations come from map pins + landmark text, and public Nominatim is never called (ADR-0010 §A1).
 
 ```mermaid
 flowchart TD
@@ -24,15 +24,17 @@ flowchart TD
     WK --> RP
     RP -->|Redis cache + 1 req/s limiter| RT
     RP -->|OSRM_URL| OSRM[OSRM<br/>public demo or self-hosted]
-    API -->|NOMINATIM_URL, cached| NOM[Nominatim<br/>public or self-hosted]
+    API -.->|GEOCODING_PROVIDER=none<br/>Phase 1: map pins only| NOM[Nominatim<br/>self-hosted only, optional]
     SIM --> APX[approx routing<br/>no network]
     WK --> PUSH[FCM / ntfy push]
-    APP -->|TILES_URL| TILES[OSM tile server<br/>public or self-hosted]
+    APP -->|TILES_URL, raster| TILES[OSM tile server<br/>public or self-hosted]
 ```
 
-The `routing` module is the **only** part of the system that talks to OSRM or Nominatim. The app never calls
-them directly (no client-side autocomplete); it only fetches tiles from `TILES_URL` and shows
-"© OpenStreetMap contributors".
+The `routing` module is the **only** part of the system that talks to OSRM. The app calls no map service
+except the tile server: it fetches raster tiles from `TILES_URL` with its own `User-Agent`
+(`flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`), caches them for at least 7 days, never prefetches
+or downloads them for offline use, and shows "© OpenStreetMap contributors" bottom-right at all times.
+Geocoding is behind a `GeocodingProvider` interface whose Phase 1 implementation is `none`.
 
 ## 2. Backend modules
 `backend/app/modules/<name>/` each with `router.py`, `schemas.py`, `service.py`, `repository.py`, `models.py`.
@@ -47,7 +49,7 @@ them directly (no client-side autocomplete); it only fetches tiles from `TILES_U
 | `trips` | Trips, stops, state machines, driver actions |
 | `dispatch` | Candidates, manual assignment, suggestions, modes, overrides, failsafe, pause |
 | `optimizer` | Cost function, single insertion, OR-Tools batch solver (Phase 3) |
-| `routing` | Routing provider interface (`osrm`, `approx`, `cached`) selected by `ROUTING_PROVIDER`; ETA service, speed profiles; Nominatim client (backend-only, cached); shared Redis rate limiter for public servers |
+| `routing` | Routing provider interface (`osrm`, `approx`, `cached`) selected by `ROUTING_PROVIDER`; ETA service, speed profiles; shared Redis rate limiter for public servers; `GeocodingProvider` interface (`none` in Phase 1; self-hosted Nominatim only) |
 | `tracking` | GPS ingestion, live positions, stale detection, WebSocket fan-out |
 | `notifications` | Push (FCM/ntfy), in-app notification records |
 | `alerts` | SOS, driver issues, expiry, failsafe, mode prompts |
@@ -104,8 +106,9 @@ sequenceDiagram
   by `approx` and flagged approximate.
 - **Identification:** every request to a public server carries a `User-Agent` built from `OSM_USER_AGENT` and
   `OSM_CONTACT_EMAIL`.
-- **Geocoding:** only through the backend, only on an explicit user search, always cached. Employees mainly
-  pick pickup/drop with map pins.
+- **Geocoding:** none in Phase 1 (`GEOCODING_PROVIDER=none`). Public Nominatim is never called — its policy
+  forbids vehicle-tracking applications. Locations come from map pins + landmark text; a self-hosted
+  Nominatim may be added later behind the same interface (task I02c), backend-only and cached.
 - **Bulk callers:** the simulator and the optimizer use `approx`, or a self-hosted OSRM if `OSRM_URL` points
   at one. They never drive load onto the public servers.
 - **Degradation ladder** (consistent with `control-model.md`): `cached` hit → `osrm` call → rate-limited,
@@ -121,14 +124,15 @@ sequenceDiagram
 ## 5. Deployment (pilot)
 Single VM (India region), Docker Compose:
 `caddy`, `api` (uvicorn, 2–4 workers), `ingestor`, `worker` (Celery), `beat` (scheduler), `postgres` (PostGIS), `redis`, `mosquitto`, `prometheus`, `grafana`.
-Map services are **not** containers in early phases — the public OSM servers are used via `OSRM_URL`,
-`NOMINATIM_URL` and `TILES_URL`. Adding `osrm`, `nominatim` and `tileserver` containers and repointing those
-three variables is the self-hosting upgrade (task I02b; decide before the paid pilot — OQ-21).
+Map services are **not** containers in early phases — the public OSM servers are used via `OSRM_URL` and
+`TILES_URL`. Adding `osrm` and `tileserver` containers and repointing those two variables is the self-hosting
+upgrade (task I02b), **required before the paid pilot** since the public services carry no SLA and may be
+withdrawn for commercial use (OQ-21). A self-hosted `nominatim` container is separate and optional (I02c).
 Environments: `dev` (local), `sim` (simulator + accelerated clock), `staging`, `prod`.
 
 ## 6. Scaling path
 - More API workers behind Caddy; Redis pub/sub for WebSockets.
 - Move `ingestor` to Go if GPS load exceeds ~1,000 msg/s.
 - Split `optimizer` into its own service if solver runs block workers.
-- Move from the public OSM servers to a self-hosted OSRM once routing volume or reliability needs it — a config change plus one container (OQ-21).
+- Move from the public OSM servers to self-hosted OSRM **and tiles** before the paid pilot — a config change plus two containers (I02b, OQ-21).
 - Kubernetes only at multi-operator scale (Phase 5).

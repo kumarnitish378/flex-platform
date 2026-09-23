@@ -80,7 +80,16 @@ app/lib/
 4. **Strings:** all user-visible text in ARB files from day one.
 5. **Offline queue (driver):** every driver action gets a `client_event_id` (UUID) and `occurred_at`; stored in drift; sent in order; idempotent on server.
 6. **Location:** foreground service only while on duty; stop it on off-duty and on logout.
-7. **Maps:** one shared `AppMap` widget (MapLibre) with attribution always visible.
+7. **Maps:** one shared `AppMap` widget (MapLibre, **raster** style) — every map in the app goes through it.
+   Rules (ADR-0010 §A2, enforced by its widget tests):
+   - Tile URL from `TILES_URL` (`--dart-define`), never a literal in code.
+   - `User-Agent` on tile requests: `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`. Never the
+     MapLibre or HTTP client default.
+   - Honour HTTP cache headers; tile cache of at least 7 days.
+   - **No offline map download, no tile prefetching** — including the driver app. Fetch only what is on screen.
+   - "© OpenStreetMap contributors" bottom-right, always visible; no bottom sheet, card or control may cover it.
+   - **No geocoding or address autocomplete** in the app (Phase 1 has none at all): locations come from pin
+     drag + landmark text or saved places.
 8. **Lint:** strict analysis options; `flutter analyze` must be clean.
 9. **Screen IDs** from `screens-by-role.md` appear in widget file names or keys (e.g. `Key('E-04')`) for tests.
 

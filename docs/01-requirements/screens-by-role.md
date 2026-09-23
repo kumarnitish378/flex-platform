@@ -10,13 +10,15 @@ One Flutter app. After login, `GET /auth/me` returns roles and permissions; the 
 | C-03 | Role switcher | Shown only if user has >1 role. Sets active role. |
 | C-04 | Profile | Name, phone, active role, language (English/Hindi — Phase 2), logout. |
 | C-05 | Notifications | List of past notifications. |
-| C-06 | Map attribution | "© OpenStreetMap contributors" visible on every map. |
+| C-06 | Map attribution | "© OpenStreetMap contributors" visible bottom-right on every map, never covered by sheets, cards or controls. |
+
+**No address search in Phase 1** (ADR-0010 §A1): no screen has an address search box or autocomplete. Locations are set with a draggable map pin plus free-text landmark, or chosen from saved places. This applies to E-02, S-08, A-04 and L-02.
 
 ## Employee
 | ID | Screen | Content / actions |
 |---|---|---|
 | E-01 | Home | Active request/trip card (status, ETA, cab no.) or "Request a cab" button; next scheduled request. |
-| E-02 | Request form | Direction toggle; time: Now / pick time; pickup/drop pin on map (drag); saved places; landmark text; urgency (default medium); submit. |
+| E-02 | Request form | Direction toggle; time: Now / pick time; pickup/drop pin on map (drag) — **no address search box**; saved places; landmark text; urgency (default medium); submit. |
 | E-03 | Request confirmation | Request ID, summary, status "Finding your cab", cancel button. |
 | E-04 | Live tracking | Map with cab marker, own pin, route; bottom sheet: vehicle no., model, driver name, call button, ETA, status; SOS button; cancel (before arrival). |
 | E-05 | Trip completed | Duration, wait time, rating 1–5, comment. |
@@ -53,7 +55,7 @@ One Flutter app. After login, `GET /auth/me` returns roles and permissions; the 
 | A-01 | Dashboard | Today: trips, pending, median wait, vehicles on duty. |
 | A-02 | Vehicles | List + add/edit (number, model, type, capacity, status). |
 | A-03 | Drivers | List + add/edit (name, phone, licence no. last 4 digits only, linked vehicle). |
-| A-04 | Clients & offices | List + add/edit; office pin on map. |
+| A-04 | Clients & offices | List + add/edit; office pin on map (pin only, no address search). |
 | A-05 | Users | Supervisors and client admins; invite by phone. |
 | A-06 | Zones (Phase 2) | Draw/edit polygons. |
 | A-07 | Reports | Date range; per client/driver; CSV export. |
@@ -63,7 +65,7 @@ One Flutter app. After login, `GET /auth/me` returns roles and permissions; the 
 | ID | Screen | Content / actions |
 |---|---|---|
 | L-01 | Employees | List, search, add/edit, deactivate; CSV import with validation report. |
-| L-02 | Employee form | Name, phone, office, home pin, priority 1–10, VIP, pooling opt-out allowed. |
+| L-02 | Employee form | Name, phone, office, home pin (map pin + landmark, no address search), priority 1–10, VIP, pooling opt-out allowed. |
 | L-03 | Policies (Phase 2) | Pooling, night-safety rule and hours, stricter detour limit. |
 | L-04 | Reports | Own employees' trips, waits, no-shows. |
 

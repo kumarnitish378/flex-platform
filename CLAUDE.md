@@ -9,8 +9,10 @@ pooling, supervisor control modes, and (later) demand prediction.
 
 - One **universal Flutter app** (Android first) renders screens by role: employee, driver, supervisor, operator admin, client admin.
 - **Backend:** Python + FastAPI modular monolith, PostgreSQL + PostGIS, Redis, MQTT (Mosquitto) for GPS, Celery workers.
-- **Maps:** OpenStreetMap only (OSRM routing, Nominatim geocoding, OSM tiles, MapLibre).
-  Early phases use the **public OSM servers**; self-hosting is the documented upgrade path, switched by config only (ADR-0010). **No paid map APIs. No WhatsApp API.**
+- **Maps:** OpenStreetMap only (OSRM routing, OSM raster tiles, MapLibre). Early phases use the **public OSM
+  servers** for routing and tiles. **No geocoding in Phase 1** — locations are set with map pins + landmark
+  text, and public Nominatim is never used (its policy forbids vehicle-tracking applications). Self-hosting
+  is the upgrade path, switched by config only (ADR-0010). **No paid map APIs. No WhatsApp API.**
 - **Simulator:** Python + SimPy closed-loop simulator that drives the real API and MQTT (like ArduPilot SITL).
 
 ## Repository layout
@@ -46,11 +48,18 @@ docs/        All specifications (source of truth)
 4. **Business numbers come from config, not code.** Detour limits, weights, timeouts, windows: see `allocation-rules.md` config keys.
 5. **Every state change goes through the state machine** in `trip-lifecycle.md`. No direct status writes.
 6. **Overridden or locked trips must never be changed by the optimizer.**
-7. **No paid APIs, no WhatsApp API, no Google Maps.** OSM stack only. Map service URLs always come from
-   env config (`OSRM_URL`, `NOMINATIM_URL`, `TILES_URL`) — never hard-coded. When pointing at the **public**
-   OSM servers, respect their usage policy (ADR-0010): calls only from the backend, identifying `User-Agent`
-   from `OSM_USER_AGENT` / `OSM_CONTACT_EMAIL`, a shared 1 request/second limit per service, Redis-cached
-   results, no client-side autocomplete, and bulk callers (simulator, optimizer) use the `approx` provider.
+7. **No paid APIs, no WhatsApp API, no Google Maps.** OSM stack only. Map service URLs always come from env
+   config (`OSRM_URL`, `TILES_URL`) — never hard-coded. Public OSM services are used strictly under the OSMF
+   usage policies (ADR-0010):
+   - **Routing:** public OSRM demo server, backend only, identifying `User-Agent` from `OSM_USER_AGENT` /
+     `OSM_CONTACT_EMAIL`, shared 1 request/second, Redis-cached; over the limit or on failure fall back to
+     the `approx` provider. Bulk callers (simulator, optimizer) always use `approx`.
+   - **Geocoding: never against public Nominatim** — its policy forbids use by vehicle-tracking applications
+     and asks that no personal data be submitted. Phase 1 ships **no geocoding** (`GEOCODING_PROVIDER=none`);
+     employees and admins set locations with map pins + landmark text. Self-hosted Nominatim only, later.
+   - **Tiles:** raster tiles from `TILES_URL` with a distinct `User-Agent` (never the library default), HTTP
+     cache headers honoured with a ≥ 7-day cache, **no offline map download and no prefetching anywhere**,
+     attribution always visible.
 8. **Do not invent requirements.** If a spec is missing or ambiguous, stop and add an item to `docs/07-decisions/open-questions.md`, then ask.
 9. Record significant design choices as an ADR in `docs/03-architecture/adr/` and a line in `docs/07-decisions/decision-log.md`.
 10. Keep secrets out of the repo. Use `.env` (see `docs/05-engineering/dev-environment.md`).

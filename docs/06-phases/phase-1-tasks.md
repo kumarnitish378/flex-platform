@@ -22,15 +22,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 - [ ] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
   Docs: ADR-0010, dev-environment.md §3–4, architecture.md §3.4
-  Do: settings for `ROUTING_PROVIDER`, `OSRM_URL`, `NOMINATIM_URL`, `TILES_URL`, `OSM_USER_AGENT`,
+  Do: settings for `ROUTING_PROVIDER`, `GEOCODING_PROVIDER`, `OSRM_URL`, `TILES_URL`, `OSM_USER_AGENT`,
   `OSM_CONTACT_EMAIL`, `ROUTING_CACHE_TTL_SECONDS`, `OSM_RATE_LIMIT_PER_SECOND`; `.env.example` pointing at
-  the public OSM servers; `RoutingProvider` protocol with `osrm`, `approx` (haversine × 1.4 + time-of-day
-  speed table) and `cached` (Redis) implementations; Redis token-bucket limiter (1 req/s per service, shared
-  across processes) that falls back to `approx` and flags results approximate; identifying `User-Agent` on
-  every outbound request. No map containers in compose.
+  the public OSRM and tile servers; `RoutingProvider` protocol with `osrm`, `approx` (haversine × 1.4 +
+  time-of-day speed table) and `cached` (Redis) implementations; `GeocodingProvider` protocol with a `none`
+  implementation as the default (`NOMINATIM_URL` unset — public Nominatim must never be called); Redis
+  token-bucket limiter (1 req/s per service, shared across processes) that falls back to `approx` and flags
+  results approximate; identifying `User-Agent` on every outbound request. No map containers in compose.
   Done when: unit tests cover provider selection, cache hit/miss, limiter fallback and the `approximate`
   flag; two processes sharing Redis cannot exceed 1 req/s (test with a fake clock); no map URL appears as a
-  literal anywhere outside settings (grep test); `ROUTING_PROVIDER=approx` works with the network unplugged.
+  literal anywhere outside settings (grep test); a test fails if any configured geocoding URL resolves to
+  `nominatim.openstreetmap.org`; `ROUTING_PROVIDER=approx` works with the network unplugged.
 
 - [ ] **B01 · Backend skeleton** · deps F01, I01
   Docs: architecture.md, coding-standards.md §2
@@ -106,9 +108,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] **B10 · Routing module** · deps B01, I02
   Docs: architecture.md §3.2 and §3.4, ADR-0010
   Do: `routing` module built on the I02 provider interface — route and table through `RoutingProvider`
-  (never a hard-coded OSRM client), ETA service (provider result × time-of-day factor table from config),
-  Nominatim client (backend-only, cached, explicit search only); degradation ladder cache → `osrm` →
-  `approx` with `approximate: true` surfaced in API responses.
+  (never a hard-coded OSRM client), ETA service (provider result × time-of-day factor table from config);
+  degradation ladder cache → `osrm` → `approx` with `approximate: true` surfaced in API responses.
+  **No geocoding**: `GeocodingProvider` stays `none`, no address-search endpoint is added, and no code path
+  may call public Nominatim (ADR-0010 §A1).
   Done when: unit tests with recorded OSRM responses; tests prove the ETA service degrades to `approx` when
   OSRM errors, times out or is rate-limited, and marks those ETAs approximate; integration test against a
   tiny OSM extract (skipped unless a self-hosted `OSRM_URL` is configured).
@@ -167,11 +170,15 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: each role sees only its screens (widget tests for all 5 roles); unauthorized deep links redirect.
 
 - [ ] **A05 · Shared map widget** · deps A01, I02
-  Docs: ADR-0010, coding-standards.md §3
-  Do: MapLibre widget with tiles from `TILES_URL` (never hard-coded), always-visible attribution, markers,
-  route polyline, pin picker.
-  Done when: renders NCR tiles on device; pin drag returns coordinates; widget test fails if the tile URL is
-  a literal or the attribution is missing.
+  Docs: ADR-0010 §A2, coding-standards.md §3 rule 7, screens-by-role.md C-06
+  Do: shared `AppMap` MapLibre widget with a **raster** style from `TILES_URL` (never hard-coded); tile
+  `User-Agent` `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`; HTTP cache headers honoured with a
+  ≥ 7-day tile cache; **no prefetching and no offline tile download**; "© OpenStreetMap contributors"
+  bottom-right and never covered; markers, route polyline, pin picker. No address search field.
+  Done when: renders NCR tiles on device; pin drag returns coordinates; widget tests fail if the tile URL is
+  a literal, the `User-Agent` is the library default, the attribution is missing or covered, or a search
+  field is present; a network test shows only on-screen tiles are requested (no prefetch) and that a second
+  view of the same area serves from cache.
 
 - [ ] **A06 · Employee: request + confirmation + home** · deps A04, A05, B09
   Screens: E-01..E-03 · Stories: EMP-02, EMP-06
@@ -226,12 +233,22 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 - [ ] **I02b · Self-hosted OSRM** (optional) · deps I02
   Docs: dev-environment.md §8, ADR-0004, ADR-0010, OQ-21
-  Do only when public-server volume, rate limits or reliability become a problem — decide before the paid
-  pilot. `infra/scripts/prepare_maps.sh` (download, crop NCR, OSRM MLD prep, Planetiler tiles);
-  `infra/docker-compose.maps.yml` with osrm (+ optional tileserver); repoint `OSRM_URL` (and `TILES_URL`).
+  **Required before the paid pilot** (ADR-0010 §A3): the public services have no SLA and may be withdrawn for
+  commercial use. Do it earlier if volume, rate limits or reliability demand it.
+  `infra/scripts/prepare_maps.sh` (download, crop NCR, OSRM MLD prep, Planetiler tiles);
+  `infra/docker-compose.maps.yml` with osrm + tileserver; repoint `OSRM_URL` and `TILES_URL`.
   Done when: `curl "$OSRM_URL/route/v1/driving/77.3218,28.5703;77.3910,28.5123"` returns a route from the
-  local container; tiles render in tileserver's viewer; no application code changed — only env values;
-  simulator runs at full speed against it.
+  local container; tiles render in tileserver's viewer and in the app; no application code changed — only env
+  values; simulator runs at full speed against it.
+
+- [ ] **I02c · Self-hosted Nominatim geocoding** (optional) · deps I02b
+  Docs: dev-environment.md §8, ADR-0010 §A1
+  Only if address search turns out to be needed — Phase 1 deliberately ships without it (map pins + landmark
+  text). **Public Nominatim must never be used**; this task is self-hosted only.
+  Do: nominatim container + NCR import; `NOMINATIM_URL`; `GEOCODING_PROVIDER=nominatim` implementation of the
+  existing interface — backend-only, cached, explicit user search only, never autocomplete-per-keystroke.
+  Done when: search returns results for "Sector 62 Noida" from the local container; provider swap needs no
+  screen changes; `GEOCODING_PROVIDER=none` remains the default and is still fully supported.
 
 ## Release (Phase 1)
 

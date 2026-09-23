@@ -20,32 +20,39 @@
 Verify image tags at setup time and pin them.
 
 Map services are **not** part of the default compose (ADR-0010) — `make up` starts postgres, redis and
-mosquitto only. Routing, geocoding and tiles come from the public OSM servers via `OSRM_URL`,
-`NOMINATIM_URL` and `TILES_URL`. To self-host them instead, see §8.
+mosquitto only. Routing and tiles come from the public OSM servers via `OSRM_URL` and `TILES_URL`; there is
+**no geocoding service** (`GEOCODING_PROVIDER=none`). To self-host them instead, see §8.
 
 ## 3. Map services (default: public OSM servers)
 No setup and no map data download. Defaults in `.env.example`:
 ```
 ROUTING_PROVIDER=cached_osrm
+GEOCODING_PROVIDER=none
 OSRM_URL=https://router.project-osrm.org
-NOMINATIM_URL=https://nominatim.openstreetmap.org
 TILES_URL=https://tile.openstreetmap.org/{z}/{x}/{y}.png
-OSM_USER_AGENT=SmartCab/0.1
+OSM_USER_AGENT=flex-platform/0.1
 OSM_CONTACT_EMAIL=you@example.com
+# NOMINATIM_URL is intentionally unset — public Nominatim must never be used (ADR-0010 §A1)
 ```
 Smoke test:
 ```
 curl "$OSRM_URL/route/v1/driving/77.3218,28.5703;77.3910,28.5123?overview=false"
 ```
 
-**Usage policy — not optional** (ADR-0010):
+**Usage policy — not optional** (ADR-0010, OSMF policies for Nominatim and tiles):
 - Set `OSM_CONTACT_EMAIL` to a real address before making any request; requests without an identifying
   `User-Agent` may be blocked.
 - The backend enforces a shared 1 request/second per service; do not disable it or run load tests against
   the public servers.
-- No client-side autocomplete: the app never calls Nominatim, only the backend does, on explicit search.
+- **Never point `NOMINATIM_URL` at `nominatim.openstreetmap.org`.** Its policy forbids vehicle-tracking
+  applications and personal data. Phase 1 has no geocoding at all; a self-hosted instance is the only option
+  later (§8, task I02c).
+- Tiles: raster only, app-side `User-Agent` `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`, ≥ 7-day
+  cache, **no prefetching and no offline download**.
 - Bulk work (simulator, optimizer, `make sim-full`) must run with `ROUTING_PROVIDER=approx`.
-- Maps must show "© OpenStreetMap contributors".
+- Maps must show "© OpenStreetMap contributors" bottom-right, never covered.
+- These services are best-effort with **no SLA** and may be withdrawn for commercial use — self-hosted OSRM
+  and tiles are required before the paid pilot (OQ-21).
 
 Offline or rate-limited? Set `ROUTING_PROVIDER=approx` — no network calls, ETAs from haversine × 1.4 and the
 time-of-day speed table, flagged approximate.
@@ -59,10 +66,11 @@ time-of-day speed table, flagged approximate.
 | `MQTT_HOST` / `MQTT_PORT` | `localhost` / `1883` | ingestor, app config |
 | `MQTT_INGESTOR_USER` / `_PASSWORD` | | ingestor |
 | `ROUTING_PROVIDER` | `cached_osrm` (dev/staging/prod) / `approx` (simulator, offline) | backend, simulator |
+| `GEOCODING_PROVIDER` | `none` (default, Phase 1) / `nominatim` (self-hosted only) | backend |
 | `OSRM_URL` | `https://router.project-osrm.org` (public) or `http://localhost:5000` (self-hosted) | backend, simulator |
-| `NOMINATIM_URL` | `https://nominatim.openstreetmap.org` or `http://localhost:8080` | backend |
+| `NOMINATIM_URL` | unset in Phase 1; `http://localhost:8080` only if self-hosted (never the public server) | backend |
 | `TILES_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` or `http://localhost:8081` | app |
-| `OSM_USER_AGENT` | `SmartCab/0.1` | backend, simulator |
+| `OSM_USER_AGENT` | `flex-platform/0.1` (app tiles send `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`) | backend, simulator, app |
 | `OSM_CONTACT_EMAIL` | real contact address (required by OSM usage policy) | backend, simulator |
 | `ROUTING_CACHE_TTL_SECONDS` | `900` | backend |
 | `OSM_RATE_LIMIT_PER_SECOND` | `1` (do not raise for public servers) | backend |
@@ -100,16 +108,18 @@ One phone number per role (e.g. `+910000000001` operator_admin … `+91000000000
 - Flavors / `--dart-define`: `API_BASE_URL`, `MQTT_HOST`, `TILES_URL`, `APP_ENV`.
 
 ## 8. Optional: self-hosting the map services
-Not needed for development. Do this when request volume or reliability requires it (task I02b, OQ-21).
-Requires ~16 GB RAM, `osmium-tool` and Java 21. Nothing in the code changes — only the three URLs.
+Not needed for development. OSRM + tiles (task I02b) are **required before the paid pilot** — the public
+services have no SLA and may be withdrawn for commercial use (OQ-21). Nominatim (task I02c) is optional and
+only worth doing if address search turns out to be needed; Phase 1 ships without geocoding.
+Requires ~16 GB RAM, `osmium-tool` and Java 21. Nothing in the code changes — only the URLs.
 
 Extra compose services (`infra/docker-compose.maps.yml`, started with `make up-maps`):
 
-| Service | Image (suggested) | Port | Notes |
-|---|---|---|---|
-| osrm | `osrm/osrm-backend` | 5000 | serves prepared NCR data |
-| nominatim | `mediagis/nominatim` | 8080 | imports NCR extract on first start (slow) |
-| tileserver | `maptiler/tileserver-gl` | 8081 | serves MBTiles + style |
+| Service | Image (suggested) | Port | Task | Notes |
+|---|---|---|---|---|
+| osrm | `osrm/osrm-backend` | 5000 | I02b | serves prepared NCR data |
+| tileserver | `maptiler/tileserver-gl` | 8081 | I02b | serves MBTiles + style |
+| nominatim | `mediagis/nominatim` | 8080 | I02c (optional) | imports NCR extract on first start (slow) |
 
 Map data preparation (one-time, then monthly):
 1. Download India extract from Geofabrik: `india-latest.osm.pbf` (northern-zone extract if available is smaller).
@@ -132,8 +142,10 @@ Map data preparation (one-time, then monthly):
 Then repoint the URLs (and nothing else):
 ```
 OSRM_URL=http://localhost:5000
-NOMINATIM_URL=http://localhost:8080
 TILES_URL=http://localhost:8081
+# only with task I02c:
+GEOCODING_PROVIDER=nominatim
+NOMINATIM_URL=http://localhost:8080
 ```
 The rate limiter and cache still apply but can be relaxed for your own servers
 (`OSM_RATE_LIMIT_PER_SECOND`).

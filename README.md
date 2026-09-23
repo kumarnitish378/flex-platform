@@ -14,7 +14,7 @@ Cab operations platform for small and mid-sized cab operators serving corporate 
 
 ## Tech stack (approved)
 Flutter (universal app) · Python FastAPI · PostgreSQL + PostGIS · Redis · Mosquitto (MQTT) · Celery ·
-Google OR-Tools · OpenStreetMap + OSRM + Nominatim + MapLibre · SimPy simulator · Docker Compose · Caddy · Prometheus/Grafana.
+Google OR-Tools · OpenStreetMap + OSRM + MapLibre raster tiles · SimPy simulator · Docker Compose · Caddy · Prometheus/Grafana.
 
 ## Start here
 1. `docs/00-product/vision-and-scope.md` — what and why

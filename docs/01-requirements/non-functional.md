@@ -22,7 +22,11 @@ larger, especially where the road network detours (river, rail, expressway entry
 reporting.
 
 ## Availability and reliability
-- Pilot target 99.5% monthly for API and tracking.
+- Pilot target 99.5% monthly for API and tracking. This target assumes self-hosted OSRM and tiles: the public
+  OSM servers are best-effort with **no SLA** and may be withdrawn for commercial use, so the switch (task
+  I02b) must happen before the paid pilot (ADR-0010 §A3, OQ-21).
+- Public tile or routing outages degrade the product but do not stop it: routing falls back to `approx`, maps
+  fall back to cached tiles.
 - Driver app works offline: status events queued locally with timestamps and GPS, delivered in order on reconnect; GPS buffered up to 30 minutes.
 - If the optimizer or worker fails, the system falls back to Manual mode for affected scopes and alerts supervisors.
 - Daily PostgreSQL backups, 14-day retention; restore tested monthly.
@@ -46,7 +50,14 @@ reporting.
 ## Usability
 - Driver app usable on Android 8+ phones with 2 GB RAM; large buttons; minimal typing.
 - English at launch; Hindi in Phase 2 (all strings externalised from day one).
-- Map screens show OSM attribution.
+- Map screens show "© OpenStreetMap contributors" bottom-right, always visible and never covered by sheets,
+  cards or controls (ADR-0010 §A2).
+- Maps are **raster** tiles from `TILES_URL`, cached for at least 7 days per HTTP cache headers. **No offline
+  map download and no tile prefetching anywhere, including the driver app** — only on-screen tiles are
+  fetched. Tile requests carry `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`, never a library
+  default.
+- **No address search or autocomplete in Phase 1** — locations are set with map pins + landmark text, so
+  screens must work without any geocoding service.
 
 ## Operability
 - Structured JSON logs with request ID and operator ID.

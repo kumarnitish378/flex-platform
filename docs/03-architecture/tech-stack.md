@@ -18,6 +18,7 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | Auth | PyJWT; OTP via SMS gateway adapter (pluggable; console adapter in dev) | |
 | HTTP client | httpx | |
 | Routing providers | `osrm` / `approx` / `cached` behind one interface, selected by `ROUTING_PROVIDER` (ADR-0010) | |
+| Geocoding provider | `GeocodingProvider` interface; **`none` in Phase 1** (`GEOCODING_PROVIDER`), self-hosted Nominatim optional later | |
 | Lint / format | ruff (lint + format) | |
 | Types | mypy (strict on `domain/`) | |
 | Tests | pytest, pytest-asyncio, testcontainers (Postgres, Redis) | |
@@ -29,7 +30,7 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | State management | Riverpod | |
 | Routing | go_router | |
 | API client | Generated from `api-spec.yaml` (openapi-generator, dart-dio) | |
-| Maps | maplibre_gl (MapLibre Native); tile URL from `TILES_URL` — public OSM tiles early, self-hosted later | |
+| Maps | maplibre_gl (MapLibre Native), **raster** style; tile URL from `TILES_URL` — public OSM raster tiles early, self-hosted later. ≥ 7-day tile cache, no prefetch, no offline download | |
 | Location | geolocator + foreground service (flutter_foreground_task) | |
 | MQTT | mqtt_client | |
 | Push | firebase_messaging (FCM) behind a `PushService` interface | |
@@ -47,18 +48,24 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | Routing | OSRM — public demo server (`router.project-osrm.org`) in early phases; self-hosted OSRM (MLD, car profile, Delhi NCR extract) later. URL from `OSRM_URL` |
 | Routing fallback | `approx` provider: haversine × 1.4 road factor, time-of-day speed table, no network |
 | Routing cache / rate limit | Redis: route + table cache (TTL from config) and a shared 1 req/s-per-service token bucket for public servers |
-| Geocoding | Nominatim — public (`nominatim.openstreetmap.org`) in early phases, self-hosted later. URL from `NOMINATIM_URL`; backend-only, cached |
-| Map tiles | Public OpenStreetMap tile server in early phases; Planetiler-generated OpenMapTiles-schema MBTiles + tileserver-gl later. URL from `TILES_URL` |
+| Geocoding | **None in Phase 1** — map pins + landmark text. Public Nominatim is **not permitted** (OSMF policy: no vehicle-tracking applications, no personal data). Self-hosted Nominatim optional later (task I02c) |
+| Map tiles | Public OpenStreetMap **raster** tiles (`tile.openstreetmap.org/{z}/{x}/{y}.png`) in early phases; Planetiler-generated OpenMapTiles-schema MBTiles + tileserver-gl later. URL from `TILES_URL` |
 | Reverse proxy / TLS | Caddy |
 | Containers | Docker + Docker Compose |
 | Monitoring | Prometheus + Grafana; structured JSON logs |
 | CI/CD | GitHub Actions |
 | Push notifications | Firebase Cloud Messaging (free) or ntfy (self-hosted) |
 
-Map services are chosen by configuration only (ADR-0010), never in code. While on the public servers the
-backend sends an identifying `User-Agent` (`OSM_USER_AGENT` + `OSM_CONTACT_EMAIL`) and stays within 1
-request/second per service; over-limit requests fall back to `approx` and are flagged approximate. Every map
-screen shows "© OpenStreetMap contributors".
+Map services are chosen by configuration only (ADR-0010), never in code. While on the public servers:
+- the backend sends an identifying `User-Agent` (`OSM_USER_AGENT` + `OSM_CONTACT_EMAIL`) and stays within 1
+  request/second per service; over-limit requests fall back to `approx` and are flagged approximate;
+- the app sends `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)` on tile requests — never the
+  MapLibre or HTTP library default — honours cache headers with a ≥ 7-day tile cache, and never prefetches
+  or downloads tiles for offline use;
+- every map screen shows "© OpenStreetMap contributors" bottom-right, never hidden behind UI.
+
+The public services are best-effort with **no SLA** and may be withdrawn for commercial use: self-hosted OSRM
+and tiles are required before the paid pilot (ADR-0010 §A3, OQ-21).
 
 ## Simulator
 Python 3.12, SimPy, httpx, aiomqtt, PyYAML, pandas (results), matplotlib (reports).
