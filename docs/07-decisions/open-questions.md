@@ -24,6 +24,7 @@ Agents: if you hit an unresolved question, add it here and ask the owner. Do not
 | OQ-18 | Product name and domain | Phase 1 end | Nitish | open ("Smart Cab" is a working name) |
 | OQ-19 | Data retention periods agreed with operator/client contracts | Phase 1 | Operator | open (defaults in non-functional.md) |
 | OQ-20 | Push: Firebase Cloud Messaging or self-hosted ntfy? | Phase 1 (B16) | Tech | open (FCM default) |
+| OQ-21 | When to move to self-hosted OSRM? Re-evaluate before the paid pilot: does request volume (1 req/s public cap), reliability or the OSM usage policy require our own instance (task I02b)? | Before paid pilot | Tech | open (public servers for now — ADR-0010) |
 
 ---
 

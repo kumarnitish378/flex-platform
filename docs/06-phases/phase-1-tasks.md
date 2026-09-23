@@ -20,10 +20,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `infra/docker-compose.yml` with postgres(PostGIS), redis, mosquitto (dev config + ACL placeholder), health checks; `make up/down`.
   Done when: `make up` starts all; `psql` can `CREATE EXTENSION postgis`.
 
-- [ ] **I02 · Map data + OSRM/Nominatim/tiles** · deps I01
-  Docs: dev-environment.md §3, ADR-0004
-  Do: `infra/scripts/prepare_maps.sh` (download, crop NCR, OSRM MLD prep, Planetiler tiles); add osrm, nominatim, tileserver to compose.
-  Done when: `curl "$OSRM_URL/route/v1/driving/77.3218,28.5703;77.3910,28.5123"` returns a route; Nominatim search returns results for "Sector 62 Noida"; tiles render in tileserver's viewer.
+- [ ] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
+  Docs: ADR-0010, dev-environment.md §3–4, architecture.md §3.4
+  Do: settings for `ROUTING_PROVIDER`, `OSRM_URL`, `NOMINATIM_URL`, `TILES_URL`, `OSM_USER_AGENT`,
+  `OSM_CONTACT_EMAIL`, `ROUTING_CACHE_TTL_SECONDS`, `OSM_RATE_LIMIT_PER_SECOND`; `.env.example` pointing at
+  the public OSM servers; `RoutingProvider` protocol with `osrm`, `approx` (haversine × 1.4 + time-of-day
+  speed table) and `cached` (Redis) implementations; Redis token-bucket limiter (1 req/s per service, shared
+  across processes) that falls back to `approx` and flags results approximate; identifying `User-Agent` on
+  every outbound request. No map containers in compose.
+  Done when: unit tests cover provider selection, cache hit/miss, limiter fallback and the `approximate`
+  flag; two processes sharing Redis cannot exceed 1 req/s (test with a fake clock); no map URL appears as a
+  literal anywhere outside settings (grep test); `ROUTING_PROVIDER=approx` works with the network unplugged.
 
 - [ ] **B01 · Backend skeleton** · deps F01, I01
   Docs: architecture.md, coding-standards.md §2
@@ -41,13 +48,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: generated client compiles; interceptor unit-tested.
 
 - [ ] **M01 · Simulator skeleton** · deps F01, I02
-  Docs: simulator-spec.md §2–4
-  Do: package layout, CLI, scenario YAML loader + schema validation, SimPy engine, OSRM client, seeded RNG.
-  Done when: `python -m sim validate scenarios/smoke_tiny.yaml` passes; unit tests for loader.
+  Docs: simulator-spec.md §2–4, ADR-0010
+  Do: package layout, CLI, scenario YAML loader + schema validation, SimPy engine, routing through the
+  provider interface (`approx` by default; `osrm` only when `OSRM_URL` is self-hosted), seeded RNG.
+  Done when: `python -m sim validate scenarios/smoke_tiny.yaml` passes; unit tests for loader; a run with
+  the default config makes zero requests to a public OSM host (asserted in tests).
 
 - [ ] **M02 · Vehicle movement v0** · deps M01
-  Do: vehicle agent moves along OSRM route geometry with speed noise; emits GPS pings to a local log (not yet MQTT).
-  Done when: plot of a simulated route matches OSRM geometry; pings respect interval rules.
+  Do: vehicle agent moves along the geometry returned by the routing provider (`approx` gives a straight-line
+  path at the time-of-day speed) with speed noise; emits GPS pings to a local log (not yet MQTT).
+  Done when: plot of a simulated route matches the provider's geometry; pings respect interval rules; the
+  same scenario runs identically with `approx` and with a self-hosted `osrm` provider.
 
 - [ ] **M03 · Recorder + metrics v0** · deps M01
   Do: recorder writes runs/ folder with metrics.json and CSVs; `python -m sim compare`.
@@ -93,9 +104,14 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: integration tests for all acceptance criteria; expiry fires with FakeClock advance.
 
 - [ ] **B10 · Routing module** · deps B01, I02
-  Docs: architecture.md §3.2, ADR-0004
-  Do: OSRM client (route, table), ETA service (OSRM + time-of-day factor table from config), Nominatim client; fallback estimation when OSRM is down.
-  Done when: unit tests with recorded OSRM responses; integration test against tiny OSM extract.
+  Docs: architecture.md §3.2 and §3.4, ADR-0010
+  Do: `routing` module built on the I02 provider interface — route and table through `RoutingProvider`
+  (never a hard-coded OSRM client), ETA service (provider result × time-of-day factor table from config),
+  Nominatim client (backend-only, cached, explicit search only); degradation ladder cache → `osrm` →
+  `approx` with `approximate: true` surfaced in API responses.
+  Done when: unit tests with recorded OSRM responses; tests prove the ETA service degrades to `approx` when
+  OSRM errors, times out or is rate-limited, and marks those ETAs approximate; integration test against a
+  tiny OSM extract (skipped unless a self-hosted `OSRM_URL` is configured).
 
 - [ ] **B11 · Fleet duty + MQTT credentials** · deps B06
   Docs: DRV-02, mqtt-topics.md (Access control)
@@ -151,8 +167,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: each role sees only its screens (widget tests for all 5 roles); unauthorized deep links redirect.
 
 - [ ] **A05 · Shared map widget** · deps A01, I02
-  Do: MapLibre widget with self-hosted tiles, attribution, markers, route polyline, pin picker.
-  Done when: renders NCR tiles on device; pin drag returns coordinates.
+  Docs: ADR-0010, coding-standards.md §3
+  Do: MapLibre widget with tiles from `TILES_URL` (never hard-coded), always-visible attribution, markers,
+  route polyline, pin picker.
+  Done when: renders NCR tiles on device; pin drag returns coordinates; widget test fails if the tile URL is
+  a literal or the attribution is missing.
 
 - [ ] **A06 · Employee: request + confirmation + home** · deps A04, A05, B09
   Screens: E-01..E-03 · Stories: EMP-02, EMP-06
@@ -202,6 +221,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 - [ ] **M08 · Scenario suite S01–S07 in CI** · deps M06, M07, F02
   Done when: `make sim-quick` in PR CI; `make sim-full` nightly with artifacts.
+
+## Optional / later
+
+- [ ] **I02b · Self-hosted OSRM** (optional) · deps I02
+  Docs: dev-environment.md §8, ADR-0004, ADR-0010, OQ-21
+  Do only when public-server volume, rate limits or reliability become a problem — decide before the paid
+  pilot. `infra/scripts/prepare_maps.sh` (download, crop NCR, OSRM MLD prep, Planetiler tiles);
+  `infra/docker-compose.maps.yml` with osrm (+ optional tileserver); repoint `OSRM_URL` (and `TILES_URL`).
+  Done when: `curl "$OSRM_URL/route/v1/driving/77.3218,28.5703;77.3910,28.5123"` returns a route from the
+  local container; tiles render in tileserver's viewer; no application code changed — only env values;
+  simulator runs at full speed against it.
 
 ## Release (Phase 1)
 

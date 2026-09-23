@@ -9,7 +9,8 @@ pooling, supervisor control modes, and (later) demand prediction.
 
 - One **universal Flutter app** (Android first) renders screens by role: employee, driver, supervisor, operator admin, client admin.
 - **Backend:** Python + FastAPI modular monolith, PostgreSQL + PostGIS, Redis, MQTT (Mosquitto) for GPS, Celery workers.
-- **Maps:** OpenStreetMap only, self-hosted (OSRM routing, Nominatim geocoding, self-hosted vector tiles, MapLibre). **No paid map APIs. No WhatsApp API.**
+- **Maps:** OpenStreetMap only (OSRM routing, Nominatim geocoding, OSM tiles, MapLibre).
+  Early phases use the **public OSM servers**; self-hosting is the documented upgrade path, switched by config only (ADR-0010). **No paid map APIs. No WhatsApp API.**
 - **Simulator:** Python + SimPy closed-loop simulator that drives the real API and MQTT (like ArduPilot SITL).
 
 ## Repository layout
@@ -17,7 +18,7 @@ pooling, supervisor control modes, and (later) demand prediction.
 app/         Flutter universal app (Android, later iOS + web dashboards)
 backend/     FastAPI service + Celery workers + Alembic migrations
 simulator/   SimPy closed-loop simulator + scenario files
-infra/       Docker Compose, OSRM, Nominatim, tiles, Mosquitto, Caddy configs
+infra/       Docker Compose, Mosquitto, Caddy configs (optional self-hosted OSRM, Nominatim, tiles)
 docs/        All specifications (source of truth)
 ```
 
@@ -45,14 +46,18 @@ docs/        All specifications (source of truth)
 4. **Business numbers come from config, not code.** Detour limits, weights, timeouts, windows: see `allocation-rules.md` config keys.
 5. **Every state change goes through the state machine** in `trip-lifecycle.md`. No direct status writes.
 6. **Overridden or locked trips must never be changed by the optimizer.**
-7. **No paid APIs, no WhatsApp API, no Google Maps.** OSM stack only.
+7. **No paid APIs, no WhatsApp API, no Google Maps.** OSM stack only. Map service URLs always come from
+   env config (`OSRM_URL`, `NOMINATIM_URL`, `TILES_URL`) — never hard-coded. When pointing at the **public**
+   OSM servers, respect their usage policy (ADR-0010): calls only from the backend, identifying `User-Agent`
+   from `OSM_USER_AGENT` / `OSM_CONTACT_EMAIL`, a shared 1 request/second limit per service, Redis-cached
+   results, no client-side autocomplete, and bulk callers (simulator, optimizer) use the `approx` provider.
 8. **Do not invent requirements.** If a spec is missing or ambiguous, stop and add an item to `docs/07-decisions/open-questions.md`, then ask.
 9. Record significant design choices as an ADR in `docs/03-architecture/adr/` and a line in `docs/07-decisions/decision-log.md`.
 10. Keep secrets out of the repo. Use `.env` (see `docs/05-engineering/dev-environment.md`).
 
 ## Commands (once code exists)
 ```
-make up            # start infra (postgres, redis, mosquitto, osrm, nominatim, tiles)
+make up            # start infra (postgres, redis, mosquitto)
 make backend-dev   # run FastAPI with reload
 make worker        # run Celery worker
 make test          # backend unit + integration tests

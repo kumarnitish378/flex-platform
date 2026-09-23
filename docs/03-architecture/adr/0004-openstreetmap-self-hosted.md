@@ -1,7 +1,12 @@
 # ADR-0004: OpenStreetMap stack, self-hosted; no paid map APIs
 
-- Status: accepted
+- Status: accepted, **amended by ADR-0010**
 - Date: 2026-09-24
+
+> **Amended 2026-09-24 by [ADR-0010](0010-public-osm-servers-early-phases.md).** The OSM-only, no-paid-API
+> decision below stands. What changed: *self-hosted* is no longer required in development and the early
+> phases — the public OSM servers are used first, and self-hosting is an upgrade path switched by config
+> (`OSRM_URL`, `NOMINATIM_URL`, `TILES_URL`) only.
 
 ## Context
 Cost control and independence from per-request pricing.

@@ -4,6 +4,7 @@ Newest first. Significant technical decisions also have an ADR.
 
 | Date | Decision | Why | Ref |
 |---|---|---|---|
+| 2026-09-24 | Use the **public OSM servers** (OSRM demo, Nominatim, OSM tiles) for development and early phases; self-hosting stays the upgrade path, switchable by config only. Routing provider interface (`osrm` / `approx` / `cached`), shared 1 req/s limiter with `approx` fallback, identifying User-Agent, backend-only cached geocoding, simulator and optimizer on `approx`, attribution on every map | Start building without a 16 GB map-server setup, while staying inside the OSM usage policy | ADR-0010 (amends ADR-0004) |
 | 2026-09-24 | Contract-first API; Dart client generated from `api-spec.yaml` | Keep app and backend in sync with AI agents working on both | ADR-0009 |
 | 2026-09-24 | Backend: Python + FastAPI modular monolith, PostgreSQL + PostGIS, Redis, Celery, Mosquitto MQTT, Docker Compose, Caddy, Prometheus/Grafana, GitHub Actions | Same language as optimizer/ML/simulator; simple ops for a small team | ADR-0001, 0002, 0005, 0007 |
 | 2026-09-24 | Flutter for all clients; web build for supervisor/admin dashboards later | One codebase for Android, iOS, web | ADR-0003 |

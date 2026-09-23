@@ -12,6 +12,14 @@ Numbers are pilot targets; revisit after Phase 1 measurements.
 | Optimizer batch run (Phase 3) | ≤ 20 s for 50 requests / 30 vehicles |
 | GPS ping interval while on duty | 5 s moving, 30 s stationary (> 2 min below 1 m/s) |
 | Pilot scale | 1 operator, ≤ 200 vehicles, ≤ 5,000 employees, ≤ 3,000 trips/day |
+| Routing throughput on public OSM servers | 1 request/second per service (shared); above that, ETAs degrade to `approx` |
+
+**ETA accuracy depends on the routing provider** (ADR-0010). Accuracy targets (OQ-15: p90 error ≤ 8 min)
+apply to the `osrm` provider. In `approx` mode — straight-line distance × 1.4 with a time-of-day speed
+table, used offline, by the simulator and whenever OSRM is rate-limited, slow or down — error is materially
+larger, especially where the road network detours (river, rail, expressway entry). Such ETAs are flagged
+`approximate` in API responses and shown as approximate in the app, and are excluded from ETA-accuracy
+reporting.
 
 ## Availability and reliability
 - Pilot target 99.5% monthly for API and tracking.
@@ -43,9 +51,12 @@ Numbers are pilot targets; revisit after Phase 1 measurements.
 ## Operability
 - Structured JSON logs with request ID and operator ID.
 - Metrics (Prometheus): request latency, error rate, GPS ping rate per vehicle, stale vehicles, pending requests, optimizer duration.
-- Health endpoints: `/health/live`, `/health/ready` (DB, Redis, MQTT, OSRM).
+- Health endpoints: `/health/live`, `/health/ready` (DB, Redis, MQTT, OSRM). A failing OSRM check degrades
+  readiness to a warning, not an outage — the `approx` provider keeps ETAs available.
+- Metrics also cover the routing provider: cache hit rate, calls per provider, rate-limiter fallbacks, share
+  of ETAs served as approximate.
 - Config changes via admin screens are versioned and audited.
 
 ## Portability
-- All services run with Docker Compose on one Linux VM (8 vCPU, 16 GB RAM suggested for NCR map extract + services).
+- All services run with Docker Compose on one Linux VM (4 vCPU, 8 GB RAM while using the public OSM servers; 8 vCPU, 16 GB RAM once the NCR map extract is self-hosted).
 - No vendor lock-in beyond optional Firebase Cloud Messaging for push (replaceable by ntfy).

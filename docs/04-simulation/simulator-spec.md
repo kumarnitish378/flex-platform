@@ -37,7 +37,7 @@ simulator/
   sim/agents/supervisor.py
   sim/traffic.py
   sim/events.py
-  sim/routing.py         # OSRM client (same instance as platform)
+  sim/routing.py         # routing provider client (approx by default; osrm only if self-hosted)
   sim/platform_client.py # REST + WS client (uses the generated Python client or httpx)
   sim/mqtt_client.py
   sim/recorder.py
@@ -53,8 +53,16 @@ simulator/
 - All agent timings are in simulated seconds.
 
 ## 4. Road network and movement
-- Uses the same OSRM instance and OSM data as the platform.
-- A vehicle following a route moves along the OSRM route geometry; its speed per segment = OSRM speed × traffic factor × noise (lognormal, σ = 0.15).
+- **Default routing provider: `approx`** (ADR-0010) — haversine distance × road factor 1.4, speed from the
+  time-of-day table, no network calls. A simulator run issues thousands of route requests, so it must
+  **never** be pointed at the public OSM servers.
+- `osrm` may be used only when `OSRM_URL` points at a self-hosted instance (task I02b); then the simulator
+  and the platform share it, as before.
+- A vehicle following a route moves along the geometry the provider returns (a straight-line path under
+  `approx`); its speed per segment = provider speed × traffic factor × noise (lognormal, σ = 0.15).
+- Because `approx` ignores the road network, absolute wait and travel times are optimistic. Use runs to
+  compare policies and config values against each other (same seed, same provider), not to predict absolute
+  minutes; ETA-accuracy metrics are only meaningful under a self-hosted `osrm` provider.
 - GPS ping generation: position along route + Gaussian noise (σ = 5 m), interval per `mqtt-topics.md` rules; optional ping loss rate.
 
 ## 5. Agents
@@ -101,6 +109,7 @@ seed: 42
 start: "2026-10-05T00:30:00Z"     # 06:00 IST
 duration_hours: 16
 speed_factor: 60
+routing: approx                   # approx (default) | osrm (self-hosted only)
 operator:
   config_overrides:
     alert_wait_minutes: 20

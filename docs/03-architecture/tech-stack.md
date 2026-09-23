@@ -17,6 +17,7 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | ML (Phase 4) | scikit-learn, LightGBM, pandas | |
 | Auth | PyJWT; OTP via SMS gateway adapter (pluggable; console adapter in dev) | |
 | HTTP client | httpx | |
+| Routing providers | `osrm` / `approx` / `cached` behind one interface, selected by `ROUTING_PROVIDER` (ADR-0010) | |
 | Lint / format | ruff (lint + format) | |
 | Types | mypy (strict on `domain/`) | |
 | Tests | pytest, pytest-asyncio, testcontainers (Postgres, Redis) | |
@@ -28,7 +29,7 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | State management | Riverpod | |
 | Routing | go_router | |
 | API client | Generated from `api-spec.yaml` (openapi-generator, dart-dio) | |
-| Maps | maplibre_gl (MapLibre Native) with self-hosted vector tiles | |
+| Maps | maplibre_gl (MapLibre Native); tile URL from `TILES_URL` — public OSM tiles early, self-hosted later | |
 | Location | geolocator + foreground service (flutter_foreground_task) | |
 | MQTT | mqtt_client | |
 | Push | firebase_messaging (FCM) behind a `PushService` interface | |
@@ -43,17 +44,25 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | Database | PostgreSQL 16 + PostGIS 3 |
 | Cache / pubsub / broker | Redis 7 |
 | MQTT broker | Eclipse Mosquitto 2 (EMQX if scale requires) |
-| Routing | OSRM (MLD algorithm, car profile), Delhi NCR extract |
-| Geocoding | Nominatim (self-hosted) |
-| Map tiles | Planetiler-generated OpenMapTiles-schema MBTiles + tileserver-gl |
+| Routing | OSRM — public demo server (`router.project-osrm.org`) in early phases; self-hosted OSRM (MLD, car profile, Delhi NCR extract) later. URL from `OSRM_URL` |
+| Routing fallback | `approx` provider: haversine × 1.4 road factor, time-of-day speed table, no network |
+| Routing cache / rate limit | Redis: route + table cache (TTL from config) and a shared 1 req/s-per-service token bucket for public servers |
+| Geocoding | Nominatim — public (`nominatim.openstreetmap.org`) in early phases, self-hosted later. URL from `NOMINATIM_URL`; backend-only, cached |
+| Map tiles | Public OpenStreetMap tile server in early phases; Planetiler-generated OpenMapTiles-schema MBTiles + tileserver-gl later. URL from `TILES_URL` |
 | Reverse proxy / TLS | Caddy |
 | Containers | Docker + Docker Compose |
 | Monitoring | Prometheus + Grafana; structured JSON logs |
 | CI/CD | GitHub Actions |
 | Push notifications | Firebase Cloud Messaging (free) or ntfy (self-hosted) |
 
+Map services are chosen by configuration only (ADR-0010), never in code. While on the public servers the
+backend sends an identifying `User-Agent` (`OSM_USER_AGENT` + `OSM_CONTACT_EMAIL`) and stays within 1
+request/second per service; over-limit requests fall back to `approx` and are flagged approximate. Every map
+screen shows "© OpenStreetMap contributors".
+
 ## Simulator
 Python 3.12, SimPy, httpx, aiomqtt, PyYAML, pandas (results), matplotlib (reports).
+Uses the `approx` routing provider by default; it must never call the public OSM servers in bulk.
 
 ## Explicitly excluded
 Google Maps / Mapbox / MapmyIndia paid APIs, WhatsApp Business API, proprietary routing or traffic APIs, paid background-geolocation SDKs.
