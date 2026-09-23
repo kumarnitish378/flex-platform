@@ -2,7 +2,8 @@
 
 Cab operations platform for small and mid-sized cab operators serving corporate employee transport.
 
-**Status:** specification stage. No code yet. All specs are in `docs/`.
+**Status:** early implementation (Phase 0). Specs in `docs/` are the source of truth; current work is
+tracked in `docs/06-phases/phase-1-tasks.md`.
 
 ## What it does (full vision)
 - Employees request cabs in an app and see the cab, driver, live location and ETA.
@@ -28,8 +29,39 @@ app/         Flutter universal app
 backend/     FastAPI + workers + migrations
 simulator/   Closed-loop simulator
 infra/       Docker Compose and service configs
+scripts/     Developer commands (make targets and their PowerShell equivalents)
 docs/        Specifications
 ```
+
+## Developer commands
+`make help` lists every target, what it does, and whether it is usable yet (targets belonging to
+unfinished tasks say which task creates them).
+
+| | |
+|---|---|
+| `make help` | list targets |
+| `make install` | create `.venv` and install backend + simulator dependencies |
+| `make up` / `make down` | start / stop core infra containers (postgres, redis, mosquitto) |
+| `make test` | backend tests |
+| `make lint` | ruff check, ruff format --check, mypy |
+| `make backend-dev` | run the API with reload |
+| `make sim-quick` / `make sim-full` | simulator suites |
+
+**Windows:** GNU make on Windows runs recipes through `cmd.exe` and is easy to break, so every target
+has an identical PowerShell entry point in `scripts/dev.ps1`:
+
+```powershell
+.\scripts\dev.ps1 help
+.\scripts\dev.ps1 install
+.\scripts\dev.ps1 test
+```
+
+Both routes run the same underlying commands — use whichever works on your machine.
+
+## Configuration
+Copy `.env.example` to `.env` and edit it; `.env` is git-ignored and must never be committed.
+Map service URLs (`OSRM_URL`, `TILES_URL`) always come from configuration, never from code, and
+`OSM_CONTACT_EMAIL` must be a real address before anything calls a public OSM server (ADR-0010).
 
 ## Licence notes
 Map data © OpenStreetMap contributors, available under the Open Database Licence (ODbL). Attribution must be shown on every map screen.

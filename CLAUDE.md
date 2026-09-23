@@ -21,6 +21,7 @@ app/         Flutter universal app (Android, later iOS + web dashboards)
 backend/     FastAPI service + Celery workers + Alembic migrations
 simulator/   SimPy closed-loop simulator + scenario files
 infra/       Docker Compose, Mosquitto, Caddy configs (optional self-hosted OSRM, Nominatim, tiles)
+scripts/     Developer commands behind `make` (and PowerShell equivalents in scripts/dev.ps1)
 docs/        All specifications (source of truth)
 ```
 

@@ -6,7 +6,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Foundation (Phase 0)
 
-- [ ] **F01 · Monorepo skeleton**
+- [x] **F01 · Monorepo skeleton**
   Docs: CLAUDE.md, coding-standards.md
   Do: create `app/`, `backend/`, `simulator/`, `infra/`, root `Makefile`, `.gitignore`, `.env.example`, `.editorconfig`, PR template with checklist.
   Done when: `make help` lists targets; repo tree matches CLAUDE.md.

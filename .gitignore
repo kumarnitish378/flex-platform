@@ -1,0 +1,46 @@
+# --- secrets / environment -------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+
+# --- Flutter / Dart --------------------------------------------------------
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/ios/Pods/
+app/android/.gradle/
+app/android/local.properties
+*.iml
+
+# --- Simulator outputs -----------------------------------------------------
+simulator/runs/
+runs/
+
+# --- Infra / map data (large, never committed) -----------------------------
+infra/data/
+infra/tiles/*.mbtiles
+*.osm.pbf
+*.osrm*
+
+# --- Editors / OS ----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
