@@ -11,9 +11,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: create `app/`, `backend/`, `simulator/`, `infra/`, root `Makefile`, `.gitignore`, `.env.example`, `.editorconfig`, PR template with checklist.
   Done when: `make help` lists targets; repo tree matches CLAUDE.md.
 
-- [ ] **F02 · CI pipeline** · deps F01
+- [~] **F02 · CI pipeline** · deps F01
   Do: GitHub Actions workflow with jobs: backend-lint, backend-test, app-analyze, app-test, sim-quick (initially no-op placeholders that pass once each part exists).
   Done when: workflow runs green on an empty PR.
+  **Written but not active:** the workflow is complete at `.github/workflows-pending/ci.yml`. No credential
+  on the dev machine has the GitHub `workflow` OAuth scope, so a push containing `.github/workflows/*` is
+  rejected. Activate with `gh auth refresh -s workflow` then `git mv` it into `.github/workflows/`; the
+  green-run criterion is unverified until then. See `.github/workflows-pending/README.md`.
 
 - [ ] **I01 · Infra compose (core)** · deps F01
   Docs: dev-environment.md

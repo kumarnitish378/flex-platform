@@ -1,0 +1,16 @@
+# Normalise line endings so Linux CI and Windows checkouts agree.
+* text=auto eol=lf
+
+# Windows-only files keep CRLF in the working tree.
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Makefile recipes require real tabs; never let a filter touch them.
+Makefile text eol=lf
+
+# Binary / map data.
+*.png      binary
+*.jpg      binary
+*.mbtiles  binary
+*.osm.pbf  binary
