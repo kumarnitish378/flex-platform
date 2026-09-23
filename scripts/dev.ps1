@@ -49,6 +49,7 @@ $Commands = @{
     'install'     = { Invoke-InDir '.' 'python' @('scripts/venv_setup.py', '--install') }
     'up'          = { Invoke-Compose @('compose', '-f', 'infra/docker-compose.yml', 'up', '-d') }
     'down'        = { Invoke-Compose @('compose', '-f', 'infra/docker-compose.yml', 'down') }
+    'check-infra' = { Invoke-InDir '.' 'python' @('scripts/check_infra.py') }
     'up-maps'     = { Invoke-Compose @('compose', '-f', 'infra/docker-compose.yml', '-f', 'infra/docker-compose.maps.yml', 'up', '-d') }
     'migrate'     = { Invoke-InDir 'backend' 'python' @('-m', 'alembic', 'upgrade', 'head') }
     'seed'        = { Invoke-InDir 'backend' 'python' @('-m', 'app.cli', 'seed') }

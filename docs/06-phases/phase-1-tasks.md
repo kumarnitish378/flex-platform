@@ -19,10 +19,14 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   rejected. Activate with `gh auth refresh -s workflow` then `git mv` it into `.github/workflows/`; the
   green-run criterion is unverified until then. See `.github/workflows-pending/README.md`.
 
-- [ ] **I01 · Infra compose (core)** · deps F01
+- [~] **I01 · Infra compose (core)** · deps F01
   Docs: dev-environment.md
   Do: `infra/docker-compose.yml` with postgres(PostGIS), redis, mosquitto (dev config + ACL placeholder), health checks; `make up/down`.
   Done when: `make up` starts all; `psql` can `CREATE EXTENSION postgis`.
+  **Written, unverified:** compose file, PostGIS init SQL, mosquitto dev config + ACL placeholder and
+  health checks are complete and the YAML validates, but **Docker is not installed on the dev machine**, so
+  `make up` was never run. Install Docker Desktop, then `make up` and `make check-infra` - the latter runs
+  exactly this task's acceptance criteria (PostGIS extension, redis PING, mosquitto subscribe).
 
 - [ ] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
   Docs: ADR-0010, dev-environment.md §3–4, architecture.md §3.4

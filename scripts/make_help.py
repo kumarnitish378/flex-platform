@@ -22,6 +22,7 @@ REQUIREMENTS: dict[str, tuple[str, str]] = {
     "install": ("backend/pyproject.toml", "B01"),
     "up": ("infra/docker-compose.yml", "I01"),
     "down": ("infra/docker-compose.yml", "I01"),
+    "check-infra": ("infra/docker-compose.yml", "I01"),
     "up-maps": ("infra/docker-compose.maps.yml", "I02b"),
     "migrate": ("backend/alembic.ini", "B01"),
     "seed": ("backend/app/cli.py", "B02"),

@@ -4,7 +4,7 @@
 # (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
 # reads the `## <description>` comment on the line above each target.
 
-.PHONY: help venv install up down up-maps migrate seed backend-dev ingestor worker beat \
+.PHONY: help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
         test lint format api-client sim-quick sim-full maps
 
 ## List available targets and whether their prerequisites exist
@@ -26,6 +26,10 @@ up:
 ## Stop core infra containers
 down:
 	docker compose -f infra/docker-compose.yml down
+
+## Verify the core infra containers are up and usable (I01 acceptance checks)
+check-infra:
+	python scripts/check_infra.py
 
 ## Start the OPTIONAL self-hosted map containers (osrm, tileserver, nominatim) - task I02b/I02c
 up-maps:
