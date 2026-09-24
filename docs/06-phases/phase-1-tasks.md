@@ -88,7 +88,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: permission table in code per roles doc; `require()` dependency; `X-Active-Role` validation; parametrized permission test harness.
   Done when: harness runs over all registered routes and fails if a route lacks a permission declaration.
 
-- [ ] **B05 · Config service** · deps B02
+- [x] **B05 · Config service** · deps B02
   Docs: allocation-rules.md §1
   Do: `operator_config` + history; defaults and ranges; GET/PATCH `/admin/config` with audit.
   Done when: out-of-range values rejected (422); history row written on change.
