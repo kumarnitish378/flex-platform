@@ -6,7 +6,6 @@ arguments, which is the point of the injection in `create_app`.
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -37,7 +36,7 @@ def _hermetic_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(field_name.upper(), raising=False)
         monkeypatch.delenv(field_name.lower(), raising=False)
     # A developer's local .env must not reach the tests either.
-    monkeypatch.setitem(Settings.model_config, "env_file", None)  # type: ignore[typeddict-item]
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
 
 
 @pytest.fixture(autouse=True)
