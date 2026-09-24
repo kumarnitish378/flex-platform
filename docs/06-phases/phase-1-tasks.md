@@ -57,7 +57,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `make api-client` generates Dart client into `app/lib/data/api/`; wrapper with auth interceptor (token + `X-Active-Role`, refresh on 401).
   Done when: generated client compiles; interceptor unit-tested.
 
-- [ ] **M01 · Simulator skeleton** · deps F01, I02
+- [x] **M01 · Simulator skeleton** · deps F01, I02
   Docs: simulator-spec.md §2–4, ADR-0010
   Do: package layout, CLI, scenario YAML loader + schema validation, SimPy engine, routing through the
   provider interface (`approx` by default; `osrm` only when `OSRM_URL` is self-hosted), seeded RNG.
