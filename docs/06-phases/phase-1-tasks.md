@@ -97,7 +97,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Docs: api-spec.yaml /admin/*, user stories OPA-01..03
   Done when: CRUD endpoints pass contract + permission tests.
 
-- [ ] **B07 · Employees + CSV import** · deps B06
+- [x] **B07 · Employees + CSV import** · deps B06
   Docs: CLA-01, api-spec import endpoint
   Do: employee CRUD scoped for client_admin; CSV import with dry-run validation report; zone derivation stub (null until zones exist).
   Done when: import of a 500-row sample file reports errors per row; dry run writes nothing.

@@ -34,6 +34,7 @@ from app.modules.auth.otp import build_otp_sender
 from app.modules.auth.router import router as auth_router
 from app.modules.config.router import router as config_router
 from app.modules.fleet.router import router as fleet_router
+from app.modules.people.router import router as people_router
 from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
 
 logger = get_logger(__name__)
@@ -100,6 +101,7 @@ def create_app(
     api.include_router(auth_router)
     api.include_router(config_router)
     api.include_router(fleet_router)
+    api.include_router(people_router)
     app.include_router(api)
 
     logger.info(
