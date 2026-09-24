@@ -19,14 +19,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   committed `.env`) and `backend-packaging`, added after CI caught an undeclared runtime dependency that a
   test-only install had masked. All eight are required status checks on `main`.
 
-- [~] **I01 · Infra compose (core)** · deps F01
+- [x] **I01 · Infra compose (core)** · deps F01
   Docs: dev-environment.md
   Do: `infra/docker-compose.yml` with postgres(PostGIS), redis, mosquitto (dev config + ACL placeholder), health checks; `make up/down`.
   Done when: `make up` starts all; `psql` can `CREATE EXTENSION postgis`.
-  **Written, unverified:** compose file, PostGIS init SQL, mosquitto dev config + ACL placeholder and
-  health checks are complete and the YAML validates, but **Docker is not installed on the dev machine**, so
-  `make up` was never run. Install Docker Desktop, then `make up` and `make check-infra` - the latter runs
-  exactly this task's acceptance criteria (PostGIS extension, redis PING, mosquitto subscribe).
+  Verified on Docker 29.8.0: all three containers healthy, `CREATE EXTENSION postgis` returns
+  `3.4 USE_GEOS=1 USE_PROJ=1 USE_STATS=1`, redis PONGs, mosquitto accepts a subscription.
+  `make check-infra` runs these checks on demand.
 
 - [x] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
   Docs: ADR-0010, dev-environment.md §3–4, architecture.md §3.4

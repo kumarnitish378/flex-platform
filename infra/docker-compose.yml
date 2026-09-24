@@ -64,8 +64,12 @@ services:
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
     healthcheck:
-      # mosquitto_sub exits 0 as soon as the broker accepts the connection.
-      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/uptime' -C 1 -W 3 -i healthcheck || exit 1"]
+      # -E exits as soon as the SUBACK arrives, so this proves connect + subscribe
+      # without waiting for a publisher.
+      #
+      # Deliberately NOT $SYS/#: the dev ACL grants anonymous clients sc/v1/# only, so a
+      # $SYS subscription is silently denied and the check would hang until it timed out.
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t 'sc/v1/#' -E -i healthcheck || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
