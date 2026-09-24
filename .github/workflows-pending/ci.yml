@@ -76,6 +76,12 @@ jobs:
       - if: needs.detect.outputs.backend == 'true'
         working-directory: backend
         run: pytest -q
+      # B08 acceptance: the state machines stay fully covered, branches included.
+      - if: needs.detect.outputs.backend == 'true'
+        working-directory: backend
+        run: |
+          test -f app/domain/state_machines.py || exit 0
+          pytest tests/unit/test_state_machines.py -q             --cov=app.domain.state_machines --cov-branch --cov-fail-under=100
 
   app-analyze:
     needs: detect

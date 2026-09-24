@@ -58,6 +58,7 @@ $Commands = @{
     'worker'      = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'celery', '-A', 'app.workers.celery_app', 'worker', '--loglevel=info') }
     'beat'        = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'celery', '-A', 'app.workers.celery_app', 'beat', '--loglevel=info') }
     'test'        = { Invoke-InDir '.' 'python' (@('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'pytest') + $Rest) }
+    'test-domain-coverage' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'pytest', 'tests/unit/test_state_machines.py', '--cov=app.domain.state_machines', '--cov-branch', '--cov-report=term-missing', '--cov-fail-under=100') }
     'lint'        = { Invoke-InDir '.' 'python' @('scripts/lint.py') }
     'format'      = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'ruff', 'format', '.') }
     'api-client'  = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'api-client', 'A02') }

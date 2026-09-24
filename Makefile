@@ -5,7 +5,7 @@
 # reads the `## <description>` comment on the line above each target.
 
 .PHONY: help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
-        test lint format api-client sim-quick sim-full maps
+        test test-domain-coverage lint format api-client sim-quick sim-full maps
 
 ## List available targets and whether their prerequisites exist
 help:
@@ -62,6 +62,10 @@ beat:
 ## Run backend tests (unit + integration + contract)
 test:
 	python scripts/venv_exec.py --cwd backend -m pytest
+
+## Enforce 100% branch coverage of the state machines (B08 acceptance)
+test-domain-coverage:
+	python scripts/venv_exec.py --cwd backend -m pytest tests/unit/test_state_machines.py --cov=app.domain.state_machines --cov-branch --cov-report=term-missing --cov-fail-under=100
 
 ## Run ruff check and mypy
 lint:

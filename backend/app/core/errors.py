@@ -1,8 +1,9 @@
-"""Domain exceptions and the single handler that turns them into the `Error` schema.
+"""HTTP mapping for domain exceptions.
 
-Codes and shape come from `api-spec.yaml` (`components.schemas.Error`):
-`{code, message, details?}`. Services raise these; routers never build error responses
-by hand (`coding-standards.md` §2 rule 7).
+The exception classes themselves live in `app/domain/errors.py` so the domain layer stays
+free of framework imports; this module only turns them into the `Error` response shape
+from `api-spec.yaml` and is the single place that does so
+(`coding-standards.md` §2 rule 7).
 """
 
 from __future__ import annotations
@@ -15,58 +16,28 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_logger
+from app.domain.errors import (
+    Conflict,
+    DomainError,
+    Forbidden,
+    InvalidTransition,
+    NotFound,
+    RateLimited,
+    ValidationFailed,
+)
+
+__all__ = [
+    "Conflict",
+    "DomainError",
+    "Forbidden",
+    "InvalidTransition",
+    "NotFound",
+    "RateLimited",
+    "ValidationFailed",
+    "register_error_handlers",
+]
 
 logger = get_logger(__name__)
-
-
-class DomainError(Exception):
-    """Base class. `code` matches the Error schema's documented examples."""
-
-    code: str = "internal_error"
-    http_status: int = status.HTTP_500_INTERNAL_SERVER_ERROR
-
-    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
-        super().__init__(message)
-        self.message = message
-        self.details = details or {}
-
-    def to_payload(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"code": self.code, "message": self.message}
-        if self.details:
-            payload["details"] = self.details
-        return payload
-
-
-class NotFound(DomainError):
-    code = "not_found"
-    http_status = status.HTTP_404_NOT_FOUND
-
-
-class Forbidden(DomainError):
-    code = "forbidden"
-    http_status = status.HTTP_403_FORBIDDEN
-
-
-class InvalidTransition(DomainError):
-    """A state change that `trip-lifecycle.md` does not allow."""
-
-    code = "invalid_transition"
-    http_status = status.HTTP_409_CONFLICT
-
-
-class Conflict(DomainError):
-    code = "conflict"
-    http_status = status.HTTP_409_CONFLICT
-
-
-class ValidationFailed(DomainError):
-    code = "validation_error"
-    http_status = status.HTTP_422_UNPROCESSABLE_CONTENT
-
-
-class RateLimited(DomainError):
-    code = "rate_limited"
-    http_status = status.HTTP_429_TOO_MANY_REQUESTS
 
 
 def _error_response(status_code: int, payload: dict[str, Any]) -> JSONResponse:

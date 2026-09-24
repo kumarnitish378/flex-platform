@@ -103,7 +103,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: employee CRUD scoped for client_admin; CSV import with dry-run validation report; zone derivation stub (null until zones exist).
   Done when: import of a 500-row sample file reports errors per row; dry run writes nothing.
 
-- [ ] **B08 · Domain: state machines** · deps B01
+- [x] **B08 · Domain: state machines** · deps B01
   Docs: trip-lifecycle.md
   Do: pure transition functions for request, trip, stop, vehicle; table-driven tests of all allowed/disallowed transitions.
   Done when: 100% branch coverage of `domain/state_machines.py`.

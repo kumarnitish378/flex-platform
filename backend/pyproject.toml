@@ -19,6 +19,7 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
+    "pytest-cov==7.0.0",
     "httpx==0.28.1",
     "ruff==0.16.8",
     "mypy==2.3.1",
@@ -46,6 +47,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "N"]
 # these exact classes (NotFound, Forbidden, InvalidTransition, Conflict, ValidationFailed)
 # and they appear in the api-spec error codes. The spec wins over the naming convention.
 "app/core/errors.py" = ["N818"]
+"app/domain/errors.py" = ["N818"]
 
 # --- mypy (coding-standards.md §2 rule 9) -----------------------------------
 [tool.mypy]

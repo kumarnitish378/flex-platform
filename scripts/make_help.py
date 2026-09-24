@@ -31,6 +31,7 @@ REQUIREMENTS: dict[str, tuple[str, str]] = {
     "worker": ("backend/app/workers/celery_app.py", "B01"),
     "beat": ("backend/app/workers/celery_app.py", "B01"),
     "test": ("backend/pyproject.toml", "B01"),
+    "test-domain-coverage": ("backend/app/domain/state_machines.py", "B08"),
     "lint": ("backend/pyproject.toml", "B01"),
     "format": ("backend/pyproject.toml", "B01"),
     "api-client": ("app/pubspec.yaml", "A02"),
