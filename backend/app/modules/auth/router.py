@@ -6,9 +6,10 @@ Routers parse, call a service, and return a schema — no business logic
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.core.dependencies import ClockDep, CurrentUserDep, SessionDep, SettingsDep
+from app.modules.auth.dependencies import public_route, self_service_route
 from app.modules.auth.otp import OtpSender
 from app.modules.auth.schemas import (
     DeviceRegister,
@@ -35,6 +36,7 @@ def _service(
     "/auth/otp/request",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Request OTP",
+    dependencies=[Depends(public_route())],
 )
 async def request_otp(
     body: OtpRequest,
@@ -48,7 +50,11 @@ async def request_otp(
     return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
-@router.post("/auth/otp/verify", summary="Verify OTP and obtain tokens")
+@router.post(
+    "/auth/otp/verify",
+    summary="Verify OTP and obtain tokens",
+    dependencies=[Depends(public_route())],
+)
 async def verify_otp(
     body: OtpVerify,
     request: Request,
@@ -67,7 +73,11 @@ async def verify_otp(
     )
 
 
-@router.post("/auth/refresh", summary="Rotate the refresh token")
+@router.post(
+    "/auth/refresh",
+    summary="Rotate the refresh token",
+    dependencies=[Depends(public_route())],
+)
 async def refresh(
     body: RefreshRequest,
     request: Request,
@@ -87,6 +97,7 @@ async def refresh(
     "/auth/logout",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Revoke a refresh token",
+    dependencies=[Depends(self_service_route())],
 )
 async def logout(
     body: RefreshRequest,
@@ -100,7 +111,11 @@ async def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/auth/me", summary="Current user, roles and permissions")
+@router.get(
+    "/auth/me",
+    summary="Current user, roles and permissions",
+    dependencies=[Depends(self_service_route())],
+)
 async def me(
     request: Request,
     session: SessionDep,
@@ -131,6 +146,7 @@ async def me(
     "/devices",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Register or update a device push token",
+    dependencies=[Depends(self_service_route())],
 )
 async def register_device(
     body: DeviceRegister,

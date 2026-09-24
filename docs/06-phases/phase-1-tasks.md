@@ -84,7 +84,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: OTP request/verify with console provider, rate limits, JWT access + rotating refresh, logout, `/auth/me` with permissions, `/devices`.
   Done when: integration tests cover success, wrong OTP, lockout, rate limit, refresh rotation, revoked token.
 
-- [ ] **B04 · Permission framework** · deps B03
+- [x] **B04 · Permission framework** · deps B03
   Do: permission table in code per roles doc; `require()` dependency; `X-Active-Role` validation; parametrized permission test harness.
   Done when: harness runs over all registered routes and fails if a route lacks a permission declaration.
 
