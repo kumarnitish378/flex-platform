@@ -1012,6 +1012,10 @@ components:
                 driver_name: {type: string}
                 driver_phone: {$ref: '#/components/schemas/Phone'}
                 pickup_eta: {type: string, format: date-time}
+                pickup_eta_approximate:
+                  type: boolean
+                  default: false
+                  description: true when the ETA is approximate (ADR-0010)
         locked: {type: boolean}
         cancel_reason: {type: [string, 'null']}
     TripStop:
@@ -1028,6 +1032,13 @@ components:
         status: {$ref: '#/components/schemas/StopStatus'}
         planned_eta: {type: string, format: date-time}
         latest_eta: {type: string, format: date-time}
+        eta_approximate:
+          type: boolean
+          default: false
+          description: >
+            true when the ETA came from the approx provider rather than road routing
+            (OSRM down, slow, or the shared public-server rate limit was exhausted).
+            Clients must show such ETAs as approximate. See ADR-0010.
         arrived_at: {type: [string, 'null'], format: date-time}
         done_at: {type: [string, 'null'], format: date-time}
     Trip:
@@ -1048,6 +1059,10 @@ components:
         registration_no: {type: string}
         trip_id: {type: [string, 'null'], format: uuid, description: existing trip if en-route reuse}
         eta_to_pickup_seconds: {type: integer}
+        eta_approximate:
+          type: boolean
+          default: false
+          description: true when this ETA is a straight-line estimate, not road routing (ADR-0010)
         seats_free_after: {type: integer}
         added_minutes_existing:
           type: array

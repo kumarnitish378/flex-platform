@@ -10,6 +10,7 @@ from app.modules.routing.factory import (
     build_rate_limiter,
     build_routing_provider,
 )
+from app.modules.routing.service import Eta, EtaConfig, EtaService
 from app.modules.routing.types import (
     GeocodingProvider,
     GeocodingUnavailableError,
@@ -21,6 +22,9 @@ from app.modules.routing.types import (
 )
 
 __all__ = [
+    "Eta",
+    "EtaConfig",
+    "EtaService",
     "GeocodingProvider",
     "GeocodingUnavailableError",
     "Place",

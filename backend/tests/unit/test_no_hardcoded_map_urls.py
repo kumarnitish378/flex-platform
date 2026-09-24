@@ -11,8 +11,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-SCANNED_DIRS = ("backend/app", "backend/alembic", "simulator", "app/lib", "infra")
+SCANNED_DIRS = ("backend/app", "backend/alembic", "simulator/sim", "app/lib", "infra")
 SCANNED_SUFFIXES = {".py", ".dart", ".yml", ".yaml", ".toml", ".conf"}
+
+# Test directories are deliberately out of scope. A test that proves "this public URL is
+# refused" has to name the URL, so scanning tests would forbid exactly the checks that
+# enforce the rule. Tests cannot reach a public server anyway: the simulator suite makes
+# httpx raise on any request, and the OSRM clients refuse public hosts at construction.
 
 # Any host that is donated OSM infrastructure.
 FORBIDDEN = re.compile(
@@ -44,7 +49,15 @@ def scanned_files() -> list[Path]:
 def test_repository_layout_is_as_expected() -> None:
     """If this fails the scan below is silently checking nothing."""
     assert (REPO_ROOT / "backend" / "app").is_dir()
+    assert (REPO_ROOT / "simulator" / "sim").is_dir()
     assert len(scanned_files()) > 5
+
+
+def test_the_scan_would_catch_a_real_offender(tmp_path: Path) -> None:
+    """Guard the guard: prove the pattern actually matches a hard-coded URL."""
+    assert FORBIDDEN.search('OSRM = "https://router.project-osrm.org"')
+    assert FORBIDDEN.search("tiles = 'http://tile.openstreetmap.org/{z}/{x}/{y}.png'")
+    assert not FORBIDDEN.search("OSRM = settings.osrm_url")
 
 
 def test_no_hardcoded_public_osm_urls_in_code() -> None:

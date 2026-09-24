@@ -148,9 +148,13 @@ jobs:
         shell: bash
         run: |
           # ADR-0010 rule 1: URLs come from env config only.
+          # Tests are excluded on purpose: a test proving a public URL is refused must
+          # name it. See backend/tests/unit/test_no_hardcoded_map_urls.py
           if grep -rInE 'https?://(router\.project-osrm\.org|tile\.openstreetmap\.org|nominatim\.openstreetmap\.org)' \
                --include='*.py' --include='*.dart' --include='*.yml' --include='*.yaml' \
-               --exclude-dir=docs backend app simulator infra 2>/dev/null; then
+               --exclude-dir=docs --exclude-dir=tests \
+               --exclude='settings.py' \
+               backend/app simulator/sim app infra 2>/dev/null; then
             echo "::error::Hard-coded public OSM URL found. Read it from config instead (ADR-0010 rule 1)."
             exit 1
           fi

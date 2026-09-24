@@ -30,7 +30,7 @@ from app.core.logging import (
 )
 from app.core.redis import create_redis, redis_check
 from app.core.settings import Settings, get_settings
-from app.modules.routing import build_geocoding_provider, build_routing_provider
+from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
 
 logger = get_logger(__name__)
 
@@ -63,6 +63,7 @@ def create_app(
     # OSM servers and a self-hosted stack is configuration only (ADR-0010).
     routing = build_routing_provider(settings, clock, redis)
     geocoding = build_geocoding_provider(settings)
+    eta = EtaService(routing, clock)
 
     health = HealthRegistry()
     health.register("database", database_check(engine), required=True)
@@ -81,6 +82,7 @@ def create_app(
     app.state.session_factory = create_session_factory(engine)
     app.state.redis = redis
     app.state.routing = routing
+    app.state.eta = eta
     app.state.geocoding = geocoding
     app.state.health = health
 

@@ -113,7 +113,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: create (self and on behalf), validation (duplicate window, time range), list mine, get, cancel with rules, expiry job via Clock-driven scheduler, near-expiry alert.
   Done when: integration tests for all acceptance criteria; expiry fires with FakeClock advance.
 
-- [ ] **B10 · Routing module** · deps B01, I02
+- [x] **B10 · Routing module** · deps B01, I02
   Docs: architecture.md §3.2 and §3.4, ADR-0010
   Do: `routing` module built on the I02 provider interface — route and table through `RoutingProvider`
   (never a hard-coded OSRM client), ETA service (provider result × time-of-day factor table from config);
