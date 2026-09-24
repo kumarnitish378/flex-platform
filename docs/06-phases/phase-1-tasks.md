@@ -11,15 +11,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: create `app/`, `backend/`, `simulator/`, `infra/`, root `Makefile`, `.gitignore`, `.env.example`, `.editorconfig`, PR template with checklist.
   Done when: `make help` lists targets; repo tree matches CLAUDE.md.
 
-- [~] **F02 · CI pipeline** · deps F01
+- [x] **F02 · CI pipeline** · deps F01
   Do: GitHub Actions workflow with jobs: backend-lint, backend-test, app-analyze, app-test, sim-quick (initially no-op placeholders that pass once each part exists).
   Done when: workflow runs green on an empty PR.
-  **Active but blocked on GitHub billing.** `.github/workflows/ci.yml` is in place and triggers correctly on
-  push and pull request. Every job fails at startup with zero steps and no logs; the check annotation reads:
-  *"The job was not started because recent account payments have failed or your spending limit needs to be
-  increased."* This is an account-level Actions billing problem on a private repository, not a workflow
-  defect. Fix in GitHub Settings -> Billing & plans (add a payment method / raise the spending limit), or
-  make the repository public, which makes Actions free. The green-run criterion stays unverified until then.
+  Green on PR #1: detect, backend-lint, backend-test, backend-packaging, app-analyze, app-test, sim-quick,
+  policy-guards. Two extra jobs beyond the task list: `policy-guards` (no hard-coded public OSM URLs, no
+  committed `.env`) and `backend-packaging`, added after CI caught an undeclared runtime dependency that a
+  test-only install had masked. All eight are required status checks on `main`.
 
 - [~] **I01 · Infra compose (core)** · deps F01
   Docs: dev-environment.md
