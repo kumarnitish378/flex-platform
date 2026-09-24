@@ -5,16 +5,20 @@ nobody imports is invisible to it and silently never gets a migration. Import ne
 modules here, and nowhere else, so there is one place to check.
 """
 
+from app.modules.alerts import models as alert_models
 from app.modules.auth import models as auth_models
 from app.modules.config import models as config_models
 from app.modules.fleet import models as fleet_models
 from app.modules.people import models as people_models
+from app.modules.requests import models as request_models
 from app.modules.tenancy import models as tenancy_models
 
 __all__ = [
+    "alert_models",
     "auth_models",
     "config_models",
     "fleet_models",
     "people_models",
+    "request_models",
     "tenancy_models",
 ]

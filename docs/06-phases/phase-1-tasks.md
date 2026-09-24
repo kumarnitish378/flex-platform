@@ -107,7 +107,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: pure transition functions for request, trip, stop, vehicle; table-driven tests of all allowed/disallowed transitions.
   Done when: 100% branch coverage of `domain/state_machines.py`.
 
-- [ ] **B09 · Ride requests** · deps B07, B08
+- [x] **B09 · Ride requests** · deps B07, B08
   Docs: EMP-02, EMP-06, api-spec /ride-requests*
   Do: create (self and on behalf), validation (duplicate window, time range), list mine, get, cancel with rules, expiry job via Clock-driven scheduler, near-expiry alert.
   Done when: integration tests for all acceptance criteria; expiry fires with FakeClock advance.

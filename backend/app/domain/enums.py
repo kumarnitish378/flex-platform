@@ -60,3 +60,61 @@ class VehicleType(StrEnum):
 class TrackerType(StrEnum):
     app = "app"
     esp32 = "esp32"
+
+
+class Direction(StrEnum):
+    """`glossary.md`: which way the rider is going."""
+
+    to_office = "to_office"
+    from_office = "from_office"
+
+
+class Urgency(StrEnum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class RequestChannel(StrEnum):
+    """How the request reached us (`data-model.md`, ride_request.channel)."""
+
+    app = "app"
+    supervisor = "supervisor"
+    offer = "offer"
+    sim = "sim"
+
+
+class ActorType(StrEnum):
+    """Who caused an event (`data-model.md`, ride_request_event.actor_type)."""
+
+    employee = "employee"
+    driver = "driver"
+    supervisor = "supervisor"
+    system = "system"
+    system_failsafe = "system_failsafe"
+    optimizer = "optimizer"
+
+
+class AlertType(StrEnum):
+    """`data-model.md`, alert.type. B09 raises `request_near_expiry`; B17 adds the rest."""
+
+    sos = "sos"
+    driver_issue = "driver_issue"
+    request_near_expiry = "request_near_expiry"
+    vip_no_vehicle = "vip_no_vehicle"
+    failsafe = "failsafe"
+    stale_vehicle = "stale_vehicle"
+    mode_prompt = "mode_prompt"
+    system = "system"
+
+
+class AlertSeverity(StrEnum):
+    info = "info"
+    warning = "warning"
+    critical = "critical"
+
+
+class AlertStatus(StrEnum):
+    open = "open"
+    acknowledged = "acknowledged"
+    resolved = "resolved"
