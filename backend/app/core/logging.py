@@ -45,8 +45,15 @@ def _add_request_context(
     return event_dict
 
 
-def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
-    """Configure structlog + stdlib logging. Safe to call more than once."""
+def configure_logging(
+    level: str = "INFO", json_output: bool = True, cache_loggers: bool = True
+) -> None:
+    """Configure structlog + stdlib logging. Safe to call more than once.
+
+    `cache_loggers=False` makes every call resolve `sys.stdout` afresh. Tests need that:
+    a cached logger keeps writing to the stream that was current when it was first used,
+    which after a captured test is a closed file.
+    """
     global _configured
 
     renderer: Any = (
@@ -69,7 +76,7 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
             logging.getLevelNamesMapping().get(level.upper(), logging.INFO)
         ),
         logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=cache_loggers,
     )
 
     # Route uvicorn/sqlalchemy stdlib logs through the same stream.

@@ -28,7 +28,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   `make up` was never run. Install Docker Desktop, then `make up` and `make check-infra` - the latter runs
   exactly this task's acceptance criteria (PostGIS extension, redis PING, mosquitto subscribe).
 
-- [ ] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
+- [x] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
   Docs: ADR-0010, dev-environment.md §3–4, architecture.md §3.4
   Do: settings for `ROUTING_PROVIDER`, `GEOCODING_PROVIDER`, `OSRM_URL`, `TILES_URL`, `OSM_USER_AGENT`,
   `OSM_CONTACT_EMAIL`, `ROUTING_CACHE_TTL_SECONDS`, `OSM_RATE_LIMIT_PER_SECOND`; `.env.example` pointing at

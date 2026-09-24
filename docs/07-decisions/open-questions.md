@@ -25,6 +25,7 @@ Agents: if you hit an unresolved question, add it here and ask the owner. Do not
 | OQ-19 | Data retention periods agreed with operator/client contracts | Phase 1 | Operator | open (defaults in non-functional.md) |
 | OQ-20 | Push: Firebase Cloud Messaging or self-hosted ntfy? | Phase 1 (B16) | Tech | open (FCM default) |
 | OQ-21 | Decide self-hosting (OSRM + tiles) before the paid pilot — **when**, not whether: the public OSM services have no SLA and may be withdrawn for commercial use, so task I02b must land before go-live. Trigger earlier if the 1 req/s cap or reliability bites | Before paid pilot | Tech | open (timing only — ADR-0010 §A3) |
+| OQ-22 | `approx` provider base speed for NCR: what average km/h should the no-network estimator assume off-peak? Implemented provisionally as 24 km/h with the peak factor 0.6 from `simulator-spec.md` section 6 and road factor 1.4 from `control-model.md`; only the base speed is unsourced. Calibrate from the first real GPS data (`road_speed_profile`) | Phase 1 (B10 tuning) | Tech | open (24 km/h provisional) |
 
 ---
 

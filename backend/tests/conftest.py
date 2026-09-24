@@ -14,11 +14,22 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.core.clock import FakeClock
+from app.core.logging import configure_logging
 from app.core.settings import Settings
 from app.main import create_app
 
 # A fixed, timezone-aware instant so every time-dependent assertion is deterministic.
 FIXED_NOW = datetime(2026, 9, 24, 4, 30, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_logging() -> None:
+    """Rebind logging to the current stdout for every test.
+
+    structlog caches the logger on first use, so without this a test that captures
+    stdout leaves every later test writing to a closed stream.
+    """
+    configure_logging(level="INFO", json_output=True, cache_loggers=False)
 
 
 @pytest.fixture

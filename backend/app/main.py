@@ -28,7 +28,9 @@ from app.core.logging import (
     request_id_var,
     user_id_var,
 )
+from app.core.redis import create_redis, redis_check
 from app.core.settings import Settings, get_settings
+from app.modules.routing import build_geocoding_provider, build_routing_provider
 
 logger = get_logger(__name__)
 
@@ -55,9 +57,16 @@ def create_app(
         clock = FakeClock(_sim_epoch()) if settings.is_sim else SystemClock()
 
     engine = engine if engine is not None else create_engine(settings)
+    redis = create_redis(settings)
+
+    # One place decides which map services are used, so switching between the public
+    # OSM servers and a self-hosted stack is configuration only (ADR-0010).
+    routing = build_routing_provider(settings, clock, redis)
+    geocoding = build_geocoding_provider(settings)
 
     health = HealthRegistry()
     health.register("database", database_check(engine), required=True)
+    health.register("redis", redis_check(redis), required=False)
 
     app = FastAPI(
         title="Smart Cab API",
@@ -70,6 +79,9 @@ def create_app(
     app.state.clock = clock
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
+    app.state.redis = redis
+    app.state.routing = routing
+    app.state.geocoding = geocoding
     app.state.health = health
 
     _register_middleware(app)
@@ -77,13 +89,22 @@ def create_app(
     app.include_router(_health_router())
     app.include_router(APIRouter(prefix=API_PREFIX))
 
-    logger.info("app_created", app_env=str(settings.app_env), clock=type(clock).__name__)
+    logger.info(
+        "app_created",
+        app_env=str(settings.app_env),
+        clock=type(clock).__name__,
+        routing_provider=routing.name,
+        geocoding_provider=geocoding.name,
+        public_osm=settings.uses_public_osm,
+    )
     return app
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
+    await app.state.routing.close()
+    await app.state.redis.aclose()
     engine: AsyncEngine = app.state.engine
     await engine.dispose()
 

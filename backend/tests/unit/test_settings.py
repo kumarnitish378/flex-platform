@@ -40,7 +40,14 @@ def test_prod_rejects_the_placeholder_jwt_secret() -> None:
 
 
 def test_prod_accepts_a_real_secret() -> None:
-    settings = Settings(app_env="prod", jwt_secret="a-real-secret", database_url=GOOD_DB)
+    settings = Settings(
+        app_env="prod",
+        jwt_secret="a-real-secret",
+        database_url=GOOD_DB,
+        # Defaults point at the public OSM servers, which require a contact address
+        # in production (ADR-0010 rule 4).
+        osm_contact_email="ops@example.com",
+    )
     assert settings.app_env is AppEnv.prod
     assert settings.is_sim is False
 
