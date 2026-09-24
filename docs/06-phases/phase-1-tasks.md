@@ -42,7 +42,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   literal anywhere outside settings (grep test); a test fails if any configured geocoding URL resolves to
   `nominatim.openstreetmap.org`; `ROUTING_PROVIDER=approx` works with the network unplugged.
 
-- [ ] **B01 · Backend skeleton** · deps F01, I01
+- [x] **B01 · Backend skeleton** · deps F01, I01
   Docs: architecture.md, coding-standards.md §2
   Do: FastAPI app factory, settings (pydantic-settings), async DB session, Alembic init, `Clock` (SystemClock + FakeClock), error handler, JSON logging, `/health/live` and `/health/ready`.
   Done when: `make backend-dev` serves health endpoints; unit test proves FakeClock is injectable; ruff + mypy clean.

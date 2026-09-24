@@ -37,31 +37,31 @@ up-maps:
 
 ## Apply database migrations (alembic upgrade head)
 migrate:
-	cd backend && python -m alembic upgrade head
+	python scripts/venv_exec.py --cwd backend -m alembic upgrade head
 
 ## Load the development fixture data
 seed:
-	cd backend && python -m app.cli seed
+	python scripts/venv_exec.py --cwd backend -m app.cli seed
 
 ## Run the API with auto-reload
 backend-dev:
-	cd backend && python -m uvicorn app.main:create_app --factory --reload --port 8000
+	python scripts/venv_exec.py --cwd backend -m uvicorn app.main:create_app --factory --reload --port 8000
 
 ## Run the MQTT GPS ingestor process
 ingestor:
-	cd backend && python -m app.ingestor
+	python scripts/venv_exec.py --cwd backend -m app.ingestor
 
 ## Run a Celery worker
 worker:
-	cd backend && python -m celery -A app.workers.celery_app worker --loglevel=info
+	python scripts/venv_exec.py --cwd backend -m celery -A app.workers.celery_app worker --loglevel=info
 
 ## Run the Celery beat scheduler
 beat:
-	cd backend && python -m celery -A app.workers.celery_app beat --loglevel=info
+	python scripts/venv_exec.py --cwd backend -m celery -A app.workers.celery_app beat --loglevel=info
 
 ## Run backend tests (unit + integration + contract)
 test:
-	cd backend && python -m pytest
+	python scripts/venv_exec.py --cwd backend -m pytest
 
 ## Run ruff check and mypy
 lint:
@@ -69,7 +69,7 @@ lint:
 
 ## Apply ruff formatting
 format:
-	cd backend && python -m ruff format .
+	python scripts/venv_exec.py --cwd backend -m ruff format .
 
 ## Regenerate the Dart API client from docs/03-architecture/api-spec.yaml
 api-client:
@@ -77,11 +77,11 @@ api-client:
 
 ## Simulator smoke scenarios (CI); always uses the approx routing provider
 sim-quick:
-	cd simulator && python -m sim suite quick
+	python scripts/venv_exec.py --cwd simulator -m sim suite quick
 
 ## Full simulator scenario suite
 sim-full:
-	cd simulator && python -m sim suite full
+	python scripts/venv_exec.py --cwd simulator -m sim suite full
 
 ## OPTIONAL (self-hosting only): prepare OSM map data - see dev-environment.md section 8
 maps:

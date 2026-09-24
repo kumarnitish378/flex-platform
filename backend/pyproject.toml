@@ -1,0 +1,76 @@
+[project]
+name = "smartcab-backend"
+version = "0.1.0"
+description = "Smart Cab backend: FastAPI modular monolith, Celery workers, MQTT ingestor"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.53.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy[asyncio]==2.0.54",
+    "asyncpg==0.31.0",
+    "greenlet==3.5.6",
+    "alembic==1.20.0",
+    "structlog==26.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "httpx==0.28.1",
+    "ruff==0.16.8",
+    "mypy==2.3.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# --- ruff (coding-standards.md §2 rule 10) ----------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may shadow builtins and use assert-heavy style.
+"tests/**" = ["N802"]
+# N818 wants every exception to end in "Error", but coding-standards.md §2 rule 7 names
+# these exact classes (NotFound, Forbidden, InvalidTransition, Conflict, ValidationFailed)
+# and they appear in the api-spec error codes. The spec wins over the naming convention.
+"app/core/errors.py" = ["N818"]
+
+# --- mypy (coding-standards.md §2 rule 9) -----------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["app", "tests"]
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+
+# Strict in the two packages the standards call out.
+[[tool.mypy.overrides]]
+module = ["app.domain.*", "app.core.*"]
+strict = true
+
+
+# --- pytest -----------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "requires_db: needs a running PostgreSQL+PostGIS (skipped when DATABASE_URL is unreachable)",
+    "requires_redis: needs a running Redis",
+]

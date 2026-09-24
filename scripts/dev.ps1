@@ -51,18 +51,18 @@ $Commands = @{
     'down'        = { Invoke-Compose @('compose', '-f', 'infra/docker-compose.yml', 'down') }
     'check-infra' = { Invoke-InDir '.' 'python' @('scripts/check_infra.py') }
     'up-maps'     = { Invoke-Compose @('compose', '-f', 'infra/docker-compose.yml', '-f', 'infra/docker-compose.maps.yml', 'up', '-d') }
-    'migrate'     = { Invoke-InDir 'backend' 'python' @('-m', 'alembic', 'upgrade', 'head') }
-    'seed'        = { Invoke-InDir 'backend' 'python' @('-m', 'app.cli', 'seed') }
-    'backend-dev' = { Invoke-InDir 'backend' 'python' @('-m', 'uvicorn', 'app.main:create_app', '--factory', '--reload', '--port', '8000') }
-    'ingestor'    = { Invoke-InDir 'backend' 'python' @('-m', 'app.ingestor') }
-    'worker'      = { Invoke-InDir 'backend' 'python' @('-m', 'celery', '-A', 'app.workers.celery_app', 'worker', '--loglevel=info') }
-    'beat'        = { Invoke-InDir 'backend' 'python' @('-m', 'celery', '-A', 'app.workers.celery_app', 'beat', '--loglevel=info') }
-    'test'        = { Invoke-InDir 'backend' 'python' (@('-m', 'pytest') + $Rest) }
+    'migrate'     = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'alembic', 'upgrade', 'head') }
+    'seed'        = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'app.cli', 'seed') }
+    'backend-dev' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'uvicorn', 'app.main:create_app', '--factory', '--reload', '--port', '8000') }
+    'ingestor'    = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'app.ingestor') }
+    'worker'      = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'celery', '-A', 'app.workers.celery_app', 'worker', '--loglevel=info') }
+    'beat'        = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'celery', '-A', 'app.workers.celery_app', 'beat', '--loglevel=info') }
+    'test'        = { Invoke-InDir '.' 'python' (@('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'pytest') + $Rest) }
     'lint'        = { Invoke-InDir '.' 'python' @('scripts/lint.py') }
-    'format'      = { Invoke-InDir 'backend' 'python' @('-m', 'ruff', 'format', '.') }
+    'format'      = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'ruff', 'format', '.') }
     'api-client'  = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'api-client', 'A02') }
-    'sim-quick'   = { Invoke-InDir 'simulator' 'python' @('-m', 'sim', 'suite', 'quick') }
-    'sim-full'    = { Invoke-InDir 'simulator' 'python' @('-m', 'sim', 'suite', 'full') }
+    'sim-quick'   = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick') }
+    'sim-full'    = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'full') }
     'maps'        = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'maps', 'I02b') }
 }
 
