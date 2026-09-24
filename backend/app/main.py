@@ -37,6 +37,7 @@ from app.modules.fleet.router import router as fleet_router
 from app.modules.people.router import router as people_router
 from app.modules.requests.router import router as requests_router
 from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
+from app.modules.simctl.router import router as simctl_router
 
 logger = get_logger(__name__)
 
@@ -104,6 +105,11 @@ def create_app(
     api.include_router(fleet_router)
     api.include_router(people_router)
     api.include_router(requests_router)
+
+    # Mounted only in sim, so these paths genuinely do not exist anywhere else
+    # (ADR-0008). A runtime flag could be flipped; an unregistered route cannot be.
+    if settings.is_sim:
+        api.include_router(simctl_router)
     app.include_router(api)
 
     logger.info(

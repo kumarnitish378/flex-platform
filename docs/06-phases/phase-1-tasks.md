@@ -162,7 +162,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Docs: EMP-07, OPA-05, api-spec /reports/trips
   Done when: CSV export matches JSON totals; median/p90 wait correct on fixture data.
 
-- [ ] **B19 · Sim control endpoints** · deps B01, B09
+- [x] **B19 · Sim control endpoints** · deps B01, B09
   Docs: api-spec /simctl/*, ADR-0008
   Do: `/simctl/clock` (set/advance; runs due scheduled jobs synchronously), `/simctl/reset` with scenario seeding; disabled unless `APP_ENV=sim`.
   Done when: endpoints return 404 in dev; in sim, advancing clock triggers expiry deterministically.
