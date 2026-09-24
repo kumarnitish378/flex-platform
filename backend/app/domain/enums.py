@@ -47,3 +47,16 @@ class DevicePlatform(StrEnum):
     android = "android"
     ios = "ios"
     web = "web"
+
+
+class VehicleType(StrEnum):
+    """`data-model.md` Fleet; api-spec `VehicleType`."""
+
+    sedan_4 = "sedan_4"
+    suv_6 = "suv_6"
+    vip = "vip"
+
+
+class TrackerType(StrEnum):
+    app = "app"
+    esp32 = "esp32"

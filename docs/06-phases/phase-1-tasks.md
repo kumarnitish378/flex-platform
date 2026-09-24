@@ -93,7 +93,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `operator_config` + history; defaults and ranges; GET/PATCH `/admin/config` with audit.
   Done when: out-of-range values rejected (422); history row written on change.
 
-- [ ] **B06 · Admin: clients, offices, vehicles, drivers, users** · deps B04
+- [x] **B06 · Admin: clients, offices, vehicles, drivers, users** · deps B04
   Docs: api-spec.yaml /admin/*, user stories OPA-01..03
   Done when: CRUD endpoints pass contract + permission tests.
 
