@@ -83,6 +83,32 @@ jobs:
           test -f app/domain/state_machines.py || exit 0
           pytest tests/unit/test_state_machines.py -q             --cov=app.domain.state_machines --cov-branch --cov-fail-under=100
 
+  # Installs the backend WITHOUT dev extras and imports it, so a runtime dependency
+  # that is only declared under [dev] - or not declared at all - fails here rather than
+  # in production. This job exists because both mistakes shipped once.
+  backend-packaging:
+    needs: detect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - if: needs.detect.outputs.backend != 'true'
+        run: echo "backend/ does not exist yet (task B01) - nothing to install."
+      - if: needs.detect.outputs.backend == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - if: needs.detect.outputs.backend == 'true'
+        run: pip install ./backend
+      - if: needs.detect.outputs.backend == 'true'
+        run: |
+          python -c "
+          from app.main import create_app
+          from app.core.settings import Settings
+          create_app(Settings(database_url='postgresql+asyncpg://a:b@localhost:5432/c'))
+          print('production install imports cleanly')
+          "
+
   app-analyze:
     needs: detect
     runs-on: ubuntu-latest

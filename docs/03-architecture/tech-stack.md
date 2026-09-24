@@ -18,7 +18,7 @@ Backend versions were pinned on 2026-09-24 (task B01). Blank cells are packages 
 | Optimizer | Google OR-Tools | |
 | ML (Phase 4) | scikit-learn, LightGBM, pandas | |
 | Auth | PyJWT; OTP via SMS gateway adapter (pluggable; console adapter in dev) | |
-| HTTP client | httpx | 0.28.1 (test client today; runtime use lands with I02) |
+| HTTP client | httpx | 0.28.1 (runtime: OSRM client) |
 | Routing providers | `osrm` / `approx` / `cached` behind one interface, selected by `ROUTING_PROVIDER` (ADR-0010) | |
 | Geocoding provider | `GeocodingProvider` interface; **`none` in Phase 1** (`GEOCODING_PROVIDER`), self-hosted Nominatim optional later | |
 | Lint / format | ruff (lint + format) | 0.16.8 |
@@ -45,7 +45,7 @@ Backend versions were pinned on 2026-09-24 (task B01). Blank cells are packages 
 | Purpose | Choice |
 |---|---|
 | Database | PostgreSQL 16 + PostGIS 3 |
-| Cache / pubsub / broker | Redis 7 |
+| Cache / pubsub / broker | Redis 7 (client: redis-py 8.1.0) |
 | MQTT broker | Eclipse Mosquitto 2 (EMQX if scale requires) |
 | Routing | OSRM — public demo server (`router.project-osrm.org`) in early phases; self-hosted OSRM (MLD, car profile, Delhi NCR extract) later. URL from `OSRM_URL` |
 | Routing fallback | `approx` provider: haversine × 1.4 road factor, time-of-day speed table, no network |
