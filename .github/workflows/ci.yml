@@ -132,6 +132,9 @@ jobs:
       - if: needs.detect.outputs.backend == 'true'
         run: |
           python -c "
+          # Import the models too: create_app alone does not pull them in, which is how
+          # an undeclared geoalchemy2 slipped past this guard once already.
+          import app.models
           from app.main import create_app
           from app.core.settings import Settings
           create_app(Settings(database_url='postgresql+asyncpg://a:b@localhost:5432/c'))

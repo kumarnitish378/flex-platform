@@ -17,6 +17,9 @@ dependencies = [
     # and the routing cache + rate limiter use redis.
     "httpx==0.28.1",
     "redis==8.1.0",
+    # Geography columns and the shapes tests build (tech-stack.md, Geo).
+    "geoalchemy2==0.20.0",
+    "shapely==2.1.2",
 ]
 
 [project.optional-dependencies]
