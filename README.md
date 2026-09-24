@@ -63,5 +63,9 @@ Copy `.env.example` to `.env` and edit it; `.env` is git-ignored and must never 
 Map service URLs (`OSRM_URL`, `TILES_URL`) always come from configuration, never from code, and
 `OSM_CONTACT_EMAIL` must be a real address before anything calls a public OSM server (ADR-0010).
 
-## Licence notes
-Map data © OpenStreetMap contributors, available under the Open Database Licence (ODbL). Attribution must be shown on every map screen.
+## Licence
+Proprietary — all rights reserved. See [LICENSE](LICENSE). The source is public for visibility only;
+it is not open source and no usage rights are granted.
+
+Map data © OpenStreetMap contributors, available under the Open Database Licence (ODbL). ODbL covers
+that data, not this code. Attribution must be shown on every map screen (ADR-0010).

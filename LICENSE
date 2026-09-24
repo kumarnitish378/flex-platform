@@ -1,0 +1,31 @@
+Copyright (c) 2026 Nitish Kumar Sharma. All rights reserved.
+
+This software and its documentation are proprietary and confidential.
+
+The source is published for visibility only. No licence is granted to use, copy,
+modify, merge, publish, distribute, sublicense or sell this software or any
+derivative of it, in whole or in part, without prior written permission from the
+copyright holder. Viewing the source, and the forking permitted by the GitHub
+Terms of Service, do not grant any of those rights.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+Third-party components
+
+This project depends on third-party open-source software (FastAPI, SQLAlchemy,
+Flutter, SimPy and others). Each remains under its own licence; nothing above
+alters those terms.
+
+Map data
+
+Maps and routing use OpenStreetMap data, which is © OpenStreetMap contributors
+and available under the Open Database Licence (ODbL). ODbL covers that data, not
+this source code. Attribution must be shown on every map screen (see ADR-0010).
+No OpenStreetMap data is distributed in this repository.
