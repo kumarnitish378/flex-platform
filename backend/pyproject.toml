@@ -56,6 +56,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "N"]
 [tool.mypy]
 python_version = "3.12"
 files = ["app", "tests"]
+# `pip install ./backend` leaves a build/ copy of the package behind; without this
+# mypy reports it as a duplicate module and lint fails for no real reason.
+exclude = ["^build/", "^dist/"]
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 warn_unused_configs = true
