@@ -14,9 +14,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Importing the models package registers every table on Base.metadata, which is what
-# `alembic revision --autogenerate` compares against. Models arrive with task B02.
-import app.modules  # noqa: F401  (imported for the side effect of model registration)
+# Importing app.models registers every table on Base.metadata, which is what
+# `alembic revision --autogenerate` compares against.
+import app.models  # noqa: F401  (imported for the side effect of model registration)
 from alembic import context
 from app.core.db import Base
 from app.core.settings import get_settings
@@ -26,9 +26,31 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Tests point this at a throwaway database by setting the option before calling
+# `command.upgrade`; everything else falls back to DATABASE_URL via settings.
+if not config.get_main_option("sqlalchemy.url", None):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 target_metadata = Base.metadata
+
+# PostGIS creates and owns these. Without this filter autogenerate sees them as
+# "extra" tables and writes a migration that drops the extension's catalogue.
+POSTGIS_TABLES = frozenset(
+    {
+        "spatial_ref_sys",
+        "geometry_columns",
+        "geography_columns",
+        "raster_columns",
+        "raster_overviews",
+    }
+)
+
+
+def include_object(obj, name, type_, reflected, compare_to):  # type: ignore[no-untyped-def]
+    if type_ == "table" and name in POSTGIS_TABLES:
+        return False
+    # GeoAlchemy2 manages its own spatial indexes (idx_<table>_<column>).
+    return not (type_ == "index" and name is not None and name.startswith("idx_"))
 
 
 def run_migrations_offline() -> None:
@@ -36,6 +58,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
@@ -48,6 +71,7 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
+        include_object=include_object,
         compare_type=True,
         compare_server_default=True,
     )

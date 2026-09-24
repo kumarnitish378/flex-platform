@@ -75,7 +75,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Backend (Phase 1)
 
-- [ ] **B02 · Core schema: tenancy, users, roles** · deps B01
+- [x] **B02 · Core schema: tenancy, users, roles** · deps B01
   Docs: data-model.md (Tenancy, Customers), roles-and-permissions.md
   Done when: Alembic migration creates tables; repository tests including tenant isolation.
 

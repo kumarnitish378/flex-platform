@@ -62,6 +62,24 @@ jobs:
   backend-test:
     needs: detect
     runs-on: ubuntu-latest
+    # Integration tests need real PostGIS (testing-strategy.md section 1). Without this
+    # they skip, and tenant-isolation regressions would reach main unnoticed.
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: smartcab
+          POSTGRES_USER: smartcab
+          POSTGRES_PASSWORD: smartcab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartcab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab
     steps:
       - uses: actions/checkout@v4
       - if: needs.detect.outputs.backend != 'true'
@@ -76,6 +94,17 @@ jobs:
       - if: needs.detect.outputs.backend == 'true'
         working-directory: backend
         run: pytest -q
+      # A skipped integration suite in CI looks green but proves nothing, so assert the
+      # database tests really ran.
+      - if: needs.detect.outputs.backend == 'true'
+        working-directory: backend
+        run: pytest tests/integration -q --no-header -rs | tee /tmp/integration.txt
+      - if: needs.detect.outputs.backend == 'true'
+        run: |
+          if grep -qi "no PostgreSQL reachable" /tmp/integration.txt; then
+            echo "::error::Integration tests skipped in CI - the postgres service is not reachable."
+            exit 1
+          fi
       # B08 acceptance: the state machines stay fully covered, branches included.
       - if: needs.detect.outputs.backend == 'true'
         working-directory: backend
