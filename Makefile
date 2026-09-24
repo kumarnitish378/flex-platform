@@ -1,0 +1,92 @@
+# Smart Cab — developer commands.
+# Windows note: GnuWin32 make runs recipes through cmd.exe, so every recipe below is a
+# single portable command. Equivalent PowerShell entry points live in scripts/dev.ps1
+# (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
+# reads the `## <description>` comment on the line above each target.
+
+.PHONY: help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
+        test test-domain-coverage lint format api-client sim-quick sim-full maps
+
+## List available targets and whether their prerequisites exist
+help:
+	python scripts/make_help.py
+
+## Create the backend virtual environment (.venv) if missing
+venv:
+	python scripts/venv_setup.py --create
+
+## Install backend + simulator dependencies into .venv
+install:
+	python scripts/venv_setup.py --install
+
+## Start core infra containers (postgres, redis, mosquitto)
+up:
+	docker compose -f infra/docker-compose.yml up -d
+
+## Stop core infra containers
+down:
+	docker compose -f infra/docker-compose.yml down
+
+## Verify the core infra containers are up and usable (I01 acceptance checks)
+check-infra:
+	python scripts/check_infra.py
+
+## Start the OPTIONAL self-hosted map containers (osrm, tileserver, nominatim) - task I02b/I02c
+up-maps:
+	docker compose -f infra/docker-compose.yml -f infra/docker-compose.maps.yml up -d
+
+## Apply database migrations (alembic upgrade head)
+migrate:
+	python scripts/venv_exec.py --cwd backend -m alembic upgrade head
+
+## Load the development fixture data
+seed:
+	python scripts/venv_exec.py --cwd backend -m app.cli seed
+
+## Run the API with auto-reload
+backend-dev:
+	python scripts/venv_exec.py --cwd backend -m uvicorn app.main:create_app --factory --reload --port 8000
+
+## Run the MQTT GPS ingestor process
+ingestor:
+	python scripts/venv_exec.py --cwd backend -m app.ingestor
+
+## Run a Celery worker
+worker:
+	python scripts/venv_exec.py --cwd backend -m celery -A app.workers.celery_app worker --loglevel=info
+
+## Run the Celery beat scheduler
+beat:
+	python scripts/venv_exec.py --cwd backend -m celery -A app.workers.celery_app beat --loglevel=info
+
+## Run backend tests (unit + integration + contract)
+test:
+	python scripts/venv_exec.py --cwd backend -m pytest
+
+## Enforce 100% branch coverage of the state machines (B08 acceptance)
+test-domain-coverage:
+	python scripts/venv_exec.py --cwd backend -m pytest tests/unit/test_state_machines.py --cov=app.domain.state_machines --cov-branch --cov-report=term-missing --cov-fail-under=100
+
+## Run ruff check and mypy
+lint:
+	python scripts/lint.py
+
+## Apply ruff formatting
+format:
+	python scripts/venv_exec.py --cwd backend -m ruff format .
+
+## Regenerate the Dart API client from docs/03-architecture/api-spec.yaml
+api-client:
+	python scripts/not_ready.py api-client A02
+
+## Simulator smoke scenarios (CI); always uses the approx routing provider
+sim-quick:
+	python scripts/venv_exec.py --cwd simulator -m sim suite quick
+
+## Full simulator scenario suite
+sim-full:
+	python scripts/venv_exec.py --cwd simulator -m sim suite full
+
+## OPTIONAL (self-hosting only): prepare OSM map data - see dev-environment.md section 8
+maps:
+	python scripts/not_ready.py maps I02b

@@ -2,26 +2,28 @@
 
 Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.yaml` and `infra/docker-compose.yml`, and record them in the table below. Use the latest stable release at that time.
 
+Backend versions were pinned on 2026-09-24 (task B01). Blank cells are packages not installed yet; they get pinned by the task that introduces them.
+
 ## Backend
 | Purpose | Choice | Pinned version |
 |---|---|---|
-| Language | Python 3.12 | |
-| Web framework | FastAPI + Uvicorn | |
-| Validation | Pydantic v2 | |
-| ORM / DB access | SQLAlchemy 2.x (async) + asyncpg | |
-| Migrations | Alembic | |
+| Language | Python 3.12 | `requires-python = ">=3.12"`; CI runs 3.12 |
+| Web framework | FastAPI + Uvicorn | fastapi 0.141.1, uvicorn 0.53.0 |
+| Validation | Pydantic v2 | pydantic 2.13.5, pydantic-settings 2.15.0 |
+| ORM / DB access | SQLAlchemy 2.x (async) + asyncpg | sqlalchemy 2.0.54, asyncpg 0.31.0, greenlet 3.5.6 |
+| Migrations | Alembic | alembic 1.20.0 |
 | Geo | PostGIS, GeoAlchemy2, Shapely | |
 | Background jobs | Celery + Redis broker (+ beat) | |
 | MQTT client | aiomqtt (ingestor) | |
 | Optimizer | Google OR-Tools | |
 | ML (Phase 4) | scikit-learn, LightGBM, pandas | |
 | Auth | PyJWT; OTP via SMS gateway adapter (pluggable; console adapter in dev) | |
-| HTTP client | httpx | |
+| HTTP client | httpx | 0.28.1 (runtime: OSRM client) |
 | Routing providers | `osrm` / `approx` / `cached` behind one interface, selected by `ROUTING_PROVIDER` (ADR-0010) | |
 | Geocoding provider | `GeocodingProvider` interface; **`none` in Phase 1** (`GEOCODING_PROVIDER`), self-hosted Nominatim optional later | |
-| Lint / format | ruff (lint + format) | |
-| Types | mypy (strict on `domain/`) | |
-| Tests | pytest, pytest-asyncio, testcontainers (Postgres, Redis) | |
+| Lint / format | ruff (lint + format) | 0.16.8 |
+| Types | mypy (strict on `domain/`) | 2.3.1 (strict on `app.domain.*` and `app.core.*`) |
+| Tests | pytest, pytest-asyncio, testcontainers (Postgres, Redis) | pytest 9.1.1, pytest-asyncio 1.4.0; testcontainers lands with B02 |
 
 ## App
 | Purpose | Choice | Pinned version |
@@ -43,7 +45,7 @@ Pin exact versions at project start in `backend/pyproject.toml`, `app/pubspec.ya
 | Purpose | Choice |
 |---|---|
 | Database | PostgreSQL 16 + PostGIS 3 |
-| Cache / pubsub / broker | Redis 7 |
+| Cache / pubsub / broker | Redis 7 (client: redis-py 8.1.0) |
 | MQTT broker | Eclipse Mosquitto 2 (EMQX if scale requires) |
 | Routing | OSRM — public demo server (`router.project-osrm.org`) in early phases; self-hosted OSRM (MLD, car profile, Delhi NCR extract) later. URL from `OSRM_URL` |
 | Routing fallback | `approx` provider: haversine × 1.4 road factor, time-of-day speed table, no network |

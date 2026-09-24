@@ -63,5 +63,16 @@ The system suggests switching a scope to `manual` (never switches by itself) whe
 
 ## 6. Degradation
 - Optimizer/worker down → scopes in `full_auto`/`semi_auto` behave as `manual`; alert shown.
-- OSRM down → ETAs from last known speed profile × straight-line distance × 1.4 (flagged "approximate").
+- **Routing degradation ladder** (ADR-0010 §3.4 of `architecture.md`): Redis cache hit → `osrm` provider →
+  `approx`. The `approx` step is used whenever OSRM is down, slow, erroring **or the shared 1 request/second
+  limit on the public server is exhausted**; it estimates from straight-line distance × 1.4 and the
+  time-of-day speed table (last known speed profile once available). Those ETAs carry `approximate: true` in
+  the API and are shown as approximate in the app. Degrading to `approx` never changes the control mode and
+  never blocks assignment — supervisors keep working with coarser ETAs.
+- Sustained `approx` operation (e.g. public server unreachable for a whole peak) is an operational signal to
+  move to self-hosted OSRM (task I02b), not a reason to raise the rate limit.
+- **No geocoding to degrade**: Phase 1 has none (map pins + landmark text), so address lookup can never be a
+  failure mode.
+- Tile server unreachable → the map renders from the ≥ 7-day local tile cache; markers, routes and ETAs keep
+  working on whatever tiles are cached. No prefetching is used to paper over this.
 - MQTT down → driver app falls back to HTTPS location upload every 15 s.

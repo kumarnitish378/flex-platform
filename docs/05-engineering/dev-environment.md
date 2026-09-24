@@ -74,6 +74,7 @@ time-of-day speed table, flagged approximate.
 | `OSM_CONTACT_EMAIL` | real contact address (required by OSM usage policy) | backend, simulator |
 | `ROUTING_CACHE_TTL_SECONDS` | `900` | backend |
 | `OSM_RATE_LIMIT_PER_SECOND` | `1` (do not raise for public servers) | backend |
+| `OSM_REQUEST_TIMEOUT_SECONDS` | `5` | backend |
 | `JWT_SECRET` | random 64 bytes | backend |
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | backend |
 | `REFRESH_TOKEN_TTL_DAYS` | `30` | backend |

@@ -1,0 +1,78 @@
+# Core development infrastructure (task I01).
+#
+# Map services are deliberately NOT here: early phases use the public OSM servers
+# (ADR-0010). Self-hosted osrm/tileserver/nominatim live in docker-compose.maps.yml
+# and are started with `make up-maps` (tasks I02b / I02c).
+#
+# Start:  make up          (or .\scripts\dev.ps1 up)
+# Stop:   make down
+# Health: docker compose -f infra/docker-compose.yml ps
+
+name: smartcab
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: smartcab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smartcab}
+      POSTGRES_USER: ${POSTGRES_USER:-smartcab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartcab}
+      # Deterministic, UTC-only server: the backend stores UTC everywhere
+      # (coding-standards.md rule 13).
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Runs once, on an empty data directory only.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartcab} -d ${POSTGRES_DB:-smartcab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: smartcab-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: smartcab-mosquitto
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      # 8883 (TLS) is staging/prod only - see mqtt-topics.md.
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    healthcheck:
+      # mosquitto_sub exits 0 as soon as the broker accepts the connection.
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/uptime' -C 1 -W 3 -i healthcheck || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  postgres-data:
+  redis-data:
+  mosquitto-data:
+  mosquitto-log:

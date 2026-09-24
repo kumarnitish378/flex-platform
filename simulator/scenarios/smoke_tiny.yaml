@@ -1,0 +1,50 @@
+# S01 smoke_tiny (scenarios.md): 3 cabs, 10 employees, 1 hour.
+# The CI scenario - it must stay small and fast.
+name: smoke_tiny
+version: 1
+seed: 42
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 1
+speed_factor: 60
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    alert_wait_minutes: 20
+
+modes:
+  - {mode: manual}
+
+fleet:
+  - {type: sedan_4, count: 2, depot: [28.5355, 77.3910]}
+  - {type: suv_6, count: 1, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 10
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      priority_dist: {5: 1.0}
+      shifts:
+        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+assertions:
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

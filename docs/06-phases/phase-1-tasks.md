@@ -6,21 +6,29 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Foundation (Phase 0)
 
-- [ ] **F01 · Monorepo skeleton**
+- [x] **F01 · Monorepo skeleton**
   Docs: CLAUDE.md, coding-standards.md
   Do: create `app/`, `backend/`, `simulator/`, `infra/`, root `Makefile`, `.gitignore`, `.env.example`, `.editorconfig`, PR template with checklist.
   Done when: `make help` lists targets; repo tree matches CLAUDE.md.
 
-- [ ] **F02 · CI pipeline** · deps F01
+- [x] **F02 · CI pipeline** · deps F01
   Do: GitHub Actions workflow with jobs: backend-lint, backend-test, app-analyze, app-test, sim-quick (initially no-op placeholders that pass once each part exists).
   Done when: workflow runs green on an empty PR.
+  Green on PR #1: detect, backend-lint, backend-test, backend-packaging, app-analyze, app-test, sim-quick,
+  policy-guards. Two extra jobs beyond the task list: `policy-guards` (no hard-coded public OSM URLs, no
+  committed `.env`) and `backend-packaging`, added after CI caught an undeclared runtime dependency that a
+  test-only install had masked. All eight are required status checks on `main`.
 
-- [ ] **I01 · Infra compose (core)** · deps F01
+- [~] **I01 · Infra compose (core)** · deps F01
   Docs: dev-environment.md
   Do: `infra/docker-compose.yml` with postgres(PostGIS), redis, mosquitto (dev config + ACL placeholder), health checks; `make up/down`.
   Done when: `make up` starts all; `psql` can `CREATE EXTENSION postgis`.
+  **Written, unverified:** compose file, PostGIS init SQL, mosquitto dev config + ACL placeholder and
+  health checks are complete and the YAML validates, but **Docker is not installed on the dev machine**, so
+  `make up` was never run. Install Docker Desktop, then `make up` and `make check-infra` - the latter runs
+  exactly this task's acceptance criteria (PostGIS extension, redis PING, mosquitto subscribe).
 
-- [ ] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
+- [x] **I02 · Routing provider config (public OSRM + approx + cache)** · deps I01
   Docs: ADR-0010, dev-environment.md §3–4, architecture.md §3.4
   Do: settings for `ROUTING_PROVIDER`, `GEOCODING_PROVIDER`, `OSRM_URL`, `TILES_URL`, `OSM_USER_AGENT`,
   `OSM_CONTACT_EMAIL`, `ROUTING_CACHE_TTL_SECONDS`, `OSM_RATE_LIMIT_PER_SECOND`; `.env.example` pointing at
@@ -34,7 +42,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   literal anywhere outside settings (grep test); a test fails if any configured geocoding URL resolves to
   `nominatim.openstreetmap.org`; `ROUTING_PROVIDER=approx` works with the network unplugged.
 
-- [ ] **B01 · Backend skeleton** · deps F01, I01
+- [x] **B01 · Backend skeleton** · deps F01, I01
   Docs: architecture.md, coding-standards.md §2
   Do: FastAPI app factory, settings (pydantic-settings), async DB session, Alembic init, `Clock` (SystemClock + FakeClock), error handler, JSON logging, `/health/live` and `/health/ready`.
   Done when: `make backend-dev` serves health endpoints; unit test proves FakeClock is injectable; ruff + mypy clean.
@@ -49,20 +57,20 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `make api-client` generates Dart client into `app/lib/data/api/`; wrapper with auth interceptor (token + `X-Active-Role`, refresh on 401).
   Done when: generated client compiles; interceptor unit-tested.
 
-- [ ] **M01 · Simulator skeleton** · deps F01, I02
+- [x] **M01 · Simulator skeleton** · deps F01, I02
   Docs: simulator-spec.md §2–4, ADR-0010
   Do: package layout, CLI, scenario YAML loader + schema validation, SimPy engine, routing through the
   provider interface (`approx` by default; `osrm` only when `OSRM_URL` is self-hosted), seeded RNG.
   Done when: `python -m sim validate scenarios/smoke_tiny.yaml` passes; unit tests for loader; a run with
   the default config makes zero requests to a public OSM host (asserted in tests).
 
-- [ ] **M02 · Vehicle movement v0** · deps M01
+- [x] **M02 · Vehicle movement v0** · deps M01
   Do: vehicle agent moves along the geometry returned by the routing provider (`approx` gives a straight-line
   path at the time-of-day speed) with speed noise; emits GPS pings to a local log (not yet MQTT).
   Done when: plot of a simulated route matches the provider's geometry; pings respect interval rules; the
   same scenario runs identically with `approx` and with a self-hosted `osrm` provider.
 
-- [ ] **M03 · Recorder + metrics v0** · deps M01
+- [x] **M03 · Recorder + metrics v0** · deps M01
   Do: recorder writes runs/ folder with metrics.json and CSVs; `python -m sim compare`.
   Done when: a dry run produces files; compare prints a delta table.
 
@@ -95,7 +103,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: employee CRUD scoped for client_admin; CSV import with dry-run validation report; zone derivation stub (null until zones exist).
   Done when: import of a 500-row sample file reports errors per row; dry run writes nothing.
 
-- [ ] **B08 · Domain: state machines** · deps B01
+- [x] **B08 · Domain: state machines** · deps B01
   Docs: trip-lifecycle.md
   Do: pure transition functions for request, trip, stop, vehicle; table-driven tests of all allowed/disallowed transitions.
   Done when: 100% branch coverage of `domain/state_machines.py`.
@@ -105,7 +113,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: create (self and on behalf), validation (duplicate window, time range), list mine, get, cancel with rules, expiry job via Clock-driven scheduler, near-expiry alert.
   Done when: integration tests for all acceptance criteria; expiry fires with FakeClock advance.
 
-- [ ] **B10 · Routing module** · deps B01, I02
+- [x] **B10 · Routing module** · deps B01, I02
   Docs: architecture.md §3.2 and §3.4, ADR-0010
   Do: `routing` module built on the I02 provider interface — route and table through `RoutingProvider`
   (never a hard-coded OSRM client), ETA service (provider result × time-of-day factor table from config);

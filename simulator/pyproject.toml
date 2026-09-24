@@ -1,0 +1,49 @@
+[project]
+name = "smartcab-simulator"
+version = "0.1.0"
+description = "Closed-loop SimPy simulator for the Smart Cab platform (SITL-style)"
+requires-python = ">=3.12"
+dependencies = [
+    "simpy==4.1.2",
+    "pyyaml==6.0.3",
+    "numpy==2.5.3",
+    "pydantic==2.13.5",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.0.0",
+    "ruff==0.16.8",
+    "mypy==2.3.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sim*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "N"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["sim", "tests"]
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
