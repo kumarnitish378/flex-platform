@@ -20,6 +20,7 @@ dependencies = [
     # Geography columns and the shapes tests build (tech-stack.md, Geo).
     "geoalchemy2==0.20.0",
     "shapely==2.1.2",
+    "PyJWT==2.15.0",
 ]
 
 [project.optional-dependencies]

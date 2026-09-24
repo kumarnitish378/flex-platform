@@ -30,6 +30,8 @@ from app.core.logging import (
 )
 from app.core.redis import create_redis, redis_check
 from app.core.settings import Settings, get_settings
+from app.modules.auth.otp import build_otp_sender
+from app.modules.auth.router import router as auth_router
 from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
 
 logger = get_logger(__name__)
@@ -64,6 +66,7 @@ def create_app(
     routing = build_routing_provider(settings, clock, redis)
     geocoding = build_geocoding_provider(settings)
     eta = EtaService(routing, clock)
+    otp_sender = build_otp_sender(settings)
 
     health = HealthRegistry()
     health.register("database", database_check(engine), required=True)
@@ -84,12 +87,16 @@ def create_app(
     app.state.routing = routing
     app.state.eta = eta
     app.state.geocoding = geocoding
+    app.state.otp_sender = otp_sender
     app.state.health = health
 
     _register_middleware(app)
     register_error_handlers(app)
     app.include_router(_health_router())
-    app.include_router(APIRouter(prefix=API_PREFIX))
+
+    api = APIRouter(prefix=API_PREFIX)
+    api.include_router(auth_router)
+    app.include_router(api)
 
     logger.info(
         "app_created",

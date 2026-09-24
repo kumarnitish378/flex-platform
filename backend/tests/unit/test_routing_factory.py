@@ -160,7 +160,7 @@ def test_contact_email_is_required_in_production_on_public_servers() -> None:
     with pytest.raises(ValidationError, match="OSM_CONTACT_EMAIL"):
         Settings(
             app_env="prod",
-            jwt_secret="real-secret",
+            jwt_secret="real-secret-long-enough-for-hs256-01",
             database_url=DB,
             osrm_url=PUBLIC_OSRM,
             osm_contact_email="",
@@ -170,7 +170,7 @@ def test_contact_email_is_required_in_production_on_public_servers() -> None:
 def test_production_on_self_hosted_needs_no_contact_email() -> None:
     configured = Settings(
         app_env="prod",
-        jwt_secret="real-secret",
+        jwt_secret="real-secret-long-enough-for-hs256-01",
         database_url=DB,
         osrm_url=SELF_HOSTED_OSRM,
         tiles_url="http://localhost:8081",

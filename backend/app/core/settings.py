@@ -49,6 +49,9 @@ class GeocodingProviderName(StrEnum):
 
 # Hosts that are donated OSM infrastructure. Nominatim's usage policy forbids
 # vehicle-tracking applications outright, so it is rejected rather than rate-limited.
+# RFC 7518 §3.2: HS256 keys should be at least as long as the hash output.
+MIN_JWT_SECRET_BYTES = 32
+
 PUBLIC_NOMINATIM_HOSTS = frozenset({"nominatim.openstreetmap.org", "nominatim.osm.org"})
 PUBLIC_OSM_HOSTS = frozenset(
     {
@@ -146,9 +149,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _guard_production(self) -> Settings:
-        if self.app_env is AppEnv.prod:
-            if self.jwt_secret.get_secret_value() == "change-me-random-64-bytes":
-                raise ValueError("JWT_SECRET must be set to a real secret in prod")
+        if self.app_env in (AppEnv.staging, AppEnv.prod):
+            secret = self.jwt_secret.get_secret_value()
+            if secret == "change-me-random-64-bytes":
+                raise ValueError("JWT_SECRET must be set to a real secret outside dev")
+            # RFC 7518 §3.2: an HMAC key shorter than the hash output (32 bytes for
+            # SHA-256) weakens the signature. PyJWT warns; we refuse.
+            if len(secret.encode()) < MIN_JWT_SECRET_BYTES:
+                raise ValueError(
+                    f"JWT_SECRET must be at least {MIN_JWT_SECRET_BYTES} bytes "
+                    "(RFC 7518 §3.2 for HS256)"
+                )
             if self.simctl_enabled:
                 raise ValueError("SIMCTL_ENABLED must be false outside APP_ENV=sim")
         # /simctl/* exists only in sim (ADR-0008); enforce it here rather than trusting config.

@@ -79,7 +79,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Docs: data-model.md (Tenancy, Customers), roles-and-permissions.md
   Done when: Alembic migration creates tables; repository tests including tenant isolation.
 
-- [ ] **B03 · Auth: OTP + tokens + /auth/me** · deps B02
+- [x] **B03 · Auth: OTP + tokens + /auth/me** · deps B02
   Docs: api-spec.yaml /auth/*, non-functional.md (Security), user story EMP-01
   Do: OTP request/verify with console provider, rate limits, JWT access + rotating refresh, logout, `/auth/me` with permissions, `/devices`.
   Done when: integration tests cover success, wrong OTP, lockout, rate limit, refresh rotation, revoked token.

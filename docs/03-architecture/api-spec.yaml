@@ -28,15 +28,21 @@ paths:
     post:
       tags: [auth]
       security: []
-      summary: Request OTP for a registered phone
+      summary: Request OTP
+      description: |
+        Always returns 202 for a well-formed phone number, whether or not it belongs to a
+        user. A 404 here would turn this endpoint into a directory of an operator's staff
+        and riders, which conflicts with the data-minimisation rules in non-functional.md
+        (Privacy). A code is only ever sent to a registered, active user.
+        See decision-log 2026-09-24 and OQ-24.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/OtpRequest'}
       responses:
-        '202': {description: OTP sent}
-        '404': {$ref: '#/components/responses/Error'}
+        '202': {description: Accepted. A code is sent only if the phone belongs to an active user.}
+        '422': {$ref: '#/components/responses/Error'}
         '429': {$ref: '#/components/responses/Error'}
   /auth/otp/verify:
     post:
