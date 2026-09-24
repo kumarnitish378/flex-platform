@@ -15,6 +15,8 @@ from typing import Any
 import simpy
 
 from sim.clock import SimClock
+from sim.metrics import RunMetrics, compute_fleet_metrics
+from sim.pings import MemoryPingSink
 from sim.rng import RngFactory
 from sim.routing import RoutingClient, build_routing
 from sim.scenario import Scenario
@@ -47,6 +49,8 @@ class Engine:
         self.clock = SimClock(scenario.start, scenario.speed_factor)
         self.rng = RngFactory(scenario.seed)
         self.routing: RoutingClient = build_routing(str(scenario.routing), osrm_url)
+        # Every agent publishes here; the recorder turns it into pings.csv and metrics.
+        self.pings = MemoryPingSink()
         self._log: list[str] = []
 
     # --- time ---------------------------------------------------------------
@@ -88,4 +92,16 @@ class Engine:
             vehicles=self.scenario.vehicle_count,
             employees=self.scenario.employee_count,
             events=list(self._log),
+        )
+
+    def metrics(self, summary: RunSummary) -> RunMetrics:
+        """Metrics for a finished run (`simulator-spec.md` §9)."""
+        return RunMetrics(
+            scenario=summary.scenario,
+            seed=summary.seed,
+            routing=summary.routing,
+            started_at=summary.started_at.isoformat(),
+            ended_at=summary.ended_at.isoformat(),
+            simulated_hours=summary.simulated_seconds / 3600.0,
+            fleet=compute_fleet_metrics(self.pings.pings),
         )

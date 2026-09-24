@@ -70,7 +70,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: plot of a simulated route matches the provider's geometry; pings respect interval rules; the
   same scenario runs identically with `approx` and with a self-hosted `osrm` provider.
 
-- [ ] **M03 · Recorder + metrics v0** · deps M01
+- [x] **M03 · Recorder + metrics v0** · deps M01
   Do: recorder writes runs/ folder with metrics.json and CSVs; `python -m sim compare`.
   Done when: a dry run produces files; compare prints a delta table.
 
