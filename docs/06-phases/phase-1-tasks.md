@@ -64,7 +64,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: `python -m sim validate scenarios/smoke_tiny.yaml` passes; unit tests for loader; a run with
   the default config makes zero requests to a public OSM host (asserted in tests).
 
-- [ ] **M02 · Vehicle movement v0** · deps M01
+- [x] **M02 · Vehicle movement v0** · deps M01
   Do: vehicle agent moves along the geometry returned by the routing provider (`approx` gives a straight-line
   path at the time-of-day speed) with speed noise; emits GPS pings to a local log (not yet MQTT).
   Done when: plot of a simulated route matches the provider's geometry; pings respect interval rules; the
