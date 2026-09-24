@@ -6,6 +6,7 @@ arguments, which is the point of the injection in `create_app`.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -20,6 +21,23 @@ from app.main import create_app
 
 # A fixed, timezone-aware instant so every time-dependent assertion is deterministic.
 FIXED_NOW = datetime(2026, 9, 24, 4, 30, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `Settings()` read documented defaults, not the machine it runs on.
+
+    Without this a test asserting a default silently asserts whatever the environment
+    happens to say. CI sets ROUTING_PROVIDER=approx for safety, which is exactly how
+    `test_cached_osrm_is_the_default` came to pass locally and fail in CI.
+
+    Field names are derived from the model, so a new setting is covered automatically.
+    """
+    for field_name in Settings.model_fields:
+        monkeypatch.delenv(field_name.upper(), raising=False)
+        monkeypatch.delenv(field_name.lower(), raising=False)
+    # A developer's local .env must not reach the tests either.
+    monkeypatch.setitem(Settings.model_config, "env_file", None)  # type: ignore[typeddict-item]
 
 
 @pytest.fixture(autouse=True)
