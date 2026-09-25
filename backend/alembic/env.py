@@ -46,11 +46,34 @@ POSTGIS_TABLES = frozenset(
 )
 
 
-def include_object(obj, name, type_, reflected, compare_to):  # type: ignore[no-untyped-def]
-    if type_ == "table" and name in POSTGIS_TABLES:
+def is_partition(name: str | None) -> bool:
+    """A partition of a declaratively partitioned table (see the location_ping migration).
+
+    Partitions are real tables that no model declares, so autogenerate reads them as
+    "extra" and writes a migration that drops the GPS history. Their indexes are created
+    by Postgres from the parent's and look equally foreign.
+    """
+    if name is None:
         return False
-    # GeoAlchemy2 manages its own spatial indexes (idx_<table>_<column>).
-    return not (type_ == "index" and name is not None and name.startswith("idx_"))
+    return any(name.startswith(prefix) for prefix in PARTITIONED_TABLES)
+
+
+#: Parent tables whose partitions must be invisible to autogenerate. The parent itself is
+#: declared by a model and keeps its exact name; a partition always has a suffix.
+PARTITIONED_TABLES = ("location_ping_",)
+
+
+def include_object(obj, name, type_, reflected, compare_to):  # type: ignore[no-untyped-def]
+    if type_ == "table" and (name in POSTGIS_TABLES or is_partition(name)):
+        return False
+    if type_ == "index":
+        # GeoAlchemy2 manages its own spatial indexes (idx_<table>_<column>), and a
+        # partition's indexes are inherited from its parent rather than declared.
+        if name is not None and name.startswith("idx_"):
+            return False
+        table = getattr(obj, "table", None)
+        return table is None or not is_partition(table.name)
+    return True
 
 
 def run_migrations_offline() -> None:

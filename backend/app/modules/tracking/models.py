@@ -41,7 +41,7 @@ class LocationPing(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: Server time — how late it arrived. The difference is the lag metric.
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    location: Mapped[object] = mapped_column(Point, nullable=False)
+    location: Mapped[object] = mapped_column(Point(), nullable=False)
     speed_mps: Mapped[float | None] = mapped_column(Float)
     heading_deg: Mapped[float | None] = mapped_column(Float)
     accuracy_m: Mapped[float | None] = mapped_column(Float)

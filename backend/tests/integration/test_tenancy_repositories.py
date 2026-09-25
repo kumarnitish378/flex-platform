@@ -533,3 +533,42 @@ async def test_employee_defaults(db_session: AsyncSession) -> None:
 async def test_models_are_distinct_types(db_session: AsyncSession) -> None:
     assert Client.__tablename__ == "client"
     assert Employee.__tablename__ == "employee"
+
+
+async def test_geography_columns_are_nullable_exactly_as_the_models_say(
+    db_session: AsyncSession,
+) -> None:
+    """A shared `Geography` instance once leaked one column's NOT NULL onto every other.
+
+    GeoAlchemy2 stamps `nullable` onto the type object, so `Point = Geography(...)` shared
+    between columns silently made `employee.home_location` NOT NULL while the model said
+    it was optional. The types are factories now; this asserts the database agrees with
+    every model, so the next shared instance fails here rather than in production.
+    """
+    from sqlalchemy import text as sql_text
+
+    import app.models  # noqa: F401 - ensures every model module is imported
+    from app.core.db import Base
+
+    declared = {
+        (table.name, column.name): column.nullable
+        for table in Base.metadata.tables.values()
+        for column in table.columns
+        if column.type.__class__.__name__ in {"Geography", "Geometry"}
+    }
+    assert declared, "no geography columns found; this guard would pass vacuously"
+
+    rows = await db_session.execute(
+        sql_text(
+            "SELECT table_name, column_name, is_nullable FROM information_schema.columns"
+            " WHERE table_schema = 'public'"
+        )
+    )
+    actual = {(row.table_name, row.column_name): row.is_nullable == "YES" for row in rows}
+
+    mismatches = {
+        key: {"model": expected, "database": actual[key]}
+        for key, expected in declared.items()
+        if key in actual and actual[key] != expected
+    }
+    assert mismatches == {}

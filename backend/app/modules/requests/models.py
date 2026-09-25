@@ -44,7 +44,7 @@ class RideRequest(TenantEntity):
         PG_UUID(as_uuid=True), ForeignKey("office.id", ondelete="RESTRICT"), nullable=False
     )
     #: Home/pickup for to_office, drop for from_office.
-    location: Mapped[object] = mapped_column(Point, nullable=False)
+    location: Mapped[object] = mapped_column(Point(), nullable=False)
     landmark: Mapped[str | None] = mapped_column(String(200))
     requested_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     urgency: Mapped[str] = mapped_column(

@@ -30,8 +30,18 @@ from app.domain.enums import ClientStatus, OperatorStatus
 
 # Points and polygons are geography (not geometry) so distance is in metres on a sphere
 # without us choosing a projection (`data-model.md` header).
-Point = Geography(geometry_type="POINT", srid=4326)
-Polygon = Geography(geometry_type="POLYGON", srid=4326)
+#
+# Factories, not shared instances: GeoAlchemy2 stamps a column's `nullable` onto the type
+# object, so one shared `Geography` handed to several columns leaks the first NOT NULL it
+# sees to all the others. That silently made `employee.home_location` NOT NULL.
+
+
+def Point() -> Geography:  # noqa: N802 - reads as a type at the call site
+    return Geography(geometry_type="POINT", srid=4326)
+
+
+def Polygon() -> Geography:  # noqa: N802
+    return Geography(geometry_type="POLYGON", srid=4326)
 
 
 class Operator(Entity):
@@ -78,7 +88,7 @@ class Office(TenantEntity):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    location: Mapped[object] = mapped_column(Point, nullable=False)
+    location: Mapped[object] = mapped_column(Point(), nullable=False)
     address_text: Mapped[str | None] = mapped_column(String(500))
 
 
@@ -134,5 +144,5 @@ class Zone(TenantEntity):
     __table_args__ = (UniqueConstraint("operator_id", "name", name="uq_zone_operator_name"),)
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    area: Mapped[object] = mapped_column(Polygon, nullable=False)
+    area: Mapped[object] = mapped_column(Polygon(), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

@@ -138,7 +138,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `/ws` auth, channel subscription with permission checks, Redis pub/sub fan-out; events: vehicle.location, request.*, trip.*, stop.eta, alert.*.
   Done when: employee receives only own trip channel; supervisor receives operator channels; unauthorized subscription rejected.
 
-- [ ] **B14 · Dispatch: candidates + manual assign** · deps B09, B10, B12
+- [x] **B14 · Dispatch: candidates + manual assign** · deps B09, B10, B12
   Docs: SUP-02, SUP-03, allocation-rules.md §2–3 (hard-rule checks reported as `violations` only in Phase 1)
   Do: `/dispatch/requests`, `/dispatch/vehicles`, `/dispatch/requests/{id}/candidates` (ETA, seats, added minutes), `/dispatch/assign` (new trip or add to existing trip, stop sequencing by insertion at least-added-time position), `/dispatch/automation` pause switch.
   Done when: assigning notifies employee and driver (events emitted); adding to a full vehicle is rejected; worked scenarios in tests.

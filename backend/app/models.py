@@ -8,6 +8,7 @@ modules here, and nowhere else, so there is one place to check.
 from app.modules.alerts import models as alert_models
 from app.modules.auth import models as auth_models
 from app.modules.config import models as config_models
+from app.modules.dispatch import models as dispatch_models
 from app.modules.fleet import duty_models as fleet_duty_models
 from app.modules.fleet import models as fleet_models
 from app.modules.people import models as people_models
@@ -19,6 +20,7 @@ __all__ = [
     "alert_models",
     "auth_models",
     "config_models",
+    "dispatch_models",
     "fleet_duty_models",
     "fleet_models",
     "people_models",

@@ -95,15 +95,23 @@ def create_access_token(
 def decode_access_token(token: str, secret: str, clock: Clock) -> AccessTokenClaims:
     """Verify and unpack, or raise `InvalidTokenError`.
 
-    Expiry is checked against the injected clock rather than PyJWT's own `verify_exp`,
-    so a simulated clock really does expire tokens.
+    **Every** time check uses the injected clock, so PyJWT's own `exp`, `iat` and `nbf`
+    verification is switched off. Leaving `iat` on would compare the token against the
+    real system clock: a simulator running ahead of wall-clock time mints tokens whose
+    `iat` is in the future, and PyJWT rejects the lot with "not yet valid" (CLAUDE.md
+    hard rule 2 - the clock is injected, including here).
     """
     try:
         payload = jwt.decode(
             token,
             secret,
             algorithms=[ALGORITHM],
-            options={"verify_exp": False, "require": ["sub", "role", "exp"]},
+            options={
+                "verify_exp": False,
+                "verify_iat": False,
+                "verify_nbf": False,
+                "require": ["sub", "role", "exp"],
+            },
         )
     except jwt.PyJWTError as exc:
         raise InvalidTokenError(str(exc)) from exc

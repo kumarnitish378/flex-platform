@@ -51,7 +51,8 @@ class Employee(TenantEntity):
     office_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("office.id", ondelete="RESTRICT"), nullable=False
     )
-    home_location: Mapped[object | None] = mapped_column(Point)
+    #: Required: every rider has a home end to their journey (`data-model.md`).
+    home_location: Mapped[object] = mapped_column(Point(), nullable=False)
     home_landmark: Mapped[str | None] = mapped_column(String(300))
     # Derived from `zone.area`; stays null until zones exist (B07 keeps this a stub).
     zone_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -76,5 +77,5 @@ class SavedPlace(TenantEntity):
         PG_UUID(as_uuid=True), ForeignKey("employee.id", ondelete="CASCADE"), nullable=False
     )
     label: Mapped[str] = mapped_column(String(100), nullable=False)
-    location: Mapped[object] = mapped_column(Point, nullable=False)
+    location: Mapped[object] = mapped_column(Point(), nullable=False)
     landmark: Mapped[str | None] = mapped_column(String(300))

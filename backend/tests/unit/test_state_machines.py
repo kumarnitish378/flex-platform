@@ -10,8 +10,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.domain.enums import ActorType
 from app.domain.errors import InvalidTransition, ValidationFailed
 from app.domain.state_machines import (
+    _ACTOR_TYPES,
     Actor,
     Recipient,
     RequestContext,
@@ -20,6 +22,7 @@ from app.domain.state_machines import (
     StopStatus,
     TripStatus,
     VehicleStatus,
+    actor_type_for,
     is_terminal_request,
     is_terminal_stop,
     is_terminal_trip,
@@ -425,3 +428,31 @@ def test_default_context_is_the_system_actor() -> None:
 def test_stale_is_not_a_stored_vehicle_status() -> None:
     """trip-lifecycle.md §4: `stale` is derived from GPS age, never written."""
     assert "stale" not in {str(status) for status in V}
+
+
+# --- actors -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("actor", "expected"),
+    [
+        (Actor.employee, ActorType.employee),
+        (Actor.driver, ActorType.driver),
+        (Actor.supervisor, ActorType.supervisor),
+        (Actor.system, ActorType.system),
+    ],
+)
+def test_the_actor_maps_onto_what_the_event_table_stores(actor: Actor, expected: ActorType) -> None:
+    assert actor_type_for(actor) is expected
+
+
+@pytest.mark.parametrize("actor", [Actor.operator_admin, Actor.client_admin, Actor.platform_admin])
+def test_every_supervisory_role_is_logged_as_supervisor(actor: Actor) -> None:
+    """The event log answers "was a human overriding this"; `actor_user_id` says who."""
+    assert actor_type_for(actor) is ActorType.supervisor
+
+
+def test_every_actor_has_a_mapping() -> None:
+    """A new Actor must not silently become `system` in the audit trail."""
+    for actor in Actor:
+        assert actor in _ACTOR_TYPES, f"{actor} has no ActorType mapping"

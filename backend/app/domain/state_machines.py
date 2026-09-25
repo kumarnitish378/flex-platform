@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from app.domain.enums import ActorType
 from app.domain.errors import InvalidTransition, ValidationFailed
 
 # ---------------------------------------------------------------------------
@@ -305,6 +306,23 @@ def transition_vehicle(
 def request_status_for_stop_done(kind: StopKind) -> RequestStatus:
     """A pickup stop's `done` sets its request to `picked_up`; a drop's to `dropped`."""
     return RequestStatus.picked_up if kind is StopKind.pickup else RequestStatus.dropped
+
+
+#: Every supervisory role is logged as `supervisor`; `actor_user_id` says which person.
+_ACTOR_TYPES: dict[Actor, ActorType] = {
+    Actor.employee: ActorType.employee,
+    Actor.driver: ActorType.driver,
+    Actor.supervisor: ActorType.supervisor,
+    Actor.operator_admin: ActorType.supervisor,
+    Actor.client_admin: ActorType.supervisor,
+    Actor.platform_admin: ActorType.supervisor,
+    Actor.system: ActorType.system,
+}
+
+
+def actor_type_for(actor: Actor) -> ActorType:
+    """Map the domain actor onto the narrower set the event tables store."""
+    return _ACTOR_TYPES.get(actor, ActorType.system)
 
 
 def is_terminal_request(status: RequestStatus) -> bool:

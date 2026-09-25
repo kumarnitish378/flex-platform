@@ -103,3 +103,49 @@ def test_dev_environment_gets_the_system_clock_by_default() -> None:
         )
     )
     assert isinstance(app.state.clock, SystemClock)
+
+
+# --- tokens follow the injected clock too -------------------------------------------
+
+
+def test_a_token_minted_ahead_of_wall_clock_time_is_accepted() -> None:
+    """The simulator runs its clock ahead of real time; tokens must still work.
+
+    PyJWT validates `iat` and `nbf` against the real system clock by default, which
+    rejects every token an accelerated `SimClock` mints with "not yet valid". All time
+    checks belong to the injected clock (CLAUDE.md hard rule 2).
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    from app.core.security import create_access_token, decode_access_token
+
+    far_future = FakeClock(datetime(2099, 1, 1, tzinfo=UTC))
+    secret = "clock-tests-secret-0123456789abcdef"
+    token, _ = create_access_token(
+        user_id=uuid.uuid4(),
+        role="supervisor",
+        secret=secret,
+        clock=far_future,
+        ttl_seconds=900,
+    )
+
+    assert decode_access_token(token, secret, far_future).role == "supervisor"
+
+
+def test_expiry_is_still_judged_by_the_injected_clock() -> None:
+    """Turning off PyJWT's checks must not turn off expiry."""
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.security import InvalidTokenError, create_access_token, decode_access_token
+
+    clock = FakeClock(datetime(2099, 1, 1, tzinfo=UTC))
+    secret = "clock-tests-secret-0123456789abcdef"
+    token, _ = create_access_token(
+        user_id=uuid.uuid4(), role="supervisor", secret=secret, clock=clock, ttl_seconds=900
+    )
+
+    clock.advance(timedelta(minutes=16))
+    with pytest.raises(InvalidTokenError):
+        decode_access_token(token, secret, clock)

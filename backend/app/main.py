@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.core.clock import Clock, FakeClock, SystemClock
 from app.core.db import create_engine, create_session_factory
 from app.core.errors import register_error_handlers
+from app.core.events import RedisEventPublisher
 from app.core.health import HealthRegistry, Status, database_check
 from app.core.logging import (
     configure_logging,
@@ -33,6 +34,7 @@ from app.core.settings import Settings, get_settings
 from app.modules.auth.otp import build_otp_sender
 from app.modules.auth.router import router as auth_router
 from app.modules.config.router import router as config_router
+from app.modules.dispatch.router import router as dispatch_router
 from app.modules.fleet.duty_router import router as duty_router
 from app.modules.fleet.router import router as fleet_router
 from app.modules.people.router import router as people_router
@@ -93,6 +95,7 @@ def create_app(
     app.state.redis = redis
     app.state.routing = routing
     app.state.eta = eta
+    app.state.events = RedisEventPublisher(redis)
     app.state.geocoding = geocoding
     app.state.otp_sender = otp_sender
     app.state.health = health
@@ -109,6 +112,7 @@ def create_app(
     api.include_router(tracking_router)
     api.include_router(people_router)
     api.include_router(requests_router)
+    api.include_router(dispatch_router)
 
     # Mounted only in sim, so these paths genuinely do not exist anywhere else
     # (ADR-0008). A runtime flag could be flipped; an unregistered route cannot be.

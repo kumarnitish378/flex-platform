@@ -14,14 +14,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
 
-from geoalchemy2.shape import from_shape
-from shapely.geometry import Point as ShapelyPoint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
+from app.core.geo import to_point as _point
 from app.core.logging import get_logger
 from app.domain.enums import (
     ActorType,
@@ -39,6 +37,7 @@ from app.domain.state_machines import (
     RequestContext,
     RequestStatus,
     TransitionEvent,
+    actor_type_for,
     is_terminal_request,
     transition_request,
 )
@@ -479,18 +478,4 @@ def _actor_for(role: Role) -> Actor:
 
 
 def _actor_type(actor: Actor) -> ActorType:
-    """Map the domain actor onto the narrower set `ride_request_event` stores."""
-    mapping = {
-        Actor.employee: ActorType.employee,
-        Actor.driver: ActorType.driver,
-        Actor.supervisor: ActorType.supervisor,
-        Actor.operator_admin: ActorType.supervisor,
-        Actor.client_admin: ActorType.supervisor,
-        Actor.platform_admin: ActorType.supervisor,
-        Actor.system: ActorType.system,
-    }
-    return mapping.get(actor, ActorType.system)
-
-
-def _point(lat: float, lng: float) -> Any:
-    return from_shape(ShapelyPoint(lng, lat), srid=4326)
+    return actor_type_for(actor)

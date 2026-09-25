@@ -7,17 +7,21 @@ app with a `FakeClock` and a test database and every route follows.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
+from app.core.events import EventPublisher
 from app.core.security import AccessTokenClaims, InvalidTokenError, decode_access_token
 from app.core.settings import Settings
 from app.domain.enums import Role
 from app.domain.errors import DomainError
 from app.modules.auth.service import InvalidCredentialsError
+
+if TYPE_CHECKING:  # a core module must not import a feature module at runtime
+    from app.modules.routing.service import EtaService
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -40,6 +44,18 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_clock(request: Request) -> Clock:
     clock: Clock = request.app.state.clock
     return clock
+
+
+def get_eta(request: Request) -> EtaService:
+    """The ETA service the factory built, so a route never picks a routing provider."""
+    eta: EtaService = request.app.state.eta
+    return eta
+
+
+def get_events(request: Request) -> EventPublisher:
+    """Where realtime events go (`architecture.md` section 4)."""
+    publisher: EventPublisher = request.app.state.events
+    return publisher
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -115,4 +131,6 @@ class _WrongActiveRoleError(DomainError):
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 ClockDep = Annotated[Clock, Depends(get_clock)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
+EtaDep = Annotated["EtaService", Depends(get_eta)]
+EventsDep = Annotated[EventPublisher, Depends(get_events)]
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
