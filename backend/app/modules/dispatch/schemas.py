@@ -83,6 +83,19 @@ class AssignInput(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 
+class DriverEventInput(BaseModel):
+    """One tap from the driver app (`api-spec.yaml` requestBodies/DriverEvent)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Generated on the device so a retry is recognisable as the same tap.
+    client_event_id: uuid.UUID
+    #: When the driver tapped, which may be long before we hear about it.
+    occurred_at: datetime
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+
+
 class AutomationOut(BaseModel):
     automation_paused: bool
 

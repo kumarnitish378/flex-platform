@@ -143,7 +143,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `/dispatch/requests`, `/dispatch/vehicles`, `/dispatch/requests/{id}/candidates` (ETA, seats, added minutes), `/dispatch/assign` (new trip or add to existing trip, stop sequencing by insertion at least-added-time position), `/dispatch/automation` pause switch.
   Done when: assigning notifies employee and driver (events emitted); adding to a full vehicle is rejected; worked scenarios in tests.
 
-- [ ] **B15 · Trips + driver actions** · deps B14
+- [x] **B15 · Trips + driver actions** · deps B14
   Docs: DRV-03..05, trip-lifecycle.md
   Do: `/driver/trips`, start, stop actions (arrived/done/no_show), complete; idempotency by `client_event_id`; offline `occurred_at` handling; stop ETA refresh job every 30 s.
   Done when: duplicate events ignored; no-show blocked before wait time; request states follow stops.

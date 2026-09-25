@@ -22,6 +22,8 @@ class SimClockState(Strict):
     #: What the jump triggered, so the simulator can assert on it without a second call.
     expired: int = 0
     near_expiry_alerts: int = 0
+    #: Stop ETAs recomputed by the jump (B15), so a scenario can assert on them.
+    stop_etas_refreshed: int = 0
 
 
 class ResetRequest(Strict):

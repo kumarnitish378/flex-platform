@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Query
 
@@ -14,7 +14,7 @@ from app.domain.errors import Forbidden
 from app.domain.state_machines import Actor
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
-from app.modules.dispatch.models import Trip
+from app.modules.dispatch.models import Trip, TripStop
 from app.modules.dispatch.schemas import (
     AddedMinutes,
     AssignInput,
@@ -175,7 +175,13 @@ def _candidate_out(candidate: Candidate) -> CandidateOut:
     )
 
 
-async def _trip_out(service: DispatchService, trip: Trip) -> TripOut:
+class HasStops(Protocol):
+    """Anything that can list a trip's stops - the dispatch and driver services both can."""
+
+    async def stops_of(self, trip_id: uuid.UUID) -> list[TripStop]: ...
+
+
+async def _trip_out(service: HasStops, trip: Trip) -> TripOut:
     stops = await service.stops_of(trip.id)
     return TripOut(
         id=trip.id,

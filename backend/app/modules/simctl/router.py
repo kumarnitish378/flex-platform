@@ -21,6 +21,7 @@ from app.core.clock import FakeClock
 from app.core.dependencies import ClockDep, SessionDep
 from app.domain.errors import ValidationFailed
 from app.modules.auth.dependencies import public_route
+from app.modules.dispatch.eta_refresh import EtaRefresher
 from app.modules.requests.service import RideRequestService
 from app.modules.simctl.schemas import ResetRequest, ResetResult, SimClockState, SimClockUpdate
 from app.modules.simctl.service import SimControlService
@@ -78,7 +79,15 @@ async def set_clock(
         fake.advance(timedelta(seconds=seconds))
 
     sweep = await RideRequestService(session, fake).run_due_expiries()
-    return SimClockState(now=fake.now(), expired=sweep.expired, near_expiry_alerts=sweep.warned)
+    # The ETA worker is due work too, not a background timer, so a clock jump refreshes
+    # stop ETAs before returning (`architecture.md` section 3.2 step 4).
+    refreshed = await EtaRefresher(session, fake, request.app.state.eta).refresh_due()
+    return SimClockState(
+        now=fake.now(),
+        expired=sweep.expired,
+        near_expiry_alerts=sweep.warned,
+        stop_etas_refreshed=refreshed.stops,
+    )
 
 
 @router.post(

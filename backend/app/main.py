@@ -34,6 +34,7 @@ from app.core.settings import Settings, get_settings
 from app.modules.auth.otp import build_otp_sender
 from app.modules.auth.router import router as auth_router
 from app.modules.config.router import router as config_router
+from app.modules.dispatch.driver_router import router as driver_trips_router
 from app.modules.dispatch.router import router as dispatch_router
 from app.modules.fleet.duty_router import router as duty_router
 from app.modules.fleet.router import router as fleet_router
@@ -119,6 +120,7 @@ def create_app(
     api.include_router(people_router)
     api.include_router(requests_router)
     api.include_router(dispatch_router)
+    api.include_router(driver_trips_router)
     api.include_router(realtime_router)
 
     # Mounted only in sim, so these paths genuinely do not exist anywhere else
