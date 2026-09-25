@@ -23,6 +23,8 @@ dependencies = [
     "PyJWT==2.15.0",
     # FastAPI needs this for multipart/form-data (the CSV import endpoint).
     "python-multipart==0.0.32",
+    # MQTT consumer for the GPS ingestor (tech-stack.md).
+    "aiomqtt==2.5.1",
 ]
 
 [project.optional-dependencies]
@@ -95,4 +97,5 @@ addopts = "-q --strict-markers"
 markers = [
     "requires_db: needs a running PostgreSQL+PostGIS (skipped when DATABASE_URL is unreachable)",
     "requires_redis: needs a running Redis",
+    "slow: throughput checks; kept in the default run but slower than a unit test",
 ]

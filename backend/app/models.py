@@ -13,6 +13,7 @@ from app.modules.fleet import models as fleet_models
 from app.modules.people import models as people_models
 from app.modules.requests import models as request_models
 from app.modules.tenancy import models as tenancy_models
+from app.modules.tracking import models as tracking_models
 
 __all__ = [
     "alert_models",
@@ -23,4 +24,5 @@ __all__ = [
     "people_models",
     "request_models",
     "tenancy_models",
+    "tracking_models",
 ]

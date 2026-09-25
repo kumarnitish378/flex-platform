@@ -118,3 +118,11 @@ class AlertStatus(StrEnum):
     open = "open"
     acknowledged = "acknowledged"
     resolved = "resolved"
+
+
+class GpsSource(StrEnum):
+    """`mqtt-topics.md`: where a ping came from."""
+
+    app = "app"
+    esp32 = "esp32"
+    sim = "sim"

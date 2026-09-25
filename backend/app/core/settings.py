@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883
+    mqtt_ingestor_user: str = ""
+    mqtt_ingestor_password: str = ""
 
     # --- auth ---------------------------------------------------------------
     jwt_secret: SecretStr = SecretStr("change-me-random-64-bytes")

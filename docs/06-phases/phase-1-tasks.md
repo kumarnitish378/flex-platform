@@ -128,7 +128,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `/driver/duty`, duty_session, vehicle status transitions, per-vehicle MQTT credentials + ACL generation for Mosquitto.
   Done when: on-duty returns credentials; ACL denies publishing to another vehicle's topic (integration test with Mosquitto).
 
-- [ ] **B12 · GPS ingestor** · deps B11
+- [x] **B12 · GPS ingestor** · deps B11
   Docs: mqtt-topics.md, ADR-0005
   Do: separate process; validation rules; Redis latest position; batched persistence to partitioned `location_ping`; stale detection job; `/driver/location` HTTPS fallback.
   Done when: tests for invalid pings, out-of-order handling, batch payloads; 200 simulated vehicles at 5 s interval processed with lag < 2 s on dev machine.
