@@ -47,7 +47,15 @@ class Event:
     payload: dict[str, Any] = field(default_factory=dict)
 
     def encode(self) -> str:
-        return json.dumps({"event": self.name, "channel": self.channel, "data": self.payload})
+        """The exact frame a client receives.
+
+        The hub relays what it reads from Redis straight to the socket, so what is
+        published here must already be a valid server frame (`websocket-protocol.md`
+        section 2) rather than something the hub has to reshape.
+        """
+        return json.dumps(
+            {"type": "event", "event": self.name, "channel": self.channel, "data": self.payload}
+        )
 
 
 @runtime_checkable

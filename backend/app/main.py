@@ -38,6 +38,9 @@ from app.modules.dispatch.router import router as dispatch_router
 from app.modules.fleet.duty_router import router as duty_router
 from app.modules.fleet.router import router as fleet_router
 from app.modules.people.router import router as people_router
+from app.modules.realtime.hub import Hub
+from app.modules.realtime.router import router as realtime_router
+from app.modules.realtime.service import MembershipService
 from app.modules.requests.router import router as requests_router
 from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
 from app.modules.simctl.router import router as simctl_router
@@ -96,6 +99,9 @@ def create_app(
     app.state.routing = routing
     app.state.eta = eta
     app.state.events = RedisEventPublisher(redis)
+    # One hub per process; it holds the sockets and the Redis subscription behind them.
+    app.state.hub = Hub(redis)
+    app.state.membership = MembershipService
     app.state.geocoding = geocoding
     app.state.otp_sender = otp_sender
     app.state.health = health
@@ -113,6 +119,7 @@ def create_app(
     api.include_router(people_router)
     api.include_router(requests_router)
     api.include_router(dispatch_router)
+    api.include_router(realtime_router)
 
     # Mounted only in sim, so these paths genuinely do not exist anywhere else
     # (ADR-0008). A runtime flag could be flipped; an unregistered route cannot be.
@@ -134,6 +141,7 @@ def create_app(
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
+    await app.state.hub.close()
     await app.state.routing.close()
     await app.state.redis.aclose()
     engine: AsyncEngine = app.state.engine

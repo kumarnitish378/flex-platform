@@ -37,8 +37,10 @@ logger = get_logger(__name__)
 #: Redis key for a vehicle's latest position, and how long it survives without updates.
 POSITION_KEY = "veh:{vehicle_id}:pos"
 POSITION_TTL_SECONDS = 600
-#: Channel the WebSocket hub (B13) subscribes to.
-EVENT_CHANNEL = "ev:veh_pos:{operator_id}"
+#: The channel the WebSocket hub subscribes to. Named by `websocket-protocol.md`, not
+#: invented here: a private name would publish into a feed nobody is listening on.
+EVENT_CHANNEL = "operator.{operator_id}.vehicles"
+EVENT_NAME = "vehicle.location"
 
 #: Flush at least this often, or once this many pings are queued — whichever first.
 FLUSH_INTERVAL_SECONDS = 5
@@ -159,7 +161,13 @@ class GpsIngestor:
             )
             publish = getattr(self.redis, "publish", None)
             if publish is not None:
-                await publish(EVENT_CHANNEL.format(operator_id=operator_id), json.dumps(payload))
+                channel = EVENT_CHANNEL.format(operator_id=operator_id)
+                await publish(
+                    channel,
+                    json.dumps(
+                        {"type": "event", "event": EVENT_NAME, "channel": channel, "data": payload}
+                    ),
+                )
         except Exception as exc:  # noqa: BLE001 - a stale map beats a dropped ping
             logger.warning("gps_latest_write_failed", error=type(exc).__name__)
 

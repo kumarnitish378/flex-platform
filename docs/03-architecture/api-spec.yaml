@@ -8,6 +8,16 @@ info:
     Phase 1 endpoints are complete. Phase 2+ endpoints are marked `x-phase` and may be refined before implementation.
     All times are ISO 8601 UTC. All requests except /auth/* need `Authorization: Bearer <access token>` and `X-Active-Role`.
     Errors use the `Error` schema. Pagination: `limit` (max 100) + `cursor`.
+    The realtime surface (`/ws`) cannot be described in OpenAPI; its contract is
+    `websocket-protocol.md`, referenced below under `x-websocket`, and the same
+    change-the-contract-first rule applies to it.
+x-websocket:
+  path: /api/v1/ws
+  contract: websocket-protocol.md
+  description: >
+    Access-token authenticated WebSocket. Clients subscribe to `operator.{id}.vehicles`,
+    `operator.{id}.requests`, `operator.{id}.alerts`, `trip.{id}` and `user.{id}`;
+    the server checks permission per channel and fans out from Redis pub/sub.
 servers:
   - url: http://localhost:8000/api/v1
     description: local dev

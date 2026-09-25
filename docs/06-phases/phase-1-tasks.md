@@ -133,7 +133,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: separate process; validation rules; Redis latest position; batched persistence to partitioned `location_ping`; stale detection job; `/driver/location` HTTPS fallback.
   Done when: tests for invalid pings, out-of-order handling, batch payloads; 200 simulated vehicles at 5 s interval processed with lag < 2 s on dev machine.
 
-- [ ] **B13 · Realtime WebSocket hub** · deps B04, B12
+- [x] **B13 · Realtime WebSocket hub** · deps B04, B12
   Docs: architecture.md §4
   Do: `/ws` auth, channel subscription with permission checks, Redis pub/sub fan-out; events: vehicle.location, request.*, trip.*, stop.eta, alert.*.
   Done when: employee receives only own trip channel; supervisor receives operator channels; unauthorized subscription rejected.
