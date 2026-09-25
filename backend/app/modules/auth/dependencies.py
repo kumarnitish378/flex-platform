@@ -28,6 +28,8 @@ from app.modules.auth.permissions import Permission, has_permission
 PERMISSION_ATTR = "__smartcab_permission__"
 PUBLIC_ATTR = "__smartcab_public__"
 SELF_SERVICE_ATTR = "__smartcab_self_service__"
+#: Set alongside PERMISSION_ATTR when a route accepts any of several permissions.
+ANY_PERMISSIONS_ATTR = "__smartcab_any_permissions__"
 
 DependencyFn = Callable[..., Coroutine[Any, Any, CurrentUser]]
 
@@ -46,6 +48,36 @@ def require(permission: Permission) -> DependencyFn:
     setattr(checker, PERMISSION_ATTR, permission)
     checker.__name__ = f"require_{permission.name}"
     checker.__doc__ = f"Requires `{permission}`."
+    return checker
+
+
+def require_any(*permissions: Permission) -> DependencyFn:
+    """Admits a role holding **any** of these permissions.
+
+    For the rare endpoint that legitimately serves two audiences through different
+    permissions - the trip report is read by a supervisor under
+    `report.operational.view` and by a client admin under `report.view`. Still one
+    explicit declaration, so the harness sees it; the service narrows the *rows* by
+    role, which is the part that actually protects anyone.
+    """
+    if not permissions:
+        raise ValueError("require_any needs at least one permission")
+
+    async def checker(current_user: CurrentUserDep) -> CurrentUser:
+        if not any(has_permission(current_user.active_role, p) for p in permissions):
+            raise Forbidden(
+                "This role may not perform that action",
+                {
+                    "required_any": [str(p) for p in permissions],
+                    "role": str(current_user.active_role),
+                },
+            )
+        return current_user
+
+    setattr(checker, PERMISSION_ATTR, permissions[0])
+    setattr(checker, ANY_PERMISSIONS_ATTR, permissions)
+    checker.__name__ = "require_any_" + "_or_".join(p.name for p in permissions)
+    checker.__doc__ = "Requires any of: " + ", ".join(f"`{p}`" for p in permissions)
     return checker
 
 

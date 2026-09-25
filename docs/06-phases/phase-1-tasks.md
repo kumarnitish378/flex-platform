@@ -158,7 +158,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `/sos`, `/driver/issues`, alerts list/ack/resolve; alert creation for near-expiry, stale vehicle, VIP-no-vehicle (manual phase: informational).
   Done when: SOS reaches supervisor WS channel within 2 s in tests.
 
-- [ ] **B18 · Ratings + basic reports** · deps B15
+- [x] **B18 · Ratings + basic reports** · deps B15
   Docs: EMP-07, OPA-05, api-spec /reports/trips
   Done when: CSV export matches JSON totals; median/p90 wait correct on fixture data.
 

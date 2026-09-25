@@ -44,6 +44,7 @@ from app.modules.people.router import router as people_router
 from app.modules.realtime.hub import Hub
 from app.modules.realtime.router import router as realtime_router
 from app.modules.realtime.service import MembershipService
+from app.modules.reports.router import router as reports_router
 from app.modules.requests.router import router as requests_router
 from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
 from app.modules.simctl.router import router as simctl_router
@@ -126,6 +127,7 @@ def create_app(
     api.include_router(dispatch_router)
     api.include_router(driver_trips_router)
     api.include_router(alerts_router)
+    api.include_router(reports_router)
     api.include_router(realtime_router)
 
     # Mounted only in sim, so these paths genuinely do not exist anywhere else
