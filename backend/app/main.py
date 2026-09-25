@@ -33,6 +33,7 @@ from app.core.settings import Settings, get_settings
 from app.modules.auth.otp import build_otp_sender
 from app.modules.auth.router import router as auth_router
 from app.modules.config.router import router as config_router
+from app.modules.fleet.duty_router import router as duty_router
 from app.modules.fleet.router import router as fleet_router
 from app.modules.people.router import router as people_router
 from app.modules.requests.router import router as requests_router
@@ -103,6 +104,7 @@ def create_app(
     api.include_router(auth_router)
     api.include_router(config_router)
     api.include_router(fleet_router)
+    api.include_router(duty_router)
     api.include_router(people_router)
     api.include_router(requests_router)
 

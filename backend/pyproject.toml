@@ -32,6 +32,9 @@ dev = [
     "pytest-cov==7.0.0",
     "ruff==0.16.8",
     "mypy==2.3.1",
+    # Test client for the Mosquitto ACL check (B11). The ingestor itself uses
+    # aiomqtt (tech-stack.md) and arrives with B12.
+    "paho-mqtt==2.1.0",
 ]
 
 [build-system]

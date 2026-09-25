@@ -123,7 +123,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   OSRM errors, times out or is rate-limited, and marks those ETAs approximate; integration test against a
   tiny OSM extract (skipped unless a self-hosted `OSRM_URL` is configured).
 
-- [ ] **B11 · Fleet duty + MQTT credentials** · deps B06
+- [x] **B11 · Fleet duty + MQTT credentials** · deps B06
   Docs: DRV-02, mqtt-topics.md (Access control)
   Do: `/driver/duty`, duty_session, vehicle status transitions, per-vehicle MQTT credentials + ACL generation for Mosquitto.
   Done when: on-duty returns credentials; ACL denies publishing to another vehicle's topic (integration test with Mosquitto).

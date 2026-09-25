@@ -34,6 +34,8 @@ runs/
 
 # --- Infra / map data (large, never committed) -----------------------------
 infra/data/
+# Broker credential files are generated from the vehicle registry at runtime.
+infra/mosquitto/config/generated/
 infra/tiles/*.mbtiles
 *.osm.pbf
 *.osrm*
