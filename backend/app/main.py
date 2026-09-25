@@ -31,6 +31,7 @@ from app.core.logging import (
 )
 from app.core.redis import create_redis, redis_check
 from app.core.settings import Settings, get_settings
+from app.modules.alerts.router import router as alerts_router
 from app.modules.auth.otp import build_otp_sender
 from app.modules.auth.router import router as auth_router
 from app.modules.config.router import router as config_router
@@ -124,6 +125,7 @@ def create_app(
     api.include_router(requests_router)
     api.include_router(dispatch_router)
     api.include_router(driver_trips_router)
+    api.include_router(alerts_router)
     api.include_router(realtime_router)
 
     # Mounted only in sim, so these paths genuinely do not exist anywhere else

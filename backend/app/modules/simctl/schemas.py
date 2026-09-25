@@ -24,6 +24,8 @@ class SimClockState(Strict):
     near_expiry_alerts: int = 0
     #: Stop ETAs recomputed by the jump (B15), so a scenario can assert on them.
     stop_etas_refreshed: int = 0
+    #: Vehicles that went quiet and were alerted on by the jump (B17).
+    stale_vehicle_alerts: int = 0
 
 
 class ResetRequest(Strict):

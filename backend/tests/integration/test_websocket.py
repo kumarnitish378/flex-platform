@@ -650,3 +650,40 @@ def test_disconnecting_releases_the_channel(
         assert app.state.hub.listeners(channel) == 1
 
     assert app.state.hub.listeners(channel) == 0
+
+
+def test_an_sos_reaches_a_subscribed_supervisor(
+    web: TestClient, world: dict[str, Any], clock: FakeClock, app: FastAPI
+) -> None:
+    """B17 acceptance, the other half: the alerts channel really delivers to a socket.
+
+    `test_alerts.py` proves an SOS is published to `operator.{id}.alerts` in well under
+    two seconds; this proves a supervisor sitting on that channel receives it.
+    """
+    token = token_for(world, "supervisor", Role.supervisor, clock)
+    channel = f"operator.{world['operator_id']}.alerts"
+
+    with web.websocket_connect(WS_URL, headers=auth_header(token)) as socket:
+        subscribe(socket, channel)
+
+        frame = {
+            "type": "event",
+            "event": "alert.sos",
+            "channel": channel,
+            "data": {"severity": "critical", "lat": 28.53, "lng": 77.4},
+        }
+        _in_app_loop(web, app.state.hub.deliver, channel, frame)
+
+        assert socket.receive_json() == frame
+
+
+def test_an_employee_cannot_listen_to_the_alerts_channel(
+    web: TestClient, world: dict[str, Any], clock: FakeClock
+) -> None:
+    """SOS positions and breakdowns are operational data, not rider data."""
+    token = token_for(world, "rider", Role.employee, clock)
+
+    with web.websocket_connect(WS_URL, headers=auth_header(token)) as socket:
+        reply = subscribe(socket, f"operator.{world['operator_id']}.alerts")
+
+    assert reply["channels"] == []

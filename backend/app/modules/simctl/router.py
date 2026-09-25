@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, Request
 from app.core.clock import FakeClock
 from app.core.dependencies import ClockDep, SessionDep
 from app.domain.errors import ValidationFailed
+from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
 from app.modules.dispatch.eta_refresh import EtaRefresher
 from app.modules.requests.service import RideRequestService
@@ -82,11 +83,13 @@ async def set_clock(
     # The ETA worker is due work too, not a background timer, so a clock jump refreshes
     # stop ETAs before returning (`architecture.md` section 3.2 step 4).
     refreshed = await EtaRefresher(session, fake, request.app.state.eta).refresh_due()
+    stale = await AlertService(session, fake).sweep_stale_vehicles()
     return SimClockState(
         now=fake.now(),
         expired=sweep.expired,
         near_expiry_alerts=sweep.warned,
         stop_etas_refreshed=refreshed.stops,
+        stale_vehicle_alerts=stale.raised,
     )
 
 

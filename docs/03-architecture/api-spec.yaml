@@ -1165,7 +1165,7 @@ components:
       properties:
         id: {type: string, format: uuid}
         type: {type: string, enum: [sos, driver_issue, request_near_expiry, vip_no_vehicle, failsafe, stale_vehicle, mode_prompt, system]}
-        severity: {type: string, enum: [critical, high, normal]}
+        severity: {type: string, enum: [critical, warning, info]}
         status: {type: string, enum: [open, acknowledged, resolved]}
         created_at: {type: string, format: date-time}
         request_id: {type: [string, 'null'], format: uuid}

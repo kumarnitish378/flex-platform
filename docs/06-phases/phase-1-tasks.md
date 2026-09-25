@@ -153,7 +153,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: push provider interface (log, FCM, ntfy); notification records; "5 min away" trigger from ETA job.
   Done when: every transition in §6 produces the right notifications (tests with log provider).
 
-- [ ] **B17 · Alerts** · deps B13
+- [x] **B17 · Alerts** · deps B13
   Docs: EMP-08, DRV-06
   Do: `/sos`, `/driver/issues`, alerts list/ack/resolve; alert creation for near-expiry, stale vehicle, VIP-no-vehicle (manual phase: informational).
   Done when: SOS reaches supervisor WS channel within 2 s in tests.
