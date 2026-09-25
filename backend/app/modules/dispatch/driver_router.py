@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.dependencies import ClockDep, CurrentUserDep, EventsDep, SessionDep
+from app.core.dependencies import ClockDep, CurrentUserDep, EventsDep, PushDep, SessionDep
 from app.domain.driver_actions import StopAction
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
@@ -15,12 +15,17 @@ from app.modules.dispatch.driver_service import DriverEvent, DriverTripService
 from app.modules.dispatch.models import Trip
 from app.modules.dispatch.router import _trip_out
 from app.modules.dispatch.schemas import DriverEventInput, TripOut
+from app.modules.notifications.service import NotificationService
 
 router = APIRouter(prefix="/driver", tags=["driver"])
 
 
-def _service(session: SessionDep, clock: ClockDep, events: EventsDep) -> DriverTripService:
-    return DriverTripService(session, clock, events=events)
+def _service(
+    session: SessionDep, clock: ClockDep, events: EventsDep, push: PushDep
+) -> DriverTripService:
+    return DriverTripService(
+        session, clock, events=events, notifications=NotificationService(session, clock, push)
+    )
 
 
 ServiceDep = Annotated[DriverTripService, Depends(_service)]

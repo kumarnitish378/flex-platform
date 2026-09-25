@@ -21,6 +21,7 @@ from app.domain.errors import DomainError
 from app.modules.auth.service import InvalidCredentialsError
 
 if TYPE_CHECKING:  # a core module must not import a feature module at runtime
+    from app.modules.notifications.push import PushSender
     from app.modules.routing.service import EtaService
 
 
@@ -56,6 +57,12 @@ def get_events(request: Request) -> EventPublisher:
     """Where realtime events go (`architecture.md` section 4)."""
     publisher: EventPublisher = request.app.state.events
     return publisher
+
+
+def get_push_sender(request: Request) -> PushSender:
+    """The push provider the factory chose (B16)."""
+    sender: PushSender = request.app.state.push_sender
+    return sender
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -133,4 +140,5 @@ ClockDep = Annotated[Clock, Depends(get_clock)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 EtaDep = Annotated["EtaService", Depends(get_eta)]
 EventsDep = Annotated[EventPublisher, Depends(get_events)]
+PushDep = Annotated["PushSender", Depends(get_push_sender)]
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]

@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
 from geoalchemy2.shape import to_shape
 
-from app.core.dependencies import ClockDep, CurrentUserDep, SessionDep
+from app.core.dependencies import ClockDep, CurrentUserDep, PushDep, SessionDep
 from app.domain.enums import Role
 from app.domain.errors import Forbidden
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
+from app.modules.notifications.service import NotificationService
 from app.modules.requests.schemas import (
     CancelInput,
     LatLng,
@@ -22,6 +23,14 @@ from app.modules.requests.schemas import (
 from app.modules.requests.service import RideRequestService
 
 router = APIRouter(tags=["employee"])
+
+
+def _service(session: SessionDep, clock: ClockDep, push: PushDep) -> RideRequestService:
+    """One place builds the service, so every route gets the configured push provider."""
+    return RideRequestService(session, clock, NotificationService(session, clock, push))
+
+
+ServiceDep = Annotated[RideRequestService, Depends(_service)]
 
 
 def _operator_id(current_user: CurrentUserDep) -> uuid.UUID:
@@ -64,11 +73,10 @@ def _out(request: Any, employee_name: str | None = None) -> RideRequestOut:
 )
 async def create_request(
     body: RideRequestInput,
-    session: SessionDep,
-    clock: ClockDep,
+    service: ServiceDep,
     current_user: CurrentUserDep,
 ) -> RideRequestOut:
-    request = await RideRequestService(session, clock).create(
+    request = await service.create(
         operator_id=_operator_id(current_user),
         actor_role=current_user.active_role,
         actor_user_id=current_user.claims.user_id,
@@ -90,9 +98,8 @@ async def create_request(
     dependencies=[Depends(require(Permission.ride_track))],
 )
 async def list_mine(
-    session: SessionDep, clock: ClockDep, current_user: CurrentUserDep
+    service: ServiceDep, current_user: CurrentUserDep
 ) -> dict[str, list[RideRequestOut]]:
-    service = RideRequestService(session, clock)
     operator_id = _operator_id(current_user)
     employee_id = await _caller_employee_id(service, current_user, operator_id)
     if employee_id is None:
@@ -108,11 +115,9 @@ async def list_mine(
 )
 async def get_request(
     request_id: uuid.UUID,
-    session: SessionDep,
-    clock: ClockDep,
+    service: ServiceDep,
     current_user: CurrentUserDep,
 ) -> RideRequestOut:
-    service = RideRequestService(session, clock)
     operator_id = _operator_id(current_user)
     request = await service.get(
         operator_id,
@@ -131,11 +136,9 @@ async def get_request(
 async def cancel_request(
     request_id: uuid.UUID,
     body: CancelInput,
-    session: SessionDep,
-    clock: ClockDep,
+    service: ServiceDep,
     current_user: CurrentUserDep,
 ) -> RideRequestOut:
-    service = RideRequestService(session, clock)
     operator_id = _operator_id(current_user)
     request = await service.cancel(
         operator_id=operator_id,

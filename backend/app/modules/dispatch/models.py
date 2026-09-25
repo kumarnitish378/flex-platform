@@ -108,6 +108,9 @@ class TripStop(TenantEntity):
     latest_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: True when the ETA came from the approx provider rather than road routing (ADR-0010).
     eta_approximate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Set once when the "cab 5 minutes away" notification fires, so it cannot fire
+    #: twice as the ETA wobbles around the threshold (EMP-05, B16).
+    near_alert_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: When `latest_eta` was last recomputed - not the same as `latest_eta` itself, which
     #: is a future arrival. The refresh job needs to know its own cadence (B15).
     eta_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

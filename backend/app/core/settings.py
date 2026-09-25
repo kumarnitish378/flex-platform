@@ -104,8 +104,11 @@ class Settings(BaseSettings):
     routing_cache_ttl_seconds: int = Field(default=900, ge=0)
     osm_request_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
-    # --- notifications ------------------------------------------------------
+    # --- notifications (B16) -------------------------------------------------
+    #: `log` in dev and tests, `ntfy` self-hosted, `fcm` not implemented (OQ-20).
     push_provider: PushProvider = PushProvider.log
+    #: Base URL of a self-hosted ntfy server. Required when push_provider is `ntfy`.
+    ntfy_url: str = ""
 
     # --- simulator ----------------------------------------------------------
     simctl_enabled: bool = False

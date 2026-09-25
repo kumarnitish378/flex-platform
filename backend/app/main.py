@@ -38,6 +38,7 @@ from app.modules.dispatch.driver_router import router as driver_trips_router
 from app.modules.dispatch.router import router as dispatch_router
 from app.modules.fleet.duty_router import router as duty_router
 from app.modules.fleet.router import router as fleet_router
+from app.modules.notifications.push import build_push_sender
 from app.modules.people.router import router as people_router
 from app.modules.realtime.hub import Hub
 from app.modules.realtime.router import router as realtime_router
@@ -80,6 +81,7 @@ def create_app(
     geocoding = build_geocoding_provider(settings)
     eta = EtaService(routing, clock)
     otp_sender = build_otp_sender(settings)
+    push_sender = build_push_sender(settings)
 
     health = HealthRegistry()
     health.register("database", database_check(engine), required=True)
@@ -105,6 +107,7 @@ def create_app(
     app.state.membership = MembershipService
     app.state.geocoding = geocoding
     app.state.otp_sender = otp_sender
+    app.state.push_sender = push_sender
     app.state.health = health
 
     _register_middleware(app)

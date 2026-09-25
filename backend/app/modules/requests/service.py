@@ -32,6 +32,7 @@ from app.domain.enums import (
     Urgency,
 )
 from app.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from app.domain.notifications import NotificationType
 from app.domain.state_machines import (
     Actor,
     RequestContext,
@@ -43,6 +44,7 @@ from app.domain.state_machines import (
 )
 from app.modules.alerts.models import Alert
 from app.modules.config.service import ConfigService
+from app.modules.notifications.service import Audience, NotificationService
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest, RideRequestEvent
 
@@ -76,7 +78,13 @@ class ExpirySweep:
 
 
 class RideRequestService:
-    def __init__(self, session: AsyncSession, clock: Clock) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        clock: Clock,
+        notifications: NotificationService | None = None,
+    ) -> None:
+        self.notifications = notifications or NotificationService(session, clock)
         self.session = session
         self.clock = clock
         self.config = ConfigService(session, clock)
@@ -340,8 +348,41 @@ class RideRequestService:
         self._apply(request, event, actor_user_id)
         await self.session.flush()
 
+        # `trip-lifecycle.md` section 6 splits this by who cancelled: the employee
+        # cancelling tells the driver and supervisor; the operator cancelling tells the
+        # employee, and must include the reason.
+        await self.notifications.notify(
+            NotificationType.request_cancelled,
+            Audience(
+                employee=await self._user_of_employee(request.employee_id),
+                driver=await self._driver_user_of_trip(request.trip_id),
+                operator_id=operator_id,
+            ),
+            {
+                "request_id": str(request.id),
+                "trip_id": str(request.trip_id) if request.trip_id else None,
+                "cancelled_by_employee": actor_role is Role.employee,
+                "reason": effective_reason,
+            },
+        )
+
         logger.info("ride_request_cancelled", request_id=str(request.id), actor=str(actor_role))
         return request
+
+    async def _user_of_employee(self, employee_id: uuid.UUID) -> uuid.UUID | None:
+        return await self.session.scalar(select(Employee.user_id).where(Employee.id == employee_id))
+
+    async def _driver_user_of_trip(self, trip_id: uuid.UUID | None) -> uuid.UUID | None:
+        """The driver losing a rider, if the request had already been put on a trip."""
+        if trip_id is None:
+            return None
+        from app.modules.dispatch.models import Trip
+        from app.modules.fleet.models import Driver
+
+        user_id: uuid.UUID | None = await self.session.scalar(
+            select(Driver.user_id).join(Trip, Trip.driver_id == Driver.id).where(Trip.id == trip_id)
+        )
+        return user_id
 
     # --- expiry (Clock-driven, no wall-clock sleep) -------------------------
 
@@ -411,6 +452,14 @@ class RideRequestService:
                         "employee_id": str(request.employee_id),
                     },
                 )
+            )
+            await self.notifications.notify(
+                NotificationType.request_near_expiry,
+                Audience(operator_id=request.operator_id),
+                {
+                    "request_id": str(request.id),
+                    "expires_at": request.expires_at.isoformat(),
+                },
             )
             request.near_expiry_alerted_at = now
             count += 1

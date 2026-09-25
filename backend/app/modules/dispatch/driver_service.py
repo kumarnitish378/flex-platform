@@ -31,6 +31,7 @@ from app.core.geo import to_point
 from app.core.logging import get_logger
 from app.domain.driver_actions import StopAction, check_occurred_at, effective_time
 from app.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from app.domain.notifications import NotificationType
 from app.domain.state_machines import (
     Actor,
     RequestContext,
@@ -49,6 +50,7 @@ from app.domain.state_machines import (
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
 from app.modules.fleet.models import Driver, Vehicle
+from app.modules.notifications.service import Audience, NotificationService
 from app.modules.requests.models import RideRequest, RideRequestEvent
 
 logger = get_logger(__name__)
@@ -75,11 +77,13 @@ class DriverTripService:
         clock: Clock,
         config: ConfigService | None = None,
         events: EventPublisher | None = None,
+        notifications: NotificationService | None = None,
     ) -> None:
         self.session = session
         self.clock = clock
         self.config = config or ConfigService(session, clock)
         self.events = events or NullEventPublisher()
+        self.notifications = notifications or NotificationService(session, clock)
 
     # --- reading -------------------------------------------------------------------
 
@@ -215,6 +219,9 @@ class DriverTripService:
         self._apply_stop(stop, StopStatus.arrived, at, event)
         stop.arrived_at = at
         await self._publish_stop(stop, "stop.arrived", {"arrived_at": at.isoformat()})
+        if StopKind(stop.stop_type) is StopKind.pickup:
+            # `trip-lifecycle.md` section 6: "stop -> arrived | Employee".
+            await self._notify_rider(stop, NotificationType.cab_arrived)
 
     async def _finish(
         self, trip: Trip, stop: TripStop, driver: Driver, at: datetime, event: DriverEvent
@@ -237,6 +244,9 @@ class DriverTripService:
         await self._publish_stop(
             stop, "stop.done", {"done_at": at.isoformat(), "stop_type": str(kind)}
         )
+        if kind is StopKind.drop:
+            # EMP-05 lists trip completed among the statuses a rider is told about.
+            await self._notify_rider(stop, NotificationType.trip_completed)
 
     async def _head_for_the_next_stop(
         self, finished: TripStop, at: datetime, event: DriverEvent
@@ -466,6 +476,30 @@ class DriverTripService:
         employee_user_id = await self._rider_user_id(stop.request_id)
         if employee_user_id is not None:
             await self.events.publish(Event(name, user_channel(employee_user_id), body))
+
+    async def _notify_rider(self, stop: TripStop, event: NotificationType) -> None:
+        rider_user_id = await self._rider_user_id(stop.request_id)
+        if rider_user_id is None:
+            return
+        trip = await self.session.scalar(select(Trip).where(Trip.id == stop.trip_id))
+        vehicle = (
+            await self.session.scalar(select(Vehicle).where(Vehicle.id == trip.vehicle_id))
+            if trip is not None
+            else None
+        )
+        await self.notifications.notify(
+            event,
+            Audience(
+                employee=rider_user_id,
+                operator_id=trip.operator_id if trip is not None else None,
+            ),
+            {
+                "trip_id": str(stop.trip_id),
+                "stop_id": str(stop.id),
+                "request_id": str(stop.request_id),
+                "registration_no": vehicle.registration_no if vehicle is not None else None,
+            },
+        )
 
     async def _rider_user_id(self, request_id: uuid.UUID) -> uuid.UUID | None:
         from app.modules.people.models import Employee

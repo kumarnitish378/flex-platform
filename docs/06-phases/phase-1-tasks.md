@@ -148,7 +148,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: `/driver/trips`, start, stop actions (arrived/done/no_show), complete; idempotency by `client_event_id`; offline `occurred_at` handling; stop ETA refresh job every 30 s.
   Done when: duplicate events ignored; no-show blocked before wait time; request states follow stops.
 
-- [ ] **B16 · Notifications** · deps B13, B15
+- [x] **B16 · Notifications** · deps B13, B15
   Docs: trip-lifecycle.md §6, EMP-05
   Do: push provider interface (log, FCM, ntfy); notification records; "5 min away" trigger from ETA job.
   Done when: every transition in §6 produces the right notifications (tests with log provider).

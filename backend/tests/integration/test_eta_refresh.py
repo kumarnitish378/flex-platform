@@ -18,11 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.clock import FakeClock
 from app.core.events import RecordingEventPublisher
 from app.core.geo import to_point
-from app.domain.enums import Direction, Urgency, VehicleType
+from app.domain.enums import DevicePlatform, Direction, Urgency, VehicleType
 from app.domain.state_machines import RequestStatus, StopKind, StopStatus, TripStatus, VehicleStatus
+from app.modules.auth.models import Device
 from app.modules.dispatch.eta_refresh import REFRESH_INTERVAL, EtaRefresher
 from app.modules.dispatch.models import Trip, TripStop
 from app.modules.fleet.models import Driver, Vehicle
+from app.modules.notifications.push import RecordingPushSender
+from app.modules.notifications.service import NotificationService
 from app.modules.requests.models import RideRequest
 from app.modules.routing.approx import ApproxRoutingProvider
 from app.modules.routing.service import EtaService
@@ -52,10 +55,24 @@ def events() -> RecordingEventPublisher:
     return RecordingEventPublisher()
 
 
+@pytest.fixture
+def pushes() -> RecordingPushSender:
+    return RecordingPushSender()
+
+
 def refresher(
-    session: AsyncSession, clock: FakeClock, events: RecordingEventPublisher
+    session: AsyncSession,
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+    pushes: RecordingPushSender | None = None,
 ) -> EtaRefresher:
-    return EtaRefresher(session, clock, EtaService(ApproxRoutingProvider(clock), clock), events)
+    return EtaRefresher(
+        session,
+        clock,
+        EtaService(ApproxRoutingProvider(clock), clock),
+        events,
+        NotificationService(session, clock, pushes or RecordingPushSender()),
+    )
 
 
 @pytest_asyncio.fixture
@@ -167,11 +184,31 @@ async def world(db_session: AsyncSession) -> dict[str, Any]:
 
     return {
         "operator_id": operator.id,
+        "employee": employee,
         "trip": trip,
         "vehicle": vehicle,
         "pickup_id": pickup.id,
         "drop_id": drop.id,
     }
+
+
+@pytest_asyncio.fixture
+async def rider_with_a_phone(db_session: AsyncSession, world: dict[str, Any]) -> None:
+    """Give the rider a login and a device, so a push has somewhere to go."""
+    rider = make_user(name="Asha", phone=unique_phone())
+    db_session.add(rider)
+    await db_session.flush()
+
+    world["employee"].user_id = rider.id
+    db_session.add(
+        Device(
+            user_id=rider.id,
+            platform=DevicePlatform.android,
+            push_token="token-rider",
+            last_seen_at=NOW,
+        )
+    )
+    await db_session.flush()
 
 
 async def stop_of(session: AsyncSession, stop_id: uuid.UUID) -> TripStop:
@@ -328,3 +365,80 @@ async def test_another_operators_trips_can_be_excluded(
 ) -> None:
     result = await refresher(db_session, clock, events).refresh_due(operator_id=uuid.uuid4())
     assert result.stops == 0
+
+
+# --- "cab 5 minutes away" (EMP-05, B16) -----------------------------------------------
+
+
+async def test_no_warning_while_the_cab_is_still_far_away(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+    pushes: RecordingPushSender,
+) -> None:
+    """PARKED to HOME is about 1 km, which the approx provider puts well over 5 minutes."""
+    result = await refresher(db_session, clock, events, pushes).refresh_due()
+
+    assert result.near_alerts == 0
+    assert pushes.messages == []
+
+
+async def test_the_rider_is_warned_when_the_cab_is_nearly_there(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+    pushes: RecordingPushSender,
+    rider_with_a_phone: None,
+) -> None:
+    pickup = await stop_of(db_session, world["pickup_id"])
+    pickup.latest_eta = clock.now() + timedelta(minutes=4)
+    pickup.eta_updated_at = clock.now()
+    await db_session.flush()
+
+    result = await refresher(db_session, clock, events, pushes).refresh_due()
+
+    assert result.near_alerts == 1
+    assert pushes.titles() == ["Cab nearby"]
+
+
+async def test_the_warning_fires_only_once(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+    pushes: RecordingPushSender,
+    rider_with_a_phone: None,
+) -> None:
+    """An ETA wobbling around five minutes must not buzz a phone every thirty seconds."""
+    pickup = await stop_of(db_session, world["pickup_id"])
+    pickup.latest_eta = clock.now() + timedelta(minutes=4)
+    pickup.eta_updated_at = clock.now()
+    await db_session.flush()
+
+    job = refresher(db_session, clock, events, pushes)
+    await job.refresh_due()
+    clock.advance(REFRESH_INTERVAL)
+    await job.refresh_due()
+
+    assert len(pushes.messages) == 1
+
+
+async def test_a_drop_never_triggers_the_warning(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+    pushes: RecordingPushSender,
+    rider_with_a_phone: None,
+) -> None:
+    """ "Your cab is 5 minutes from dropping you off" is not a thing anyone needs."""
+    drop = await stop_of(db_session, world["drop_id"])
+    drop.latest_eta = clock.now() + timedelta(minutes=2)
+    drop.eta_updated_at = clock.now()
+    pickup = await stop_of(db_session, world["pickup_id"])
+    pickup.status = StopStatus.done
+    await db_session.flush()
+
+    assert (await refresher(db_session, clock, events, pushes).refresh_due()).near_alerts == 0

@@ -7,7 +7,14 @@ from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.dependencies import ClockDep, CurrentUserDep, EtaDep, EventsDep, SessionDep
+from app.core.dependencies import (
+    ClockDep,
+    CurrentUserDep,
+    EtaDep,
+    EventsDep,
+    PushDep,
+    SessionDep,
+)
 from app.core.geo import coords
 from app.domain.enums import Direction
 from app.domain.errors import Forbidden
@@ -26,6 +33,7 @@ from app.modules.dispatch.schemas import (
     VehicleLiveOut,
 )
 from app.modules.dispatch.service import Candidate, DispatchService, VehicleLive
+from app.modules.notifications.service import NotificationService
 from app.modules.requests.router import _out as _request_out
 from app.modules.requests.schemas import LatLng, RideRequestOut
 
@@ -40,9 +48,15 @@ def _operator_id(current_user: CurrentUserDep) -> uuid.UUID:
 
 
 def _service(
-    session: SessionDep, clock: ClockDep, eta: EtaDep, events: EventsDep
+    session: SessionDep, clock: ClockDep, eta: EtaDep, events: EventsDep, push: PushDep
 ) -> DispatchService:
-    return DispatchService(session, clock, eta, events=events)
+    return DispatchService(
+        session,
+        clock,
+        eta,
+        events=events,
+        notifications=NotificationService(session, clock, push),
+    )
 
 
 ServiceDep = Annotated[DispatchService, Depends(_service)]

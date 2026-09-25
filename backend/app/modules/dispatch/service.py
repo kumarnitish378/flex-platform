@@ -57,6 +57,7 @@ from app.domain.dispatch import (
 from app.domain.enums import Direction
 from app.domain.errors import Conflict, NotFound
 from app.domain.geo import LatLng
+from app.domain.notifications import NotificationType
 from app.domain.state_machines import (
     Actor,
     RequestContext,
@@ -72,6 +73,7 @@ from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import MODE_MANUAL, Trip, TripEvent, TripStop
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Vehicle
+from app.modules.notifications.service import Audience, NotificationService
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest, RideRequestEvent
 from app.modules.tenancy.models import ClientPolicy, Office
@@ -135,12 +137,14 @@ class DispatchService:
         eta_service: Any,
         config: ConfigService | None = None,
         events: EventPublisher | None = None,
+        notifications: NotificationService | None = None,
     ) -> None:
         self.session = session
         self.clock = clock
         self.eta = eta_service
         self.config = config or ConfigService(session, clock)
         self.events = events or NullEventPublisher()
+        self.notifications = notifications or NotificationService(session, clock)
 
     # --- the board ------------------------------------------------------------
 
@@ -508,6 +512,24 @@ class DispatchService:
             await self.events.publish(Event("trip.assigned", user_channel(driver_user_id), payload))
         await self.events.publish(
             Event("trip.assigned", operator_channel(trip.operator_id, "requests"), payload)
+        )
+
+        # `trip-lifecycle.md` section 6: "request -> assigned | Employee (push), driver
+        # (push)". The realtime event updates a screen already open; the push reaches a
+        # phone in a pocket, which is the one that matters at 7am.
+        await self.notifications.notify(
+            NotificationType.request_assigned,
+            Audience(
+                employee=employee.user_id,
+                driver=driver_user_id,
+                operator_id=trip.operator_id,
+            ),
+            {
+                **payload,
+                "registration_no": vehicle.registration_no,
+                "pickup_eta_minutes": round(eta_seconds / 60),
+                "landmark": request.landmark,
+            },
         )
 
     # --- stops --------------------------------------------------------------------
