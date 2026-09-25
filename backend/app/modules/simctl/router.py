@@ -17,8 +17,9 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 
-from app.core.clock import FakeClock
+from app.core.clock import SIM_CLOCK_KEY, FakeClock
 from app.core.dependencies import ClockDep, SessionDep
+from app.core.logging import get_logger
 from app.domain.errors import ValidationFailed
 from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
@@ -26,6 +27,8 @@ from app.modules.dispatch.eta_refresh import EtaRefresher
 from app.modules.requests.service import RideRequestService
 from app.modules.simctl.schemas import ResetRequest, ResetResult, SimClockState, SimClockUpdate
 from app.modules.simctl.service import SimControlService
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["simctl"])
 
@@ -79,6 +82,10 @@ async def set_clock(
             raise ValidationFailed("advance_seconds cannot be negative")
         fake.advance(timedelta(seconds=seconds))
 
+    # Publish the new time so processes outside the API - the ingestor - validate against
+    # simulated time rather than wall time (`app/core/clock.py`, SharedSimClock).
+    await _publish_sim_clock(request, fake.now())
+
     sweep = await RideRequestService(session, fake).run_due_expiries()
     # The ETA worker is due work too, not a background timer, so a clock jump refreshes
     # stop ETAs before returning (`architecture.md` section 3.2 step 4).
@@ -121,3 +128,14 @@ async def reset(
 
 def sim_epoch() -> datetime:
     return datetime(2026, 1, 1, tzinfo=UTC)
+
+
+async def _publish_sim_clock(request: Request, now: datetime) -> None:
+    """Best-effort: a clock nobody can read is better than a 500 on a clock jump."""
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        return
+    try:
+        await redis.set(SIM_CLOCK_KEY, now.isoformat())
+    except Exception:  # noqa: BLE001
+        logger.warning("sim_clock_publish_failed")

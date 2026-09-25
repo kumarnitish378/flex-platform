@@ -17,10 +17,16 @@ import asyncio
 import contextlib
 import json
 import signal
+import sys
 import uuid
 from typing import Any
 
-from app.core.clock import SystemClock
+# Every model, not just `location_ping`. SQLAlchemy resolves that table's foreign keys
+# when it sorts tables for a bulk insert, so a process that imports only the tracking
+# model fails at the first flush with "could not find table 'vehicle'" - and only at
+# runtime, never at import. Alembic imports this module for the same reason.
+from app import models as _all_models  # noqa: F401
+from app.core.clock import Clock, SharedSimClock, SystemClock
 from app.core.db import create_engine, create_session_factory
 from app.core.logging import configure_logging, get_logger
 from app.core.redis import create_redis
@@ -55,7 +61,16 @@ async def run(settings: Settings | None = None) -> None:
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     redis = create_redis(settings)
-    clock = SystemClock()
+    # In sim the API owns time; this process must judge ping timestamps by the same
+    # clock or it rejects every simulated ping as hours in the future (M04).
+    # min_interval 0: read the shared clock on every message. A cached value is fine in
+    # real time but not in simulated time, where a quarter of a second is minutes - long
+    # enough for a perfectly good ping to look like it came from the future.
+    # The ingestor already does a Redis round trip per ping for the live position, so
+    # this is one more on a path that has one already.
+    clock: Clock = (
+        SharedSimClock(redis, min_interval_seconds=0.0) if settings.is_sim else SystemClock()
+    )
 
     stopping = asyncio.Event()
     _install_signal_handlers(stopping)
@@ -123,6 +138,11 @@ async def _flush_loop(ingestor: GpsIngestor, session: Any, stopping: asyncio.Eve
     while not stopping.is_set():
         await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
         try:
+            # In sim, pick up wherever the simulator has moved time to before judging
+            # the next batch of timestamps (M04).
+            refresh = getattr(ingestor.clock, "refresh", None)
+            if refresh is not None:
+                await refresh()
             if await ingestor.flush():
                 await session.commit()
         except Exception as exc:  # noqa: BLE001
@@ -137,7 +157,23 @@ def _install_signal_handlers(stopping: asyncio.Event) -> None:
 
 
 def main() -> None:
+    _use_a_loop_that_can_watch_sockets()
     asyncio.run(run())
+
+
+def _use_a_loop_that_can_watch_sockets() -> None:
+    """Windows needs the selector loop for MQTT.
+
+    The default event loop on Windows is the proactor, whose `add_reader`/`add_writer`
+    raise `NotImplementedError`. aiomqtt needs both, so the ingestor dies on connect with
+    a traceback that says nothing about MQTT. The dev machine is Windows; production is
+    Linux, where this is a no-op.
+    """
+    if sys.platform != "win32":
+        return
+    policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if policy is not None:
+        asyncio.set_event_loop_policy(policy())
 
 
 if __name__ == "__main__":

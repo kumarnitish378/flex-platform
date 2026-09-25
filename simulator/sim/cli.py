@@ -13,7 +13,9 @@ import os
 import sys
 from pathlib import Path
 
-from sim.engine import Engine
+from sim.engine import Engine, connect_fleet, spawn_fleet
+from sim.mqtt import MqttUnavailableError
+from sim.platform import PlatformClient, PlatformError
 from sim.recorder import Recorder, compare_runs, run_directory
 from sim.routing import PublicServerRefusedError
 from sim.scenario import Scenario, ScenarioError, load_scenario
@@ -36,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("scenario", help="path to a scenario YAML file")
     run.add_argument("--runs-dir", default="runs", help="where to write the run folder")
     run.add_argument("--no-output", action="store_true", help="run without writing files")
+    run.add_argument(
+        "--platform",
+        default=None,
+        metavar="URL",
+        help="drive a real backend (M04): seed it, share its clock, publish GPS to MQTT",
+    )
 
     suite = subparsers.add_parser("suite", help="run a named suite")
     suite.add_argument("name", choices=["quick", "full"])
@@ -50,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         return _validate(args.scenario)
     if args.command == "run":
-        return _run(args.scenario, args.runs_dir, args.no_output)
+        return _run(args.scenario, args.runs_dir, args.no_output, args.platform)
     if args.command == "compare":
         return _compare(args.run_a, args.run_b)
     return _suite(args.name, args.runs_dir)
@@ -73,21 +81,53 @@ def _validate(path: str) -> int:
     return 0
 
 
-def _run(path: str, runs_dir: str = "runs", no_output: bool = False) -> int:
+def _run(
+    path: str,
+    runs_dir: str = "runs",
+    no_output: bool = False,
+    platform_url: str | None = None,
+) -> int:
     try:
         scenario = load_scenario(path)
     except ScenarioError as exc:
         print(f"INVALID  {exc}", file=sys.stderr)
         return 1
-    return _run_scenario(scenario, runs_dir, no_output)
+    return _run_scenario(scenario, runs_dir, no_output, platform_url)
 
 
-def _run_scenario(scenario: Scenario, runs_dir: str = "runs", no_output: bool = False) -> int:
+def _run_scenario(
+    scenario: Scenario,
+    runs_dir: str = "runs",
+    no_output: bool = False,
+    platform_url: str | None = None,
+) -> int:
+    platform = None
+    if platform_url:
+        platform = PlatformClient(platform_url)
+        if not platform.health():
+            print(f"OFFLINE  no backend at {platform_url}", file=sys.stderr)
+            return 3
+
     try:
-        engine = Engine(scenario, osrm_url=os.environ.get("OSRM_URL"))
+        engine = Engine(scenario, osrm_url=os.environ.get("OSRM_URL"), platform=platform)
     except PublicServerRefusedError as exc:
         print(f"REFUSED  {exc}", file=sys.stderr)
         return 2
+
+    if platform is not None:
+        try:
+            world = connect_fleet(engine, platform)
+        except (PlatformError, MqttUnavailableError) as exc:
+            print(f"PLATFORM {exc}", file=sys.stderr)
+            platform.close()
+            return 3
+        print(
+            f"platform seeded operator={world.operator_id} "
+            f"vehicles={len(world.vehicle_ids)} clock={scenario.start.isoformat()}"
+        )
+        spawn_fleet(engine, [str(value) for value in world.vehicle_ids])
+    else:
+        spawn_fleet(engine)
 
     summary = engine.run()
     metrics = engine.metrics(summary)
@@ -97,6 +137,13 @@ def _run_scenario(scenario: Scenario, runs_dir: str = "runs", no_output: bool = 
         f"vehicles={summary.vehicles} employees={summary.employees} "
         f"pings={metrics.fleet.pings}"
     )
+
+    if engine.mqtt is not None:
+        engine.mqtt.flush()
+        print(f"mqtt     published={len(engine.mqtt.published)} unpublished={engine.mqtt.failed}")
+        engine.mqtt.close()
+    if platform is not None:
+        platform.close()
 
     if not no_output:
         paths = run_directory(scenario.name, summary.started_at, runs_dir)

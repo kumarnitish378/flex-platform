@@ -52,6 +52,12 @@ VEHICLES = (
     ("SIM0006", VehicleType.vip, 4),
 )
 #: One login per role, matching dev-environment.md §6's numbering style.
+#: Seeded tokens must outlive a whole simulated run. A scenario covers hours of simulated
+#: time in seconds of real time, so a 15-minute production TTL expires mid-run and every
+#: agent starts getting 401s. Safe only because `/simctl/*` cannot exist outside
+#: APP_ENV=sim (ADR-0008).
+SIM_TOKEN_TTL_SECONDS = 12 * 3600
+
 SEED_USERS = (
     (Role.operator_admin, "+910000000001"),
     (Role.supervisor, "+910000000002"),
@@ -210,9 +216,16 @@ class SimControlService:
                 phone=f"+9191000{index:05d}",
                 default_vehicle_id=vehicle.id,
             )
+            # Every driver gets a login, not just the first: M04 signs one driver into
+            # each cab, and a fleet sharing one account cannot - a driver may hold only
+            # one open duty session (B11).
             if index == 0:
                 seeded_driver = next(u for u in users if u.role == str(Role.driver))
                 driver.user_id = seeded_driver.user_id
+            else:
+                extra = await self._seed_driver_login(operator.id, index)
+                driver.user_id = extra.user_id
+                users.append(extra)
             self.session.add(driver)
             driver_ids.append(driver.id)
 
@@ -229,6 +242,34 @@ class SimControlService:
             users=users,
             now=self.clock.now(),
         )
+
+    async def _seed_driver_login(self, operator_id: uuid.UUID, index: int) -> SeededUser:
+        """One more driver account, for the cab at `index`.
+
+        Returned in `users` alongside the per-role logins, so the simulator can sign a
+        different driver into every vehicle.
+        """
+        phone = f"+910000001{index:03d}"
+        user = AppUser(id=_id("user", f"driver-{index}"), phone=phone, name=f"Sim driver {index}")
+        self.session.add(user)
+        await self.session.flush()
+        self.session.add(
+            UserRole(
+                id=_id("role", f"driver-{index}"),
+                user_id=user.id,
+                role=Role.driver,
+                operator_id=operator_id,
+            )
+        )
+        token, _ = create_access_token(
+            user_id=user.id,
+            role=str(Role.driver),
+            secret=self.settings.jwt_secret.get_secret_value(),
+            clock=self.clock,
+            ttl_seconds=SIM_TOKEN_TTL_SECONDS,
+            operator_id=operator_id,
+        )
+        return SeededUser(role=str(Role.driver), phone=phone, user_id=user.id, access_token=token)
 
     async def _seed_users(self, operator_id: uuid.UUID, client_id: uuid.UUID) -> list[SeededUser]:
         """One login per role, with a ready-to-use access token.
@@ -258,7 +299,7 @@ class SimControlService:
                 role=str(role),
                 secret=self.settings.jwt_secret.get_secret_value(),
                 clock=self.clock,
-                ttl_seconds=self.settings.access_token_ttl_seconds,
+                ttl_seconds=SIM_TOKEN_TTL_SECONDS,
                 operator_id=operator_id,
                 client_id=scoped_client,
             )

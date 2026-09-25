@@ -23,7 +23,7 @@ from app.modules.auth.models import AppUser
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest
-from app.modules.simctl.service import EMPLOYEE_COUNT, OFFICES, VEHICLES, ZONES
+from app.modules.simctl.service import EMPLOYEE_COUNT, OFFICES, SEED_USERS, VEHICLES, ZONES
 from app.modules.tenancy.models import Office, Operator, Zone
 
 NOW = datetime(2026, 9, 24, 4, 30, tzinfo=UTC)
@@ -362,5 +362,24 @@ async def test_the_seeded_driver_is_linked_to_a_driver_record(
 
 
 async def test_every_seeded_user_exists(sim_client: AsyncClient, db_session: AsyncSession) -> None:
-    await sim_client.post("/simctl/reset", json={})
-    assert await db_session.scalar(select(func.count()).select_from(AppUser)) == 5
+    """One login per role, plus one more per cab beyond the first.
+
+    The extra driver accounts exist because a driver may hold only one open duty session
+    (B11), so a simulated fleet cannot share an account (M04).
+    """
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+
+    expected = len(SEED_USERS) + len(body["vehicle_ids"]) - 1
+    assert await db_session.scalar(select(func.count()).select_from(AppUser)) == expected
+    assert len(body["users"]) == expected
+
+
+async def test_every_cab_has_its_own_driver_login(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A fleet sharing one account cannot all go on duty."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+
+    drivers = [user for user in body["users"] if user["role"] == "driver"]
+    assert len(drivers) == len(body["vehicle_ids"])
+    assert len({user["access_token"] for user in drivers}) == len(drivers)

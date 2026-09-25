@@ -9,6 +9,8 @@ dependencies = [
     "numpy==2.5.3",
     "pydantic==2.13.5",
     "httpx==0.28.1",
+    # M04 publishes GPS to the real broker as a driver's phone would.
+    "paho-mqtt==2.1.0",
 ]
 
 [project.optional-dependencies]
