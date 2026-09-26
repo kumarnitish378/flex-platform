@@ -800,7 +800,6 @@ async def on_duty(db_session: AsyncSession, world: dict[str, Any]) -> None:
     await db_session.flush()
 
 
-
 async def test_a_breakdown_aborts_the_active_trip(
     client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
 ) -> None:

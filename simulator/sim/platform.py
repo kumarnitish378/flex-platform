@@ -102,15 +102,24 @@ class PlatformClient:
         base_url: str,
         client: httpx.Client | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        run_id: str | None = None,
+        force: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout)
         self._owns_client = client is None
+        #: Identifies this run to the backend. A reset while another run holds the claim
+        #: is refused rather than truncating that run's world out from under it - which
+        #: is how three long runs were lost before the claim existed.
+        self.run_id = run_id or f"sim-{uuid.uuid4().hex[:12]}"
+        self.force = force
 
     # --- the world ------------------------------------------------------------
 
     def reset(self, employees: int | None = None, vehicles: int | None = None) -> SeededWorld:
         """Truncate and seed a world the size this scenario needs.
+
+        Refused with a 409 if another run is already driving this backend.
 
         Sizing it here rather than taking the fixture's defaults: a fixed fixture caps
         every scenario at the smallest one, and a run quietly working with twenty riders

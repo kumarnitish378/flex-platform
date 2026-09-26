@@ -45,7 +45,34 @@ unfinished tasks say which task creates them).
 | `make test` | backend tests |
 | `make lint` | ruff check, ruff format --check, mypy |
 | `make backend-dev` | run the API with reload |
-| `make sim-quick` / `make sim-full` | simulator suites |
+| `make stack-up` / `make stack-down` | start / stop the backend a scenario drives (broker, migrations, API, GPS ingestor) |
+| `make sim-quick` / `make sim-full` | simulator suites, against that backend |
+| `make sim-offline` | the quick suite with no backend: proves the agents run, **does not check assertions** |
+
+### Running scenarios
+
+A scenario is only a test when there is a platform to test. Run the stack first:
+
+```bash
+make up          # postgres, redis
+make stack-up    # broker, migrations, API, GPS ingestor
+make sim-quick   # S01 against it; assertions are evaluated
+make stack-down
+```
+
+Without `--platform` a run still exercises the agents and prints its metrics, but ends
+with `assert not checked` rather than a pass — an offline run cannot tell you whether
+every request reached a terminal state, because there were no requests.
+
+**One run at a time per backend.** Seeding truncates every table, so a second run
+started against the same backend would destroy the first one's world. The backend
+refuses this with a 409 naming the run that holds it; pass `force` only to clear a claim
+left behind by a run that crashed.
+
+`make sim-quick` is what PR CI runs (S01, one simulated hour). The full suite — six
+scenarios, two of them sixteen simulated hours — runs nightly in
+`.github/workflows/sim-nightly.yml` and uploads each run's metrics and logs as artifacts.
+
 
 **Windows:** GNU make on Windows runs recipes through `cmd.exe` and is easy to break, so every target
 has an identical PowerShell entry point in `scripts/dev.ps1`:

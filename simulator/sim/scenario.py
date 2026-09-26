@@ -135,6 +135,17 @@ class ModeEntry(Strict):
     mode: OperatorMode
 
 
+class Direction(StrEnum):
+    """Which way a rider is travelling.
+
+    Defined here rather than on the rider agent: it is part of the scenario format and
+    of the API contract, and the agent is only one of its users.
+    """
+
+    to_office = "to_office"
+    from_office = "from_office"
+
+
 class Traffic(Strict):
     profile: str = "ncr_default"
 
@@ -155,6 +166,9 @@ class Event(Strict):
     count: int | None = Field(default=None, gt=0)
     #: `demand_surge`: 1.15 means "15% more demand than the day already has".
     multiplier: float | None = Field(default=None, gt=0)
+    #: `demand_surge`: which way the extra riders are going. S03 is an evening surge of
+    #: people leaving the office, which loads the fleet quite differently from arrivals.
+    direction: Direction | None = None
 
 
 class Assertions(Strict):

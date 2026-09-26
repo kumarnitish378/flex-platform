@@ -1,0 +1,95 @@
+# The full scenario suite, nightly (M08).
+#
+# Separate from ci.yml on purpose. The full suite runs sixteen simulated hours of
+# `rain_day` against a live stack and takes the best part of an hour; putting that on
+# every push would make CI something people route around. Nightly it is cheap, and the
+# artifacts are the point - a failed assertion is only actionable with the run's
+# metrics, event log and the API's own log beside it.
+name: Simulation (nightly)
+
+on:
+  schedule:
+    # 02:30 UTC = 08:00 IST, after the working day this project simulates.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Which suite to run
+        type: choice
+        options: [full, quick]
+        default: full
+
+env:
+  # ADR-0010: never the public OSM servers, in any job.
+  ROUTING_PROVIDER: approx
+  GEOCODING_PROVIDER: none
+  OSM_USER_AGENT: flex-platform-ci
+  OSM_CONTACT_EMAIL: ci@example.invalid
+
+jobs:
+  sim-full:
+    runs-on: ubuntu-latest
+    # Two of the six scenarios are 16 simulated hours and run at roughly 15x real time
+    # (OQ-26), so the suite takes over two hours. The cap is there to stop a wedged
+    # scenario holding the runner all night, not to bound the expected runtime.
+    timeout-minutes: 240
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: smartcab
+          POSTGRES_USER: smartcab
+          POSTGRES_PASSWORD: smartcab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartcab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -e './simulator[dev]' -e './backend[dev]'
+
+      - name: Bring up the live stack
+        run: scripts/live_stack.sh up
+
+      - name: Run the suite
+        working-directory: simulator
+        run: |
+          python -m sim suite "${{ inputs.suite || 'full' }}" \
+            --platform http://localhost:8000/api/v1
+
+      - name: Take the stack down
+        if: always()
+        run: scripts/live_stack.sh down
+
+      # Uploaded whether or not the suite passed: a green run's metrics are the baseline
+      # the next red one is read against.
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-nightly-${{ github.run_number }}
+          path: |
+            simulator/runs/
+            /tmp/live-stack/*.log
+          retention-days: 30

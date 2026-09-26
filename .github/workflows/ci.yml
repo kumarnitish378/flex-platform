@@ -177,9 +177,39 @@ jobs:
           flutter pub get
           flutter test
 
+  # S01 against a live backend. Running it offline would be cheaper and would prove
+  # nothing: the assertions that matter (every request terminal, no invalid transitions,
+  # no 5xx) can only be evaluated when there is a platform to evaluate them against, and
+  # an offline run says "assertions not checked" precisely so it cannot look like a pass.
   sim-quick:
     needs: detect
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: smartcab
+          POSTGRES_USER: smartcab
+          POSTGRES_PASSWORD: smartcab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartcab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - if: needs.detect.outputs.simulator != 'true'
@@ -190,12 +220,25 @@ jobs:
           python-version: '3.12'
           cache: pip
       - if: needs.detect.outputs.simulator == 'true'
-        run: pip install -e './simulator[dev]'
+        run: pip install -e './simulator[dev]' -e './backend[dev]'
       - if: needs.detect.outputs.simulator == 'true'
         working-directory: simulator
-        run: |
-          pytest -q
-          python -m sim suite quick
+        run: pytest -q
+      - if: needs.detect.outputs.simulator == 'true'
+        run: scripts/live_stack.sh up
+      - if: needs.detect.outputs.simulator == 'true'
+        working-directory: simulator
+        run: python -m sim suite quick --platform http://localhost:8000/api/v1
+      - if: always() && needs.detect.outputs.simulator == 'true'
+        run: scripts/live_stack.sh down
+      - if: failure() && needs.detect.outputs.simulator == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-quick-diagnostics
+          path: |
+            /tmp/live-stack/*.log
+            simulator/runs/
+          retention-days: 7
 
   # Repository-wide guard rails from CLAUDE.md that are cheap to check on every PR.
   policy-guards:

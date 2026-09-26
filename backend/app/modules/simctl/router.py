@@ -13,6 +13,7 @@ acceptable because the whole environment is a sandbox that cannot exist in produ
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
@@ -20,7 +21,7 @@ from fastapi import APIRouter, Depends, Request
 from app.core.clock import SIM_CLOCK_KEY, FakeClock
 from app.core.dependencies import ClockDep, SessionDep
 from app.core.logging import get_logger
-from app.domain.errors import ValidationFailed
+from app.domain.errors import Conflict, ValidationFailed
 from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
 from app.modules.dispatch.eta_refresh import EtaRefresher
@@ -118,6 +119,8 @@ async def reset(
             "on the simulator side."
         )
 
+    await _claim_the_backend(request, body.run_id, force=body.force)
+
     settings = request.app.state.settings
     service = SimControlService(session, fake, settings)
     if body.start_time is not None:
@@ -126,12 +129,58 @@ async def reset(
     return await service.reset(employees=body.employees, vehicles=body.vehicles)
 
 
+#: Who is currently driving this backend, and for how long the claim stands without
+#: being renewed. Two hours covers the longest scenario the suite runs; a crashed run
+#: releases the backend on its own rather than needing a human to clear a stale lock.
+SIM_RUN_KEY = "sim:run"
+SIM_RUN_TTL_SECONDS = 2 * 3600
+
+
+async def _claim_the_backend(request: Request, run_id: str | None, *, force: bool) -> None:
+    """Refuse to reset a backend another run is in the middle of using.
+
+    A `reset` truncates every table, so a second run starting against the same backend
+    silently destroys the first one's world - the first run then fails somewhere much
+    later with an error that says nothing about the real cause. This turns hours of
+    confusing wreckage into one clear 409.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None or run_id is None:
+        return
+
+    try:
+        owner = await redis.get(SIM_RUN_KEY)
+    except Exception:  # noqa: BLE001 - a missing Redis must not block a reset
+        return
+
+    current = owner.decode() if isinstance(owner, bytes) else owner
+    if current and current != run_id and not force:
+        raise Conflict(
+            f"run {current} is using this backend; resetting would destroy its world. "
+            f"Wait for it, or pass force=true to take over.",
+            {"owner": current, "requested_by": run_id},
+        )
+
+    with contextlib.suppress(Exception):
+        await redis.set(SIM_RUN_KEY, run_id, ex=SIM_RUN_TTL_SECONDS)
+
+
+async def _renew_the_claim(request: Request) -> None:
+    """Keep the claim alive while a run is still pushing its clock forward."""
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        return
+    with contextlib.suppress(Exception):
+        await redis.expire(SIM_RUN_KEY, SIM_RUN_TTL_SECONDS)
+
+
 def sim_epoch() -> datetime:
     return datetime(2026, 1, 1, tzinfo=UTC)
 
 
 async def _publish_sim_clock(request: Request, now: datetime) -> None:
     """Best-effort: a clock nobody can read is better than a 500 on a clock jump."""
+    await _renew_the_claim(request)
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
         return

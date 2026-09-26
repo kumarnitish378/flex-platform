@@ -5,7 +5,7 @@
 # reads the `## <description>` comment on the line above each target.
 
 .PHONY: help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
-        test test-domain-coverage lint format api-client sim-quick sim-full maps
+        test test-domain-coverage lint format api-client sim-quick sim-full         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
 help:
@@ -79,13 +79,30 @@ format:
 api-client:
 	python scripts/not_ready.py api-client A02
 
-## Simulator smoke scenarios (CI); always uses the approx routing provider
-sim-quick:
-	python scripts/venv_exec.py --cwd simulator -m sim suite quick
+# SIM_PLATFORM points the suites at a live backend so their assertions are actually
+# evaluated. Without it a run finishes and reports "assertions not checked" - useful for
+# checking the agents move, worthless as a pass. `make stack-up` starts one.
+SIM_PLATFORM ?= http://localhost:8000/api/v1
 
-## Full simulator scenario suite
+## Start the stack a scenario needs (broker, migrations, API, GPS ingestor)
+stack-up:
+	bash scripts/live_stack.sh up
+
+## Stop it again
+stack-down:
+	bash scripts/live_stack.sh down
+
+## Simulator smoke scenarios (PR CI); always uses the approx routing provider
+sim-quick:
+	python scripts/venv_exec.py --cwd simulator -m sim suite quick --platform $(SIM_PLATFORM)
+
+## Full simulator scenario suite (nightly)
 sim-full:
-	python scripts/venv_exec.py --cwd simulator -m sim suite full
+	python scripts/venv_exec.py --cwd simulator -m sim suite full --platform $(SIM_PLATFORM)
+
+## Both suites without a backend: proves the agents run, does NOT check assertions
+sim-offline:
+	python scripts/venv_exec.py --cwd simulator -m sim suite quick
 
 ## OPTIONAL (self-hosting only): prepare OSM map data - see dev-environment.md section 8
 maps:

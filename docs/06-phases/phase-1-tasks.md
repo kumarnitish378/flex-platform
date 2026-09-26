@@ -263,8 +263,18 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   result it never tested. Scenarios `rain_day` (S04), `breakdown_with_riders` (S05) and
   `gps_loss` (S06) added; S05 and S06 run green against the live stack.
 
-- [ ] **M08 · Scenario suite S01–S07 in CI** · deps M06, M07, F02
+- [x] **M08 · Scenario suite S01–S07 in CI** · deps M06, M07, F02
   Done when: `make sim-quick` in PR CI; `make sim-full` nightly with artifacts.
+  `sim-quick` (S01) now runs on every PR **against a live backend**, because an offline
+  run evaluates no assertions and so cannot be a pass. `sim-nightly.yml` runs the full
+  suite on a cron and uploads each run's metrics and logs. `scripts/live_stack.sh` is
+  the one way to bring up broker, migrations, API and ingestor, shared by CI and by a
+  developer reproducing a CI failure. S03 `evening_surge` added.
+  **Six of the seven scenarios are in the suite.** S07 `vip_burst` is missing: the
+  seeded world does not say which employees are VIP, so the burst would use ordinary
+  riders, and the simulator has no way to assert "VIP never pooled" - it would run and
+  report a VIP result it never tested. Needs `/simctl/reset` to seed and return VIP
+  employees, plus a pooling assertion.
 
 ## Optional / later
 

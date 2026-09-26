@@ -43,6 +43,9 @@ function Invoke-Compose {
     Invoke-InDir -Dir '.' -Exe 'docker' -ArgList $ArgList
 }
 
+# Where the suites look for a live backend. Override with $env:SIM_PLATFORM.
+$SimPlatform = if ($env:SIM_PLATFORM) { $env:SIM_PLATFORM } else { 'http://localhost:8000/api/v1' }
+
 $Commands = @{
     'help'        = { Invoke-InDir '.' 'python' @('scripts/make_help.py') }
     'venv'        = { Invoke-InDir '.' 'python' @('scripts/venv_setup.py', '--create') }
@@ -62,8 +65,12 @@ $Commands = @{
     'lint'        = { Invoke-InDir '.' 'python' @('scripts/lint.py') }
     'format'      = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'ruff', 'format', '.') }
     'api-client'  = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'api-client', 'A02') }
-    'sim-quick'   = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick') }
-    'sim-full'    = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'full') }
+    # A suite without --platform reports "assertions not checked" rather than passing.
+    # $env:SIM_PLATFORM overrides where the backend is; see `make stack-up` on Linux or
+    # dev-environment.md for starting one on Windows.
+    'sim-quick'   = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick', '--platform', $SimPlatform) }
+    'sim-full'    = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'full', '--platform', $SimPlatform) }
+    'sim-offline' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick') }
     'maps'        = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'maps', 'I02b') }
 }
 

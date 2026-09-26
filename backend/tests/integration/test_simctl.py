@@ -23,6 +23,7 @@ from app.modules.auth.models import AppUser
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest
+from app.modules.simctl.router import SIM_RUN_KEY
 from app.modules.simctl.service import EMPLOYEE_COUNT, OFFICES, SEED_USERS, VEHICLES, ZONES
 from app.modules.tenancy.models import Office, Operator, Zone
 
@@ -449,3 +450,69 @@ async def test_seeded_tokens_outlive_the_longest_scenario(
         "/dispatch/requests", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 200
+
+
+# --- one run at a time (M08) -------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def unclaimed(sim_client: AsyncClient) -> AsyncIterator[None]:
+    """Leave no claim behind.
+
+    The claim lives in the shared Redis with a two-hour TTL, so a test that sets one and
+    walks away blocks every real scenario run on the machine until it expires. It did.
+    """
+    await _clear_claim(sim_client)
+    yield
+    await _clear_claim(sim_client)
+
+
+async def _clear_claim(client: AsyncClient) -> None:
+    redis = getattr(client._transport.app.state, "redis", None)  # type: ignore[attr-defined]
+    if redis is not None:
+        await redis.delete(SIM_RUN_KEY)
+
+
+async def test_a_second_run_cannot_reset_the_backend(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """A reset truncates everything, so a concurrent run would destroy the first's world.
+
+    Before this, the first run failed much later with an error that said nothing about
+    the real cause - three long scenario runs were lost that way.
+    """
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-a"})).status_code == 200
+
+    response = await sim_client.post("/simctl/reset", json={"run_id": "run-b"})
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["details"]["owner"] == "run-a"
+    assert "destroy" in body["message"]
+
+
+async def test_the_same_run_can_reset_again(sim_client: AsyncClient, unclaimed: None) -> None:
+    """A suite runs several scenarios back to back under one claim."""
+    for _ in range(2):
+        response = await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+        assert response.status_code == 200
+
+
+async def test_a_claim_can_be_taken_over_deliberately(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """For a claim left behind by a run that crashed."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    response = await sim_client.post("/simctl/reset", json={"run_id": "run-b", "force": True})
+
+    assert response.status_code == 200
+
+
+async def test_a_reset_without_a_run_id_is_unaffected(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """Existing callers - and the test suite itself - never claim anything."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    assert (await sim_client.post("/simctl/reset", json={})).status_code == 200

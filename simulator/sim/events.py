@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import simpy
 
-from sim.scenario import Event
+from sim.scenario import Direction, Event
 from sim.traffic import CLOSURE_FACTOR, RAIN_FACTOR
 
 if TYPE_CHECKING:
@@ -174,10 +174,13 @@ class EventInjector:
             self.record.errors.append("demand_surge: every rider is already travelling")
             return
 
+        direction = event.direction or Direction.to_office
         chosen = idle[: min(wanted, len(idle))]
         for rider in chosen:
-            self.engine.spawn(rider.travel_now)
-        self.engine.record(f"demand surge: {len(chosen)} extra riders (wanted {wanted})")
+            self.engine.spawn(lambda rider=rider: rider.travel_now(direction))  # type: ignore[misc]
+        self.engine.record(
+            f"demand surge: {len(chosen)} extra riders {direction} (wanted {wanted})"
+        )
         yield self.engine.env.timeout(0)
 
     def _surge_size(self, event: Event, population: int) -> int:

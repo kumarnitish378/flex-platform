@@ -27,6 +27,7 @@ import numpy as np
 import simpy
 
 from sim.geo import LatLng
+from sim.scenario import Direction
 
 if TYPE_CHECKING:
     from sim.engine import Engine
@@ -62,11 +63,6 @@ POLL_INTERVAL_SECONDS = 60
 
 #: Statuses the backend will not move a request out of (`trip-lifecycle.md` section 1).
 TERMINAL_STATUSES = frozenset({"dropped", "cancelled", "expired", "no_show"})
-
-
-class Direction(StrEnum):
-    to_office = "to_office"
-    from_office = "from_office"
 
 
 class Outcome(StrEnum):

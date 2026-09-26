@@ -24,8 +24,22 @@ from sim.scenario import Scenario, ScenarioError, load_scenario
 SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 
 # `make sim-quick` in CI: short scenarios only (simulator-spec.md §12).
+#: The PR suite. One hour of simulated time, so it stays cheap enough to run on every
+#: push - the S01 comment ("must stay small and fast") is a constraint, not a note.
 QUICK_SUITE = ("smoke_tiny",)
-FULL_SUITE = ("smoke_tiny",)
+
+#: The nightly suite, cheapest first so a broken build reports in a minute rather than
+#: an hour. `normal_weekday` and `rain_day` are 16 simulated hours each and dominate the
+#: runtime; `vip_burst` (S07) is missing because the seeded world does not yet say which
+#: employees are VIP - see the M08 notes.
+FULL_SUITE = (
+    "smoke_tiny",
+    "breakdown_with_riders",
+    "gps_loss",
+    "evening_surge",
+    "normal_weekday",
+    "rain_day",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     suite = subparsers.add_parser("suite", help="run a named suite")
     suite.add_argument("name", choices=["quick", "full"])
     suite.add_argument("--runs-dir", default="runs")
+    suite.add_argument(
+        "--platform",
+        dest="platform_url",
+        default=None,
+        help="run against a live backend so assertions are actually evaluated",
+    )
 
     compare = subparsers.add_parser("compare", help="delta table between two runs")
     compare.add_argument("run_a")
@@ -62,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args.scenario, args.runs_dir, args.no_output, args.platform)
     if args.command == "compare":
         return _compare(args.run_a, args.run_b)
-    return _suite(args.name, args.runs_dir)
+    return _suite(args.name, args.runs_dir, args.platform_url)
 
 
 def _validate(path: str) -> int:
@@ -210,16 +230,30 @@ def _compare(left: str, right: str) -> int:
     return 0
 
 
-def _suite(name: str, runs_dir: str = "runs") -> int:
+def _suite(name: str, runs_dir: str = "runs", platform_url: str | None = None) -> int:
+    """Run a named suite, reporting every scenario before returning a verdict.
+
+    Every scenario runs even after one fails: a nightly suite that stopped at the first
+    failure would hide the other six, and the artifacts are the point.
+    """
     names = QUICK_SUITE if name == "quick" else FULL_SUITE
-    failures = 0
+    if platform_url is None:
+        print(
+            "note     no --platform: scenarios run offline and their assertions are NOT checked",
+            file=sys.stderr,
+        )
+
+    failed: list[str] = []
     for scenario_name in names:
         path = SCENARIO_DIR / f"{scenario_name}.yaml"
         print(f"--- {scenario_name} ---")
-        failures += 1 if _run(str(path), runs_dir) != 0 else 0
-    if failures:
-        print(f"{failures} scenario(s) failed", file=sys.stderr)
-    return 1 if failures else 0
+        if _run(str(path), runs_dir, platform_url=platform_url) != 0:
+            failed.append(scenario_name)
+
+    print(f"suite    {name}: {len(names) - len(failed)}/{len(names)} scenarios passed")
+    if failed:
+        print(f"failed   {', '.join(failed)}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

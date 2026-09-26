@@ -36,6 +36,11 @@ class ResetRequest(Strict):
     #: scenario at the smallest one (M06).
     employees: int | None = Field(default=None, ge=1, le=2000)
     vehicles: int | None = Field(default=None, ge=1, le=500)
+    #: Identifies the run claiming this backend. A reset while another run holds the
+    #: claim is refused, because it would truncate that run's world out from under it.
+    run_id: str | None = Field(default=None, max_length=128)
+    #: Take the backend over anyway - for a claim left behind by a crashed run.
+    force: bool = False
 
 
 class SeededUser(Strict):
