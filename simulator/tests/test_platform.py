@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -429,3 +429,84 @@ def test_a_platform_run_still_records_its_own_pings(fake_paho: Any) -> None:
 
     assert len(memory.pings) == 1
     assert len(mqtt.published) == 1
+
+
+# --- pacing (the fix that made the closed loop work) -----------------------------------
+
+
+def paced_sink(fake_paho: Any) -> MqttPingSink:
+    sink = MqttPingSink(paced=True)
+    sink.register(VEHICLE, credentials())
+    return sink
+
+
+def test_a_paced_sink_holds_pings_until_the_clock_reaches_them(fake_paho: Any) -> None:
+    """Without this a compressed run loses almost every ping.
+
+    paho drains hundreds of messages in under a second while the backend's clock walks
+    the same simulated hour through 60 HTTP calls, so the pings arrive minutes ahead of
+    the backend's "now" and the ingestor rejects them as `too_far_future`.
+    """
+    sink = paced_sink(fake_paho)
+
+    sink.emit(a_ping())
+
+    assert sink.pending == 1
+    assert sink.published == []
+
+
+def test_releasing_publishes_only_what_the_clock_has_passed(fake_paho: Any) -> None:
+    sink = paced_sink(fake_paho)
+    early = Ping(vehicle_id=VEHICLE, ts=NOW, lat=28.5, lng=77.4)
+    late = Ping(vehicle_id=VEHICLE, ts=NOW + timedelta(minutes=5), lat=28.6, lng=77.4)
+    sink.emit(early)
+    sink.emit(late)
+
+    released = sink.release_up_to(NOW + timedelta(minutes=1))
+
+    assert released == 1
+    assert sink.pending == 1
+    assert len(sink.published) == 1
+
+
+def test_a_ping_exactly_at_the_clock_is_released(fake_paho: Any) -> None:
+    sink = paced_sink(fake_paho)
+    sink.emit(a_ping())
+
+    assert sink.release_up_to(NOW) == 1
+
+
+def test_releasing_everything_empties_the_queue(fake_paho: Any) -> None:
+    """Whatever the last sync did not cover still belongs on the broker."""
+    sink = paced_sink(fake_paho)
+    sink.emit(a_ping())
+    sink.emit(Ping(vehicle_id=VEHICLE, ts=NOW + timedelta(hours=2), lat=28.7, lng=77.4))
+
+    assert sink.release_all() == 2
+    assert sink.pending == 0
+    assert len(sink.published) == 2
+
+
+def test_an_unpaced_sink_publishes_straight_away(fake_paho: Any) -> None:
+    """Pacing is for compressed runs; anything real-time keeps the direct path."""
+    sink = MqttPingSink()
+    sink.register(VEHICLE, credentials())
+
+    sink.emit(a_ping())
+
+    assert sink.pending == 0
+    assert len(sink.published) == 1
+
+
+def test_pacing_preserves_order(fake_paho: Any) -> None:
+    """A cab's positions must reach the map in the order it drove them."""
+    sink = paced_sink(fake_paho)
+    for minute in range(5):
+        sink.emit(Ping(vehicle_id=VEHICLE, ts=NOW + timedelta(minutes=minute), lat=28.5, lng=77.4))
+
+    sink.release_all()
+
+    sent = [
+        json.loads(payload)["ts"] for _topic, payload, _qos in FakeMqttClient.instances[0].messages
+    ]
+    assert sent == sorted(sent)

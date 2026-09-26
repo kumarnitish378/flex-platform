@@ -139,6 +139,8 @@ def _run_scenario(
     )
 
     if engine.mqtt is not None:
+        # Anything the last sync did not cover still belongs on the broker.
+        engine.mqtt.release_all()
         engine.mqtt.flush()
         print(f"mqtt     published={len(engine.mqtt.published)} unpublished={engine.mqtt.failed}")
         engine.mqtt.close()

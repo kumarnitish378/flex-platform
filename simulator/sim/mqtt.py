@@ -15,6 +15,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sim.pings import Ping
@@ -41,12 +42,20 @@ class Publication:
 class MqttPingSink:
     """Publishes each vehicle's pings as that vehicle, over its own connection."""
 
-    def __init__(self, keepalive_seconds: int = 30) -> None:
+    def __init__(self, keepalive_seconds: int = 30, paced: bool = False) -> None:
         self._keepalive = keepalive_seconds
         self._clients: dict[str, Any] = {}
         self._topics: dict[str, str] = {}
         self.published: list[Publication] = []
         self.failed = 0
+        #: Pacing holds each ping until the shared clock has reached its timestamp.
+        #: Without it a compressed run loses almost everything: paho drains 420 pings in
+        #: under a second while the clock walks the same hour through 60 HTTP calls, so
+        #: the pings arrive minutes ahead of the backend's "now" and the ingestor
+        #: correctly rejects them as `too_far_future`. Real cabs cannot outrun the clock;
+        #: a simulator can, and this is what stops it.
+        self._paced = paced
+        self._pending: list[tuple[datetime, Ping]] = []
 
     def register(self, vehicle_id: uuid.UUID | str, credentials: DutyCredentials) -> None:
         """Connect as one vehicle. Call once per cab, after it goes on duty."""
@@ -83,6 +92,32 @@ class MqttPingSink:
 
     def emit(self, ping: Ping) -> None:
         """`PingSink`. Never raises: one cab's broker trouble is not the run's problem."""
+        if self._paced:
+            self._pending.append((ping.ts, ping))
+            return
+        self._publish(ping)
+
+    def release_up_to(self, moment: datetime) -> int:
+        """Publish everything the shared clock has caught up with."""
+        ready = [(ts, ping) for ts, ping in self._pending if ts <= moment]
+        self._pending = [(ts, ping) for ts, ping in self._pending if ts > moment]
+        for _ts, ping in ready:
+            self._publish(ping)
+        return len(ready)
+
+    def release_all(self) -> int:
+        """Publish whatever is left, at the end of a run."""
+        remaining = self._pending
+        self._pending = []
+        for _ts, ping in remaining:
+            self._publish(ping)
+        return len(remaining)
+
+    @property
+    def pending(self) -> int:
+        return len(self._pending)
+
+    def _publish(self, ping: Ping) -> None:
         topic = self._topics.get(ping.vehicle_id)
         client = self._clients.get(ping.vehicle_id)
         if topic is None or client is None:

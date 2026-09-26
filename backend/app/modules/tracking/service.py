@@ -15,6 +15,7 @@ would get different validation from one on a good one.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -73,6 +74,11 @@ class GpsIngestor:
         self.redis = redis
         self._buffer: list[dict[str, Any]] = []
         self._last_flush = clock.now()
+        #: One writer at a time. The ingestor process flushes from two places - the
+        #: message handler and the timer loop - and an AsyncSession is not safe for
+        #: concurrent use: overlapping writes on one connection stall each other, which
+        #: showed up as the map lagging the broker by tens of seconds under a burst.
+        self._writing = asyncio.Lock()
         #: Last accepted ping per vehicle, for the jump check and ordering.
         self._latest: dict[uuid.UUID, Ping] = {}
 
@@ -202,6 +208,10 @@ class GpsIngestor:
 
     async def flush(self) -> int:
         """Write the buffer in one statement."""
+        async with self._writing:
+            return await self._write()
+
+    async def _write(self) -> int:
         if not self._buffer:
             return 0
         rows, self._buffer = self._buffer, []

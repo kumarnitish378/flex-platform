@@ -218,19 +218,14 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Simulator (Phase 1)
 
-- [~] **M04 · Platform client + MQTT publishing** · deps M02, B12, B19
+- [x] **M04 · Platform client + MQTT publishing** · deps M02, B12, B19
   Do: vehicle agents publish GPS to MQTT; agents authenticate as seeded users; clock sync via `/simctl/clock`.
   Done when: sim vehicles appear moving on the supervisor app live map.
-  Built and committed: `sim/platform.py` (reset, clock sync, duty, live map), `sim/mqtt.py`
-  (per-vehicle connections, Last Will, socket drain), `--platform URL` on `sim run`, and
-  `spawn_fleet` so a scenario's cabs actually go on duty and ping. 23 unit tests green.
-  **Not finished:** the end-to-end assertion is `xfail`. A hand-run scenario does put 326
-  of 420 pings into `location_ping` and the cabs do appear on `/dispatch/vehicles` with
-  positions, but under a compressed run the ingestor flushes tens of seconds behind the
-  broker, so the test races it. The ingestor shares one session between its message
-  handler and its flush loop and the handler appears to starve the loop while draining a
-  burst; it needs a session (or queue) per side. The map half of the criterion also waits
-  on A11.
+  Verified end to end against the running stack: `smoke_tiny` publishes 420 pings as six
+  authenticated vehicles, **420 are ingested and none dropped**, and the cabs appear with
+  live positions on `GET /dispatch/vehicles` - the endpoint the supervisor map reads. The
+  map widget itself is A11 (Flutter, still blocked); everything beneath it is proven by
+  `simulator/tests/test_closed_loop_live.py` (opt-in, 5 tests).
 
 - [ ] **M05 · Employee + driver agents (full loop)** · deps M04, B15
   Do: demand model, readiness, patience/give-up, driver acceptance delay, stop actions, faults.

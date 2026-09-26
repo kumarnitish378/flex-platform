@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import simpy
@@ -178,7 +178,7 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
     to its start. Duty sessions and first pings then carry simulated time too, rather
     than whenever the operator happened to run the scenario.
     """
-    platform.set_clock(engine.clock.start)
+    platform.set_clock(engine.clock.start + _LEAD)
     world = platform.reset()
 
     tokens = world.tokens_for("driver")
@@ -194,7 +194,8 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
             f"{len(world.vehicle_ids)} vehicles and {len(tokens)} driver logins"
         )
 
-    mqtt = MqttPingSink()
+    # Paced: pings wait for the backend clock to reach them (see MqttPingSink).
+    mqtt = MqttPingSink(paced=True)
     for vehicle_id, driver_token in zip(world.vehicle_ids[:wanted], tokens[:wanted], strict=True):
         credentials = platform.go_on_duty(driver_token, vehicle_id)
         mqtt.register(vehicle_id, credentials)
@@ -211,6 +212,9 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
 #: simulated second.
 CLOCK_SYNC_INTERVAL_SECONDS = 60
 
+#: How far ahead of the simulation to hold the backend's clock.
+_LEAD = timedelta(seconds=CLOCK_SYNC_INTERVAL_SECONDS)
+
 
 def _keep_clocks_together(engine: Engine) -> Process:
     """Walk the backend's clock forward with the simulation.
@@ -223,4 +227,11 @@ def _keep_clocks_together(engine: Engine) -> Process:
     while True:
         yield engine.env.timeout(CLOCK_SYNC_INTERVAL_SECONDS)
         if engine.platform is not None:
-            engine.platform.set_clock(engine.now())
+            # One interval *ahead*, deliberately. Pings are published as the simulation
+            # reaches them, but a clock jump is an HTTP call that runs the backend's due
+            # work, so syncing to exactly "now" leaves the backend trailing its own
+            # incoming pings and the ingestor rejects them as `too_far_future`. A clock
+            # slightly ahead costs nothing: a ping in the past is accepted for 24 hours.
+            engine.platform.set_clock(engine.now() + _LEAD)
+            if engine.mqtt is not None:
+                engine.mqtt.release_up_to(engine.now())

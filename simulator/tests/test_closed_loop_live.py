@@ -86,19 +86,6 @@ def test_a_driver_going_on_duty_is_issued_broker_credentials(
 
 
 @enabled
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN GAP (M04): the pipeline works - a hand-run scenario puts 326 of 420 pings "
-        "into location_ping and the cabs show on /dispatch/vehicles with positions - but "
-        "under a compressed run the ingestor flushes tens of seconds after the broker has "
-        "the messages, so this assertion races it. The ingestor holds one session for both "
-        "its message handler and its flush loop; the handler appears to starve the loop "
-        "while draining a burst. Needs a separate session (or a queue) per side. The other "
-        "four cases here pass, and M05 will publish at realistic rates rather than in a "
-        "burst."
-    ),
-    strict=False,
-)
 def test_simulated_cabs_appear_moving_on_the_live_map(platform: PlatformClient) -> None:
     """M04 acceptance, one layer below the map widget.
 
