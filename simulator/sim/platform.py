@@ -19,6 +19,7 @@ Three things it needs from the platform:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -225,9 +226,20 @@ class PlatformClient:
 
     # --- dispatching (M06) ------------------------------------------------------------
 
-    def pending_requests(self, token: str, status: str = "queued") -> list[dict[str, Any]]:
-        """The supervisor's queue, oldest first (SUP-02)."""
-        body = self._get(f"/dispatch/requests?status={status}", token=token)
+    def pending_requests(
+        self,
+        token: str,
+        status: str = "queued",
+        statuses: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The supervisor's board, oldest first (SUP-02).
+
+        `statuses` asks for several at once, which is how the simulator reads every
+        request in one call instead of one per rider (OQ-26).
+        """
+        wanted = list(statuses) if statuses else [status]
+        query = "&".join(f"status={item}" for item in wanted)
+        body = self._get(f"/dispatch/requests?{query}", token=token)
         items: list[dict[str, Any]] = body.get("items", [])
         return items
 

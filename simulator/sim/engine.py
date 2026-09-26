@@ -22,6 +22,7 @@ from sim.agents.employee import EmployeeAgent, EmployeeProfile
 from sim.agents.employee import summarise as summarise_demand
 from sim.agents.supervisor import SupervisorAgent
 from sim.agents.supervisor import summarise as summarise_dispatch
+from sim.board import StatusBoard
 from sim.clock import IST, SimClock
 from sim.geo import LatLng
 from sim.metrics import (
@@ -86,6 +87,8 @@ class Engine:
         self.drivers: list[DriverAgent] = []
         #: One person watching the queue (M06). None until a platform run spawns them.
         self.supervisor: SupervisorAgent | None = None
+        #: One shared read of the request board, so riders do not each poll (OQ-26).
+        self.board: StatusBoard | None = None
         #: `no_show_wait_minutes` as the backend has it; the driver must not guess.
         self.no_show_wait_minutes = DEFAULT_NO_SHOW_WAIT_MINUTES
         #: Cabs, by the order the scenario's fleet declares them.
@@ -325,6 +328,7 @@ def spawn_people(engine: Engine, world: SeededWorld) -> None:
     Riders come first: a driver asks the rider it is waiting for whether they turned up,
     so the rider must exist before any trip can be worked.
     """
+    _spawn_status_board(engine, world)
     _spawn_riders(engine, world)
     _spawn_drivers(engine, world)
     _spawn_supervisor(engine, world)
@@ -373,6 +377,13 @@ def _spawn_drivers(engine: Engine, world: SeededWorld) -> None:
         )
         engine.drivers.append(driver)
         engine.spawn(driver.shift)
+
+
+def _spawn_status_board(engine: Engine, world: SeededWorld) -> None:
+    """One process reads every request's status for all the riders (OQ-26)."""
+    board = StatusBoard(engine, token=world.token_for("supervisor"))
+    engine.board = board
+    engine.spawn(board.watch)
 
 
 def _spawn_supervisor(engine: Engine, world: SeededWorld) -> None:

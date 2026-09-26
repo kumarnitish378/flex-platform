@@ -198,15 +198,12 @@ class EmployeeAgent:
     # --- waiting ------------------------------------------------------------------
 
     def _wait_for_the_cab(self, request_id: uuid.UUID) -> Process:
-        """Poll until the ride resolves, or until patience runs out.
+        """Wait until the ride resolves, or until patience runs out.
 
-        Polling rather than listening on the WebSocket: the rider agent only needs to
-        know *whether* it resolved, and a poll keeps the agent independent of the realtime
-        stack so a hub outage shows up as a stuck request rather than a hung simulation.
+        Reads the shared status board rather than polling its own request: three hundred
+        riders each polling would measure the harness, not the platform (OQ-26). Acting -
+        cancelling - still goes through this rider's own token.
         """
-        platform = self.engine.platform
-        assert platform is not None
-
         patience = self._normal(
             PATIENCE_MEAN_MINUTES, PATIENCE_SIGMA_MINUTES, floor=PATIENCE_FLOOR_MINUTES
         )
@@ -218,10 +215,10 @@ class EmployeeAgent:
             yield self.engine.env.timeout(POLL_INTERVAL_SECONDS)
             now = self.engine.now()
 
-            status = platform.request_status(self.profile.token, request_id)
+            status = self._status_of(request_id)
             if status in TERMINAL_STATUSES:
                 self.record.waited_minutes = (now - started).total_seconds() / 60.0
-                self.record.outcome = _outcome_for(status)
+                self.record.outcome = _outcome_for(str(status))
                 return
 
             if status == "picked_up":
@@ -239,12 +236,9 @@ class EmployeeAgent:
                 return
 
     def _ride_home(self, request_id: uuid.UUID, started: datetime) -> Process:
-        platform = self.engine.platform
-        assert platform is not None
-
         while True:
             yield self.engine.env.timeout(POLL_INTERVAL_SECONDS)
-            status = platform.request_status(self.profile.token, request_id)
+            status = self._status_of(request_id)
             if status in TERMINAL_STATUSES:
                 self.record.waited_minutes = (self.engine.now() - started).total_seconds() / 60.0
                 self.record.outcome = _outcome_for(status)
@@ -253,6 +247,16 @@ class EmployeeAgent:
                 self.record.outcome = Outcome.unresolved
                 self.record.detail = f"still {status} when the scenario ended"
                 return
+
+    def _status_of(self, request_id: uuid.UUID) -> str | None:
+        """What the platform last said. `None` means the board has not seen it yet."""
+        board = self.engine.board
+        if board is not None:
+            return board.status_of(request_id)
+        platform = self.engine.platform
+        if platform is None:
+            return None
+        return platform.request_status(self.profile.token, request_id)
 
     def _give_up(self, request_id: uuid.UUID, started: datetime, now: datetime) -> None:
         """Cancel after waiting past patience. This is the number the pilot is judged on."""
@@ -268,6 +272,9 @@ class EmployeeAgent:
             return
 
         self.record.outcome = Outcome.gave_up
+        if self.engine.board is not None:
+            # The board is a minute stale; this rider knows better about their own ride.
+            self.engine.board.note(request_id, "cancelled")
         self.engine.record(
             f"employee {self.profile.employee_id} gave up after "
             f"{self.record.waited_minutes:.0f} min"

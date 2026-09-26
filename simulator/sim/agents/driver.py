@@ -45,7 +45,9 @@ BOARDING_MIN_SECONDS = 30
 BOARDING_MAX_SECONDS = 120
 
 #: How often to ask dispatch whether anything has been assigned. Simulated seconds.
-POLL_INTERVAL_SECONDS = 30
+#: A minute is already faster than a driver notices their phone, and at fleet scale every
+#: poll is a synchronous call that blocks the whole simulation (OQ-26).
+POLL_INTERVAL_SECONDS = 60
 
 #: A late driver starts this long after their shift (`late_start_p` in the scenario).
 LATE_START_MEAN_MINUTES = 20.0

@@ -24,7 +24,7 @@ from typing import Any
 
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Point as ShapelyPoint
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
@@ -42,6 +42,10 @@ POSITION_TTL_SECONDS = 600
 #: invented here: a private name would publish into a feed nobody is listening on.
 EVENT_CHANNEL = "operator.{operator_id}.vehicles"
 EVENT_NAME = "vehicle.location"
+
+#: How far back the stale sweep looks for a last ping. Anything older is stale several
+#: times over, and the bound keeps the query off older partitions.
+STALE_LOOKBACK = timedelta(hours=2)
 
 #: Flush at least this often, or once this many pings are queued — whichever first.
 FLUSH_INTERVAL_SECONDS = 5
@@ -248,23 +252,38 @@ class GpsIngestor:
             .all()
         )
 
-        stale: list[uuid.UUID] = []
-        for vehicle_id in on_duty:
-            last = (
-                (
-                    await self.session.execute(
-                        select(LocationPing.recorded_at)
-                        .where(LocationPing.vehicle_id == vehicle_id)
-                        .order_by(LocationPing.recorded_at.desc())
-                        .limit(1)
-                    )
-                )
-                .scalars()
-                .first()
+        if not on_duty:
+            return []
+
+        # One query for the whole fleet, not one per vehicle. Per-vehicle lookups made
+        # the stale sweep the slowest thing in the sim clock jump - ten seconds for 35
+        # cabs - and an operator's ETA worker runs this every 30 seconds in production.
+        # The lookback keeps it off the older partitions of `location_ping`.
+        last_seen = await self.session.execute(
+            text(
+                """
+                SELECT DISTINCT ON (vehicle_id) vehicle_id, recorded_at
+                FROM location_ping
+                WHERE operator_id = :operator_id
+                  AND vehicle_id = ANY(:vehicle_ids)
+                  AND recorded_at >= :since
+                ORDER BY vehicle_id, recorded_at DESC
+                """
+            ).bindparams(
+                operator_id=operator_id,
+                vehicle_ids=list(on_duty),
+                since=cutoff - STALE_LOOKBACK,
             )
-            if last is None or last < cutoff:
-                stale.append(vehicle_id)
-        return stale
+        )
+        latest = {row.vehicle_id: row.recorded_at for row in last_seen}
+
+        # A vehicle with no ping at all is stale by definition: never heard from is worse
+        # than heard from late, not better.
+        return [
+            vehicle_id
+            for vehicle_id in on_duty
+            if latest.get(vehicle_id) is None or latest[vehicle_id] < cutoff
+        ]
 
 
 def drop_reasons() -> list[str]:

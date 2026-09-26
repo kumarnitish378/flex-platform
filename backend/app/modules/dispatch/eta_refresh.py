@@ -84,9 +84,20 @@ class EtaRefresher:
             query = query.where(Trip.operator_id == operator_id)
         trips = list((await self.session.execute(query)).scalars().all())
 
+        # Positions once for the whole fleet, not once per trip. Re-reading them inside
+        # the loop made this O(trips) DISTINCT ON scans of `location_ping` every 30
+        # seconds, which was most of a ten-second sim clock jump (OQ-26).
+        positions = (
+            await DispatchService(self.session, self.clock, self.eta).latest_positions(
+                trips[0].operator_id
+            )
+            if trips
+            else {}
+        )
+
         result = RefreshResult()
         for trip in trips:
-            refreshed = await self._refresh_trip(trip)
+            refreshed = await self._refresh_trip(trip, positions)
             if refreshed.stops:
                 result = RefreshResult(
                     trips=result.trips + 1,
@@ -105,7 +116,7 @@ class EtaRefresher:
             )
         return result
 
-    async def _refresh_trip(self, trip: Trip) -> RefreshResult:
+    async def _refresh_trip(self, trip: Trip, positions: dict[uuid.UUID, Any]) -> RefreshResult:
         stops = list(
             (
                 await self.session.execute(
