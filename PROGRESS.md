@@ -1,71 +1,119 @@
-# Overnight run - PROGRESS
+# Smart Cab - PROGRESS
 
-## Morning summary
+## Summary (2026-09-26)
 
-**Branch `dev/overnight-1`, 15 commits, all pushed. Working tree clean. No secrets committed.**
-Nothing was merged to `main`, no history rewritten, no force pushes.
+**Branch `dev/overnight-1`, 51 commits, all pushed. Working tree clean. Nothing merged to
+`main`, no history rewritten, no force pushes, no secrets committed.**
 
-### Done (8 tasks)
+**Every backend task is done (B01-B19), plus all foundation and infra tasks, plus the
+simulator through M04.** 27 of 48 tasks complete; the 21 that remain are the Flutter app
+(blocked), the rest of the simulator, optional self-hosting, and release.
+
+The headline: **the closed loop works.** A simulated fleet drives the real API, publishes
+GPS to the real broker as authenticated vehicles, and appears on the endpoint the
+supervisor's map reads - 420 pings out, 420 ingested, none dropped.
+
+### Done this run
 | Task | What you have now |
 |---|---|
-| Section 1 docs | ADR-0010 sweep finished (`control-model.md` was the only file still missing it) |
-| **F01** | Monorepo skeleton, Makefile, `.env.example`, PR template, PowerShell mirror of every make target |
-| **I01** | `infra/docker-compose.yml` (postgres+PostGIS, redis, mosquitto) - written, *not* verified |
-| **B01** | FastAPI skeleton: app factory, settings, Clock, JSON logging, error handler, Alembic, health endpoints |
-| **I02** | Routing provider interface (`osrm` / `approx` / `cached`), Redis rate limiter, `GeocodingProvider=none` |
-| **B08** | Domain state machines, 100% statement *and* branch coverage, enforced by a make target and CI |
-| **B10** | ETA service, time-of-day factor, degradation ladder, `eta_approximate` added to the API contract |
-| **M01-M03** | Simulator: scenario loader, engine, seeded RNG, vehicle movement, GPS pings, recorder, compare |
+| **B11** | Driver duty, `duty_session`, per-vehicle MQTT credentials, generated Mosquitto password/ACL files |
+| **B12** | GPS ingestor: pure drop rules, partitioned `location_ping`, Redis latest position, aiomqtt consumer, HTTPS fallback |
+| **B13** | `/ws` realtime hub: token auth, per-channel permission checks, Redis pub/sub fan-out |
+| **B14** | Dispatch board, candidate vehicles with ETA and added minutes, manual assignment, automation pause |
+| **B15** | Driver trips and stop actions, offline idempotency, the 30-second stop-ETA refresh job |
+| **B16** | Notifications: provider interface (log / ntfy / fcm), records, every row of `trip-lifecycle.md` section 6 |
+| **B17** | Alerts: SOS, driver issues, list/acknowledge/resolve, stale-vehicle sweep, VIP-no-vehicle |
+| **B18** | Trip ratings and the operator report (JSON + CSV), median/p90 wait |
+| **B19** | `/simctl/clock` and `/simctl/reset`, sim-only |
+| **M04** | The closed loop: platform client, MQTT publishing, shared clock, fleet spawning |
 
-Backend + simulator: **345 backend tests, 114 simulator tests, all passing**; ruff, ruff format and mypy
-clean on both packages.
+**1177 backend tests, 143 simulator tests, all passing.** ruff, ruff format and mypy clean
+on both packages. 100% branch coverage of the state machines, enforced.
+
+### Real defects this run found (not test bugs)
+
+The ones worth knowing about, because each was invisible until something exercised it:
+
+1. **Tokens were validated against the real system clock.** PyJWT checks `iat` and `nbf`
+   itself even with `verify_exp` off, so any clock ahead of wall time - exactly what the
+   simulator does - had every token rejected as "not yet valid".
+2. **One shared `Geography` instance leaked NOT NULL between columns.** GeoAlchemy2 stamps
+   a column's `nullable` onto the type object, so `employee.home_location` was NOT NULL in
+   the database while the model said optional. There is now a test comparing every
+   geography column against `information_schema`.
+3. **The GPS ingestor could not start on Windows at all** (aiomqtt needs `add_writer`), and
+   **died on its first flush** because it imported only the tracking model, so
+   `location_ping`'s foreign key to `vehicle` could not resolve.
+4. **The dev Mosquitto ACL silently dropped every authenticated publish.** Rules before the
+   first `user`/`pattern` line apply to anonymous clients only - the trap the ACL file's own
+   comment warns about.
+5. **A no-show left the rider's drop stop pending forever**, so the driver could never
+   complete the trip.
+6. **`client_admin` could have subscribed to the whole operator's request feed** over the
+   WebSocket: they hold `request_queue_view` for their own client, so the permission alone
+   was not enough.
 
 ### You must install or decide
 
 | # | Action | Unblocks | Why |
 |---|---|---|---|
-| 1 | **`gh auth refresh -s workflow`**, then `git mv .github/workflows-pending/ci.yml .github/workflows/ci.yml`, commit, push | F02 | No credential here has the GitHub `workflow` scope, so *any* push touching `.github/workflows/` is rejected. The pipeline is written and validated; it just cannot be uploaded. Steps are in `.github/workflows-pending/README.md` |
-| 2 | **Install Docker Desktop**, then `make up && make check-infra` | I01, and the whole B02-B19 chain | `make check-infra` runs I01's exact acceptance criteria (PostGIS extension, redis PING, mosquitto subscribe) |
-| 3 | **Install Flutter + Android SDK** | A01-A12 | Nothing app-side could be started |
-| 4 | Decide **OQ-22** (`approx` base speed, provisional 24 km/h) and **OQ-23** (ETA time-of-day factors) | Tuning only | Both are config values with provisional defaults and a documented source; neither blocks code |
-| 5 | Review the **api-spec change** in B10 (`eta_approximate` fields) | - | Contract change, made spec-first per hard rule 1 |
+| 1 | **Install the Flutter SDK** | A01-A12, and R02 | Twelve app tasks, the only large blocked group. The Android SDK is already on this machine |
+| 2 | Decide **OQ-20**: FCM or self-hosted ntfy | Real push | `PUSH_PROVIDER=log` today. `ntfy` is fully implemented and works now; `fcm` raises with the reason, because silently dropping every push is the failure nobody notices until a rider is standing outside at 7am |
+| 3 | Confirm **OQ-25**: which permission guards alerts | Nothing | `/alerts` and the alerts channel ride on `request_queue_view`. Fine unless SOS should reach only a safety lead |
+| 4 | Confirm **OQ-24** (202-always on OTP) and **OQ-22/OQ-23** (approx speed, ETA factors) | Tuning only | All three have provisional, documented defaults |
+| 5 | Decide **OQ-21**: when to self-host OSRM and tiles | Before the paid pilot | The public OSM services have no SLA and may be withdrawn for commercial use (ADR-0010 A3) |
+| 6 | Review **`AGENTS.md`** | Nothing | It appeared in the tree as a byte-identical copy of `CLAUDE.md` and got picked up by a commit. I did not write it. Two copies of the agent rules will drift - keep one, or make one a pointer |
 
-### How to run what was built
+### Decisions I made that you can overrule
+
+Each is recorded in `docs/07-decisions/decision-log.md` with its reasoning:
+
+- **ADR-0011:** manual assignment *reports* hard-rule violations and applies anyway; only
+  seat capacity refuses. Overriding the optimizer is the point of manual mode.
+- The **WebSocket contract** lives in `docs/03-architecture/websocket-protocol.md`, pointed
+  at from `api-spec.yaml` under `x-websocket`. OpenAPI cannot describe a socket.
+- **No access token in a WebSocket query string** - header, or a first `auth` frame.
+- `Alert.severity` in the spec changed from `critical/high/normal` to
+  `critical/warning/info`: the original had no informational level and B17 needs one.
+
+### How to run it
 
 ```powershell
-# one-time
-python scripts\venv_setup.py --install     # creates .venv, installs backend + simulator
+make up                      # postgres + postgis, redis, mosquitto
+make check-infra             # verifies all three
+make backend-dev             # the API on :8000
+make test                    # 1177 backend tests
+make lint                    # ruff + format + mypy, both packages
+make sim-quick               # simulator smoke scenario
+```
 
-# checks (both routes work; use whichever you prefer)
-make lint            # or  .\scripts\dev.ps1 lint      - ruff + format + mypy, both packages
-make test            # or  .\scripts\dev.ps1 test      - 345 backend tests
-make test-domain-coverage                                # B08: fails under 100% branch coverage
+To watch the closed loop for yourself:
 
-# the API (health endpoints work; there are no business endpoints yet)
-make backend-dev
-curl http://localhost:8000/health/live      # 200 {"status":"ok"}
-curl http://localhost:8000/health/ready     # 503 until Postgres runs - the detail says why
+```powershell
+# terminal 1
+$env:APP_ENV="sim"; $env:SIMCTL_ENABLED="true"; make backend-dev
+# terminal 2  (from backend/)
+$env:APP_ENV="sim"; python -m app.ingestor
+# terminal 3  (from simulator/)
+python -m sim run scenarios/smoke_tiny.yaml --platform http://localhost:8000/api/v1
+```
 
-# the simulator
-cd simulator
-python -m sim validate scenarios/smoke_tiny.yaml
-python -m sim run scenarios/smoke_tiny.yaml     # writes runs/<timestamp>_smoke_tiny/
-python -m sim compare runs/<run-a> runs/<run-b>
-make sim-quick
+It prints `mqtt published=420 unpublished=0`, and `GET /api/v1/dispatch/vehicles` then
+shows the cabs with live positions. The five opt-in tests that assert this:
+
+```powershell
+$env:SIM_PLATFORM_URL="http://localhost:8000/api/v1"
+python -m pytest tests/test_closed_loop_live.py
 ```
 
 ### Suggested next tasks, in order
-1. **Activate CI** (action 1 above) - two commands, and every later PR gets checked.
-2. **Docker, then B02** (core schema: tenancy, users, roles). It gates B03-B07 and everything after.
-3. **B05** (config service) soon after B02: the provisional constants in `EtaConfig` and `ApproxConfig`
-   are waiting for a real home in `operator_config`, which is where OQ-22/OQ-23 get resolved.
-4. **A01** once Flutter is installed - it has no backend dependency and can run in parallel.
 
-### Two things worth knowing
-- `runs/` is git-ignored, so simulator output never lands in a commit.
-- One commit message (`b460187`, I01) has mangled text: backticks in the message were expanded by the
-  shell before git saw them. The content is intact and the code is unaffected; I did not amend it because
-  the commit was already pushed and rewriting pushed history was out of bounds.
+1. **M05** (employee + driver agents, full loop) - unblocked now, and the natural next step:
+   it turns idling cabs into real trips and exercises B14/B15 end to end.
+2. **M06, M07, M08** follow from M05 and get the scenario suite into CI.
+3. **A01 onwards** the moment Flutter is installed. A11 (supervisor live map) is the one
+   that finally shows the simulated cabs moving on a real screen.
+4. **I02b** (self-hosted OSRM) before any paid pilot.
 
 ---
 
