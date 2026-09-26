@@ -2,16 +2,21 @@
 
 ## Summary (2026-09-26)
 
-**Branch `dev/overnight-1`, 51 commits, all pushed. Working tree clean. Nothing merged to
+**Branch `dev/overnight-1`, 54 commits, all pushed. Working tree clean. Nothing merged to
 `main`, no history rewritten, no force pushes, no secrets committed.**
 
 **Every backend task is done (B01-B19), plus all foundation and infra tasks, plus the
-simulator through M04.** 27 of 48 tasks complete; the 21 that remain are the Flutter app
-(blocked), the rest of the simulator, optional self-hosting, and release.
+simulator through M06.** 29 of 48 tasks complete; the 19 that remain are the Flutter app
+(blocked on the SDK), M07-M08, optional self-hosting, and release.
 
-The headline: **the closed loop works.** A simulated fleet drives the real API, publishes
-GPS to the real broker as authenticated vehicles, and appears on the endpoint the
-supervisor's map reads - 420 pings out, 420 ingested, none dropped.
+The headline: **a whole ride runs end to end through the real stack.** A simulated rider
+asks for a cab, a simulated supervisor picks the nearest one and presses assign, a
+simulated driver drives there over MQTT-published GPS, picks them up, drives to the office,
+drops them off and completes the trip - all through the same HTTP and MQTT the phones will
+use. Nothing in the simulator reaches into the database.
+
+That loop has now found **nine real defects** that no unit test had: see the task log
+below, and the list under "Real defects" for the ones from the first sitting.
 
 ### Done this run
 | Task | What you have now |
@@ -108,12 +113,26 @@ python -m pytest tests/test_closed_loop_live.py
 
 ### Suggested next tasks, in order
 
-1. **M05** (employee + driver agents, full loop) - unblocked now, and the natural next step:
-   it turns idling cabs into real trips and exercises B14/B15 end to end.
-2. **M06, M07, M08** follow from M05 and get the scenario suite into CI.
+1. **M07** (event injector + traffic factors) - unblocked. Rain, breakdowns and road
+   closures, which is what S04-S06 need.
+2. **M08** (scenario suite in CI). Needs a backend service in the CI job; `make sim-quick`
+   runs offline today and says "assertions not checked" rather than pretending.
 3. **A01 onwards** the moment Flutter is installed. A11 (supervisor live map) is the one
    that finally shows the simulated cabs moving on a real screen.
 4. **I02b** (self-hosted OSRM) before any paid pilot.
+
+### What S02 is telling you already
+
+`normal_weekday` (300 riders, 35 cabs, 16 simulated hours) runs, and the manual loop does
+not cope: **one supervisor assigning one request at a time cannot serve a morning peak.**
+The first full run had most riders give up waiting and p90 wait far past the 30-minute
+target in `scenarios.md`. Those exact numbers are not trustworthy - that run was polluted
+when the database was re-seeded underneath it - but the shape is the point, and it is the
+measurement that justifies Phase 2's automation. Re-run it for clean figures:
+
+```powershell
+python -m sim run scenarios/normal_weekday.yaml --platform http://localhost:8000/api/v1
+```
 
 ---
 
