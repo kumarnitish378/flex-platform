@@ -426,3 +426,26 @@ async def test_reset_twice_in_a_row_works(sim_client: AsyncClient) -> None:
     """The simulator resets before every run, so this is the common path, not an edge."""
     assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
     assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
+
+
+async def test_seeded_tokens_outlive_the_longest_scenario(
+    sim_client: AsyncClient, clock: FakeClock
+) -> None:
+    """A 12-hour TTL silently 401'd every agent through the back third of a 16-hour run.
+
+    `duration_hours` is capped at 14 days by the scenario format, so the tokens must
+    cover that. Only safe because /simctl/* cannot exist outside APP_ENV=sim.
+    """
+    from app.modules.simctl.service import SIM_TOKEN_TTL_SECONDS
+
+    assert SIM_TOKEN_TTL_SECONDS >= 14 * 24 * 3600
+
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    token = next(user["access_token"] for user in body["users"] if user["role"] == "supervisor")
+
+    # Two weeks of simulated time later, the token still works.
+    clock.advance(timedelta(days=14))
+    response = await sim_client.get(
+        "/dispatch/requests", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200

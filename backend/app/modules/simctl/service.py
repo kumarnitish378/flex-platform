@@ -58,9 +58,11 @@ VEHICLES = (
 #: One login per role, matching dev-environment.md §6's numbering style.
 #: Seeded tokens must outlive a whole simulated run. A scenario covers hours of simulated
 #: time in seconds of real time, so a 15-minute production TTL expires mid-run and every
-#: agent starts getting 401s. Safe only because `/simctl/*` cannot exist outside
-#: APP_ENV=sim (ADR-0008).
-SIM_TOKEN_TTL_SECONDS = 12 * 3600
+#: agent starts getting 401s. This was 12 hours and S02 runs 16, which silently 401'd
+#: every agent for the back third of the run - so it now covers the longest scenario the
+#: format allows (`duration_hours` is capped at 14 days). Safe only because `/simctl/*`
+#: cannot exist outside APP_ENV=sim (ADR-0008).
+SIM_TOKEN_TTL_SECONDS = 15 * 24 * 3600
 
 #: Distinct phone blocks per role, so seeded accounts cannot collide on the unique index.
 _PHONE_BLOCK = {Role.driver: "1", Role.employee: "2"}
