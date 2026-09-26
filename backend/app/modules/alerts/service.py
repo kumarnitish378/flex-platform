@@ -27,7 +27,19 @@ from app.core.logging import get_logger
 from app.domain.enums import AlertSeverity, AlertStatus, AlertType
 from app.domain.errors import Conflict, NotFound, ValidationFailed
 from app.domain.notifications import NotificationType
-from app.domain.state_machines import Actor, VehicleStatus, transition_vehicle
+from app.domain.state_machines import (
+    TERMINAL_TRIP_STATUSES,
+    Actor,
+    RequestContext,
+    RequestStatus,
+    StopStatus,
+    TripStatus,
+    VehicleStatus,
+    transition_request,
+    transition_stop,
+    transition_trip,
+    transition_vehicle,
+)
 from app.modules.alerts.models import Alert
 from app.modules.config.service import ConfigService
 from app.modules.fleet.models import Vehicle
@@ -195,6 +207,7 @@ class AlertService:
 
         if issue_type in ISSUE_TAKES_VEHICLE_OFF_ROAD and vehicle_id is not None:
             await self._take_off_road(vehicle_id)
+            await self._abort_the_trip(vehicle_id)
 
         # DRV-06 says "supervisor is alerted", which is the alert itself plus the event on
         # the operator's alerts channel. No push: a breakdown is urgent for whoever is
@@ -215,6 +228,77 @@ class AlertService:
         )
         vehicle.status = transition.to_status
         logger.info("vehicle_out_of_service", vehicle_id=str(vehicle_id), reason="driver_issue")
+
+    async def _abort_the_trip(self, vehicle_id: uuid.UUID) -> None:
+        """`trip-lifecycle.md`: `in_progress --> aborted: breakdown / emergency`.
+
+        Taking the cab off the road is not enough on its own. Without this the trip stays
+        open, and the driver of a cab on the hard shoulder can go on marking stops
+        arrived and completing the ride - which the S05 scenario showed happening.
+
+        Riders who had not been collected go back on the queue for the supervisor to
+        reassign, which is the `assigned -> queued` edge the state machine already has.
+        A rider already **in** the broken cab has no such edge and is left on the aborted
+        trip: `trip-lifecycle.md` says they "get new handling by supervisor" without
+        saying what that is, and inventing a transition here would be guessing (OQ-27).
+        """
+        from app.modules.dispatch.models import Trip, TripStop
+        from app.modules.requests.models import RideRequest
+
+        trip = await self.session.scalar(
+            select(Trip)
+            .where(Trip.vehicle_id == vehicle_id)
+            .where(Trip.status.notin_([str(item) for item in TERMINAL_TRIP_STATUSES]))
+        )
+        if trip is None:
+            return
+
+        # `trip-lifecycle.md` section 2 distinguishes the two by whether the trip had
+        # started: `cancelled` is "before start", `aborted` is "stopped mid-way". A cab
+        # that breaks down in the depot cancels its trip; one that breaks down carrying
+        # riders aborts it.
+        current = TripStatus(trip.status)
+        ending = TripStatus.aborted if current is TripStatus.in_progress else TripStatus.cancelled
+        trip.status = transition_trip(current, ending, actor=Actor.driver).to_status
+
+        stops = (
+            (await self.session.execute(select(TripStop).where(TripStop.trip_id == trip.id)))
+            .scalars()
+            .all()
+        )
+        stranded: list[uuid.UUID] = []
+        for stop in stops:
+            if stop.status in {str(StopStatus.done), str(StopStatus.skipped)}:
+                continue
+            stop.status = transition_stop(
+                StopStatus(stop.status), StopStatus.skipped, actor=Actor.system
+            ).to_status
+            if stop.request_id is not None:
+                stranded.append(stop.request_id)
+
+        requeued = 0
+        for request_id in set(stranded):
+            request = await self.session.scalar(
+                select(RideRequest).where(RideRequest.id == request_id)
+            )
+            if request is None or request.status != str(RequestStatus.assigned):
+                continue
+            request.status = transition_request(
+                RequestStatus.assigned,
+                RequestStatus.queued,
+                RequestContext(actor=Actor.system, reason="vehicle_breakdown"),
+            ).to_status
+            request.trip_id = None
+            requeued += 1
+
+        logger.info(
+            "trip_ended_by_driver_issue",
+            trip_id=str(trip.id),
+            vehicle_id=str(vehicle_id),
+            reason="driver_issue",
+            ended_as=str(ending),
+            requeued=requeued,
+        )
 
     async def vip_without_vehicle(
         self, operator_id: uuid.UUID, request_id: uuid.UUID

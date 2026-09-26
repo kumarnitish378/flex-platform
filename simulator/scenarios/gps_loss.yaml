@@ -1,0 +1,65 @@
+# S06 gps_loss (scenarios.md): one cab loses GPS for 10 minutes, another goes offline for
+# 15 minutes.
+#
+# These are two different faults and the scenario exists to keep them apart. A cab with
+# no satellite fix records nothing, so those positions are gone for good. A cab with no
+# network keeps recording and uploads the backlog in order when it reconnects
+# (mqtt-topics.md). Neither is "off duty", which means no GPS is collected at all and is
+# a privacy rule rather than a fault.
+name: gps_loss
+version: 1
+seed: 42
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 2
+speed_factor: 60
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    alert_wait_minutes: 20
+    request_expiry_minutes: 45
+
+modes:
+  - {mode: manual}
+
+fleet:
+  - {type: sedan_4, count: 3, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 6
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      priority_dist: {5: 1.0}
+      shifts:
+        - {start_ist: "06:50", end_ist: "15:50", share: 1.0}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # Ten minutes with no fix: the backend should show the cab stale within 60 s and stop
+  # offering it as a candidate while it is dark.
+  - {at_ist: "06:20", type: gps_loss, duration_min: 10, vehicle: random}
+  # Fifteen minutes with no network, staggered so the two faults do not overlap and the
+  # run can attribute each effect to one cause. The backlog uploads in order on
+  # reconnection and the backend must accept it.
+  - {at_ist: "06:45", type: offline, duration_min: 15, vehicle: random}
+
+assertions:
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

@@ -31,6 +31,7 @@ from app.domain.enums import Direction, Role, Urgency, VehicleType
 from app.domain.state_machines import RequestStatus, StopKind, StopStatus, TripStatus, VehicleStatus
 from app.main import create_app
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.requests.models import RideRequest
 from app.modules.requests.service import RideRequestService
@@ -777,3 +778,120 @@ async def test_an_already_finished_stop_is_left_alone_by_a_cancellation(
     # the finished pickup simply stands.
     pickup = await reload_stop(db_session, world["stop_ids"]["pickup_first"])
     assert pickup.status == str(StopStatus.done)
+
+
+# --- a breakdown ends the trip, it does not just park the cab (S05) ----------
+
+
+async def on_duty(db_session: AsyncSession, world: dict[str, Any]) -> None:
+    """Open a duty session, because `/driver/issues` identifies the cab from it.
+
+    A driver reporting a breakdown is by definition on duty; without the session the
+    endpoint raises the alert but has no vehicle to act on.
+    """
+    db_session.add(
+        DutySession(
+            operator_id=world["operator_id"],
+            driver_id=world["drivers"]["driver"].id,
+            vehicle_id=world["vehicle"].id,
+            started_at=NOW,
+        )
+    )
+    await db_session.flush()
+
+
+
+async def test_a_breakdown_aborts_the_active_trip(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    await on_duty(db_session, world)
+    """`trip-lifecycle.md`: `in_progress --> aborted: breakdown / emergency`.
+
+    Taking the vehicle off the road is not enough: the S05 scenario showed a driver
+    completing a ride in a cab that had already broken down.
+    """
+    await start(client, driver, world["trip_id"])
+
+    response = await client.post("/driver/issues", json={"type": "breakdown"}, headers=driver)
+    assert response.status_code == 201
+
+    trip = await db_session.get(Trip, world["trip_id"])
+    assert trip is not None
+    await db_session.refresh(trip)
+    assert trip.status == str(TripStatus.aborted)
+
+
+async def test_the_stops_of_an_aborted_trip_are_skipped(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    await on_duty(db_session, world)
+    await start(client, driver, world["trip_id"])
+
+    await client.post("/driver/issues", json={"type": "breakdown"}, headers=driver)
+
+    for key in ("pickup_first", "drop_first", "pickup_second", "drop_second"):
+        stop = await reload_stop(db_session, world["stop_ids"][key])
+        assert stop.status == str(StopStatus.skipped), key
+
+
+async def test_a_rider_not_yet_collected_goes_back_on_the_queue(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    await on_duty(db_session, world)
+    """S05: "riders re-queued". `assigned -> queued` is the reassignment edge."""
+    await start(client, driver, world["trip_id"])
+
+    await client.post("/driver/issues", json={"type": "breakdown"}, headers=driver)
+
+    request = world["requests"]["first"]
+    await db_session.refresh(request)
+    assert request.status == str(RequestStatus.queued)
+    assert request.trip_id is None
+
+
+async def test_the_driver_cannot_carry_on_after_breaking_down(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """The whole point: the next tap must fail, not quietly complete the ride."""
+    await on_duty(db_session, world)
+    await start(client, driver, world["trip_id"])
+    await client.post("/driver/issues", json={"type": "breakdown"}, headers=driver)
+
+    response = await client.post(
+        f"/driver/stops/{world['stop_ids']['pickup_first']}/arrived", json=event(), headers=driver
+    )
+
+    assert response.status_code == 409
+
+
+async def test_a_traffic_block_leaves_the_trip_running(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    await on_duty(db_session, world)
+    """A jam is not a breakdown - the cab is stuck, not broken, and the ride continues."""
+    await start(client, driver, world["trip_id"])
+
+    await client.post("/driver/issues", json={"type": "traffic_block"}, headers=driver)
+
+    trip = await db_session.get(Trip, world["trip_id"])
+    assert trip is not None
+    await db_session.refresh(trip)
+    assert trip.status == str(TripStatus.in_progress)
+
+
+async def test_a_trip_that_never_started_is_cancelled_not_aborted(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """`trip-lifecycle.md` section 2: `cancelled` is "before start", `aborted` is "mid-way".
+
+    A cab that breaks down in the depot has not stopped anything mid-way.
+    """
+    await on_duty(db_session, world)
+
+    response = await client.post("/driver/issues", json={"type": "breakdown"}, headers=driver)
+    assert response.status_code == 201
+
+    trip = await db_session.get(Trip, world["trip_id"])
+    assert trip is not None
+    await db_session.refresh(trip)
+    assert trip.status == str(TripStatus.cancelled)

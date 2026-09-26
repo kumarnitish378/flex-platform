@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from sim.events import EventSummary
 from sim.geo import LatLng, haversine_km
 from sim.pings import Ping
 
@@ -119,6 +120,7 @@ class RunMetrics:
     demand: DemandMetrics = field(default_factory=DemandMetrics)
     driving: DrivingMetrics = field(default_factory=DrivingMetrics)
     dispatch: DispatchMetrics = field(default_factory=DispatchMetrics)
+    events: EventSummary = field(default_factory=EventSummary)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
 
     def to_dict(self) -> dict[str, Any]:

@@ -63,6 +63,17 @@ class VehicleAgent:
         #: True while `drive_to` is running, so a background `idle` pinger stays quiet.
         self.driving = False
 
+        # Two faults that are NOT "off duty", and are not the same as each other (S06).
+        # Off duty means no GPS is collected at all - a privacy rule (non-functional.md),
+        # not a fault - so neither of these may be modelled by going off duty.
+        #: False while the receiver has no fix: nothing is recorded, so nothing exists to
+        #: send later. Those positions are gone.
+        self.has_fix = True
+        #: False while the phone has no network: positions are still recorded and are
+        #: uploaded in order once it reconnects (mqtt-topics.md).
+        self.connected = True
+        self._held: list[Ping] = []
+
         self._sink = sink
         self._config = config or VehicleConfig()
         self._rng: np.random.Generator = engine.rng.for_agent(vehicle_id)
@@ -82,6 +93,41 @@ class VehicleAgent:
         self.on_duty = False
         self.speed_ms = 0.0
         self.engine.record(f"{self.vehicle_id} off duty")
+
+    # --- faults (S06) -------------------------------------------------------
+
+    def lose_fix(self) -> None:
+        """The receiver stops resolving a position. Nothing is recorded meanwhile."""
+        self.has_fix = False
+        self.engine.record(f"{self.vehicle_id} lost its GPS fix")
+
+    def regain_fix(self) -> None:
+        self.has_fix = True
+        self.engine.record(f"{self.vehicle_id} regained its GPS fix")
+
+    def disconnect(self) -> None:
+        """The phone loses network. Positions keep being recorded, not sent."""
+        self.connected = False
+        self.engine.record(f"{self.vehicle_id} went offline")
+
+    def reconnect(self) -> int:
+        """Upload everything recorded while offline, oldest first.
+
+        In order, deliberately: `mqtt-topics.md` allows a batch upload after a
+        reconnection and the backend is expected to accept it, so a simulator that
+        shuffled or dropped the backlog would never test that.
+        """
+        self.connected = True
+        held, self._held = self._held, []
+        for ping in held:
+            self._sink.emit(ping)
+        self.engine.record(f"{self.vehicle_id} reconnected and uploaded {len(held)} pings")
+        return len(held)
+
+    @property
+    def held_pings(self) -> int:
+        """How many positions are waiting for a network."""
+        return len(self._held)
 
     # --- processes ----------------------------------------------------------
 
@@ -166,26 +212,32 @@ class VehicleAgent:
             self._stationary_since = None
 
     def _maybe_emit(self) -> None:
-        """Emit a ping unless off duty, or unless this one is 'lost'."""
+        """Emit a ping unless off duty, without a fix, or unless this one is 'lost'."""
         if not self.on_duty:
+            return
+        if not self.has_fix:
+            # No fix means no position was ever known. Nothing to buffer.
             return
         if self._config.ping_loss_rate > 0 and self._rng.random() < self._config.ping_loss_rate:
             return
 
         self._battery = max(0.0, self._battery - 0.001)
-        self._sink.emit(
-            Ping(
-                vehicle_id=self.vehicle_id,
-                ts=self.engine.now(),
-                lat=self._noisy_lat(),
-                lng=self._noisy_lng(),
-                spd=self.speed_ms,
-                hdg=self.heading,
-                acc=self._config.gps_noise_metres,
-                bat=int(self._battery),
-                src="sim",
-            )
+        ping = Ping(
+            vehicle_id=self.vehicle_id,
+            ts=self.engine.now(),
+            lat=self._noisy_lat(),
+            lng=self._noisy_lng(),
+            spd=self.speed_ms,
+            hdg=self.heading,
+            acc=self._config.gps_noise_metres,
+            bat=int(self._battery),
+            src="sim",
         )
+        if not self.connected:
+            # The driver app keeps recording and uploads on reconnect.
+            self._held.append(ping)
+            return
+        self._sink.emit(ping)
 
     def _noisy_lat(self) -> float:
         return self.position.lat + self._gps_offset_degrees()

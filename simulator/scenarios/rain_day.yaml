@@ -1,0 +1,75 @@
+# S04 rain_day (scenarios.md): S02 with rain all day and 15% more demand.
+#
+# Deliberately a copy of normal_weekday rather than a variant of it: the point of S04 is
+# to compare against S02, and a comparison is only honest if the only differences are the
+# ones named here - the rain event and the surge.
+#
+# Not part of `make sim-quick` - it runs 16 simulated hours and needs a live backend.
+# Run it with:
+#   python -m sim run scenarios/rain_day.yaml --platform http://localhost:8000/api/v1
+name: rain_day
+version: 1
+seed: 42
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 16
+speed_factor: 60                   # an hour a minute, so the backend can keep up
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    alert_wait_minutes: 20
+
+modes:
+  - {mode: manual}
+
+fleet:
+  - {type: sedan_4, count: 25, depot: [28.5355, 77.3910]}
+  - {type: suv_6, count: 8, depot: [28.5355, 77.3910]}
+  - {type: vip, count: 2, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.05
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 300
+      home_zones: [sector_135, sector_168, sector_62]
+      vip_share: 0.01
+      priority_dist: {1: 0.02, 3: 0.08, 5: 0.8, 8: 0.1}
+      shifts:
+        - {start_ist: "09:30", end_ist: "18:30", share: 0.8}
+        - {start_ist: "13:00", end_ist: "22:00", share: 0.2}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # Rain from the start of the run to the end of it: "all day" per scenarios.md.
+  # 0.7 on every road (simulator-spec.md section 6), which slows both the cab getting to
+  # the rider and the ride itself, so waits stretch at both ends.
+  - {at_ist: "06:00", type: rain, duration_min: 960}
+  # +15% demand: people who would have taken their own transport do not, in the rain.
+  # Fired at the morning peak, where the extra load actually bites.
+  - {at_ist: "08:30", type: demand_surge, multiplier: 1.15}
+
+assertions:
+  # From scenarios.md. These are targets for the finished product, not a promise the
+  # Phase 1 manual loop already keeps - one supervisor dispatching by hand is exactly the
+  # bottleneck the later phases automate, and this scenario is how that gets measured.
+  # "System stable; metrics recorded; no crashes" is S04's stated bar - it is a
+  # resilience scenario, not a service-level one, so it deliberately does NOT assert the
+  # wait and give-up targets S02 carries. Rain is supposed to make those worse; asserting
+  # them here would just re-fail S02's numbers under a second name.
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

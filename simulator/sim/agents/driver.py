@@ -65,6 +65,9 @@ class DriverRecord:
     trips_started: int = 0
     trips_completed: int = 0
     stops_done: int = 0
+    #: Stops the backend had already resolved before this driver got to them - a rider
+    #: who cancelled en route, not a fault.
+    stale_stops: int = 0
     no_shows: int = 0
     faults: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -91,6 +94,9 @@ class DriverAgent:
         self._late_start_p = late_start_probability
         self._rng: np.random.Generator = engine.rng.for_agent(f"driver:{driver_id}")
         self._handled: set[uuid.UUID] = set()
+        #: Set once this driver has reported a breakdown. The cab is off the road and the
+        #: backend has ended its trip, so there is nothing left to tap through.
+        self.broken_down = False
 
     # --- the shift -----------------------------------------------------------------
 
@@ -110,6 +116,10 @@ class DriverAgent:
 
         while self.engine.now() < self.engine.scenario.end:
             yield self.engine.env.timeout(POLL_INTERVAL_SECONDS)
+            if self.broken_down:
+                # The cab is off the road. A broken-down driver does not keep asking
+                # dispatch for work, and the backend would not send them any.
+                continue
             trip = self._next_trip()
             if trip is not None:
                 yield from self.drive(trip)
@@ -154,8 +164,16 @@ class DriverAgent:
         for stop in sorted(trip.get("stops", []), key=lambda item: item["sequence"]):
             if stop["status"] in FINISHED_STOP_STATUSES:
                 continue
+            if self.broken_down:
+                # The cab stopped working. The backend has already ended this trip
+                # (`trip-lifecycle.md`: breakdown -> aborted), so carrying on would be a
+                # driver tapping through a trip that no longer exists.
+                self.engine.record(f"driver {self.driver_id} abandoned trip {trip_id}")
+                return
             yield from self._work_a_stop(trip_id, stop)
 
+        if self.broken_down:
+            return
         if self._call(lambda: platform.complete_trip(self.token, trip_id, self.engine.now())):
             self.record.trips_completed += 1
             self.engine.record(f"driver {self.driver_id} completed trip {trip_id}")
@@ -223,16 +241,30 @@ class DriverAgent:
         if platform is None:
             return
         if self._call(lambda: platform.report_issue(self.token, "breakdown", note)):
+            self.broken_down = True
             self.record.faults.append("breakdown")
             self.vehicle.go_off_duty()
             self.engine.record(f"driver {self.driver_id} broke down")
 
     def lose_gps(self, minutes: float) -> Process:
-        """Stop pinging for a while, without going off duty (S06)."""
+        """The receiver loses its fix. Still on duty; those positions never existed.
+
+        Deliberately not `go_off_duty()`: off duty means no GPS is collected at all, a
+        privacy rule rather than a fault, and a cab parked off duty is a different thing
+        to the supervisor than a working cab that has gone dark.
+        """
         self.record.faults.append(f"gps_loss_{minutes:.0f}min")
-        self.vehicle.go_off_duty()
+        self.vehicle.lose_fix()
         yield self.engine.env.timeout(minutes * 60)
-        self.vehicle.go_on_duty()
+        self.vehicle.regain_fix()
+
+    def go_offline(self, minutes: float) -> Process:
+        """The phone loses network. Positions are recorded and uploaded on reconnect (S06)."""
+        self.record.faults.append(f"offline_{minutes:.0f}min")
+        self.vehicle.disconnect()
+        yield self.engine.env.timeout(minutes * 60)
+        uploaded = self.vehicle.reconnect()
+        self.record.faults.append(f"uploaded_{uploaded}")
 
     # --- plumbing --------------------------------------------------------------------------
 
@@ -262,6 +294,14 @@ class DriverAgent:
         try:
             action()
         except Exception as exc:  # noqa: BLE001
+            if _is_a_stop_that_moved_on(exc):
+                # The rider cancelled while this driver was en route, so the backend
+                # skipped their stop - correctly - and the driver is holding a snapshot
+                # from before that. A real driver app refreshes and drives on; counting
+                # it as an error would make every cancellation look like a fault.
+                self.record.stale_stops += 1
+                self.engine.record(f"driver {self.driver_id} found a stop already resolved")
+                return False
             self.record.errors.append(f"{type(exc).__name__}: {exc}")
             self.engine.record(f"driver {self.driver_id} API call failed: {exc}")
             return False
@@ -277,6 +317,9 @@ class FleetSummary:
     trips_started: int = 0
     trips_completed: int = 0
     stops_done: int = 0
+    #: Stops the backend had already resolved before this driver got to them - a rider
+    #: who cancelled en route, not a fault.
+    stale_stops: int = 0
     no_shows: int = 0
     faults: int = 0
     errors: int = 0
@@ -289,7 +332,18 @@ def summarise(records: list[DriverRecord]) -> FleetSummary:
         trips_started=sum(record.trips_started for record in records),
         trips_completed=sum(record.trips_completed for record in records),
         stops_done=sum(record.stops_done for record in records),
+        stale_stops=sum(record.stale_stops for record in records),
         no_shows=sum(record.no_shows for record in records),
         faults=sum(len(record.faults) for record in records),
         errors=sum(len(record.errors) for record in records),
     )
+
+
+#: The backend's wording when a stop has already been skipped or finished under a driver
+#: who is still acting on an older view of the trip.
+_RESOLVED_STOP_MESSAGES = ("from skipped to", "from done to", "Stop not found")
+
+
+def _is_a_stop_that_moved_on(exc: Exception) -> bool:
+    text = str(exc)
+    return any(message in text for message in _RESOLVED_STOP_MESSAGES)

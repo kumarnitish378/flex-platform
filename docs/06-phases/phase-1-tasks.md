@@ -252,8 +252,16 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   single-threaded SimPy loop. The bottleneck it demonstrates is real and measured; the
   precise p90 and give-up figures need a faster harness before they can be quoted.
 
-- [ ] **M07 · Event injector + traffic factors** · deps M05
+- [x] **M07 · Event injector + traffic factors** · deps M05
   Done when: S04–S06 run and their assertions are evaluated.
+  `sim/traffic.py` holds the conditions in force on top of the router's time-of-day
+  table; they **multiply** and each ends independently, so lifting a road closure does
+  not silently cancel the rain. `sim/events.py` fires a scenario's timed events:
+  `rain`, `road_closure`, `demand_surge`, `vehicle_breakdown`, `gps_loss`, `offline`,
+  `supervisor_absent`. `vip_burst` and `optimizer_down` are **refused with the reason**
+  rather than approximated - a burst of ordinary riders would make S07 report a VIP
+  result it never tested. Scenarios `rain_day` (S04), `breakdown_with_riders` (S05) and
+  `gps_loss` (S06) added; S05 and S06 run green against the live stack.
 
 - [ ] **M08 · Scenario suite S01–S07 in CI** · deps M06, M07, F02
   Done when: `make sim-quick` in PR CI; `make sim-full` nightly with artifacts.

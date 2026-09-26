@@ -54,6 +54,7 @@ class SupervisorRecord:
     refusals: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
+    minutes_away: float = 0.0
     errors: list[str] = field(default_factory=list)
 
 
@@ -77,6 +78,9 @@ class SupervisorAgent:
         self.policy = policy
         self.record = SupervisorRecord(policy=str(policy))
         self._delay = reaction_delay_seconds
+        #: True while the supervisor has stepped away (M07 `supervisor_absent`). Distinct
+        #: from the `absent` policy, which means nobody was ever watching.
+        self.away = False
         self._rng: np.random.Generator = engine.rng.for_agent(f"supervisor:{policy}")
 
     # --- the shift ------------------------------------------------------------------
@@ -93,6 +97,10 @@ class SupervisorAgent:
             return
 
         while self.engine.now() < self.engine.scenario.end:
+            if self.away:
+                yield self.engine.env.timeout(IDLE_POLL_SECONDS)
+                continue
+
             request = self._oldest_waiting()
             if request is None:
                 yield self.engine.env.timeout(IDLE_POLL_SECONDS)

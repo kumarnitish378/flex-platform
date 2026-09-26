@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 
 import simpy
@@ -24,6 +25,8 @@ from sim.agents.supervisor import SupervisorAgent
 from sim.agents.supervisor import summarise as summarise_dispatch
 from sim.board import StatusBoard
 from sim.clock import IST, SimClock
+from sim.events import EventInjector
+from sim.events import summarise as summarise_events
 from sim.geo import LatLng
 from sim.metrics import (
     DemandMetrics,
@@ -39,6 +42,7 @@ from sim.platform import DutyCredentials, PlatformClient, PlatformError, SeededW
 from sim.rng import RngFactory
 from sim.routing import RoutingClient, build_routing
 from sim.scenario import LatLngModel, Scenario
+from sim.traffic import TrafficModel
 
 # A SimPy process is a generator yielding events.
 Process = Generator[simpy.Event, Any, Any]
@@ -89,6 +93,10 @@ class Engine:
         self.supervisor: SupervisorAgent | None = None
         #: One shared read of the request board, so riders do not each poll (OQ-26).
         self.board: StatusBoard | None = None
+        #: Conditions the event injector turns on and off during the run (M07).
+        self.traffic = TrafficModel(self.routing)
+        self.events: EventInjector | None = None
+        self._events_scheduled = 0
         #: `no_show_wait_minutes` as the backend has it; the driver must not guess.
         self.no_show_wait_minutes = DEFAULT_NO_SHOW_WAIT_MINUTES
         #: Cabs, by the order the scenario's fleet declares them.
@@ -138,6 +146,22 @@ class Engine:
         """Register an agent process with the environment."""
         return self.env.process(process())
 
+    def at_ist(self, local: dt_time) -> datetime | None:
+        """An IST wall-clock time as an absolute moment inside this run.
+
+        Tries the run's first local date and the next one, so an event written as
+        "02:00" on a run that starts at 06:00 IST lands on the following morning rather
+        than being silently dropped as already past. Returns `None` when neither falls
+        inside the run - the caller decides whether that is a skip or an error.
+        """
+        first = self.clock.start.astimezone(IST).date()
+        for offset in (0, 1):
+            moment = datetime.combine(first + timedelta(days=offset), local, tzinfo=IST)
+            moment = moment.astimezone(UTC)
+            if self.now() <= moment <= self.scenario.end:
+                return moment
+        return None
+
     def record(self, message: str) -> None:
         """Append to the run log, stamped with simulated time."""
         self._log.append(f"{self.now().isoformat()} {message}")
@@ -175,6 +199,7 @@ class Engine:
             demand=self._demand_metrics(),
             driving=self._driving_metrics(),
             dispatch=self._dispatch_metrics(),
+            events=summarise_events(self.events, self._events_scheduled),
             integrity=IntegrityMetrics(agent_errors=self._agent_errors()),
         )
 
@@ -332,6 +357,18 @@ def spawn_people(engine: Engine, world: SeededWorld) -> None:
     _spawn_riders(engine, world)
     _spawn_drivers(engine, world)
     _spawn_supervisor(engine, world)
+    inject_events(engine)
+
+
+def inject_events(engine: Engine) -> None:
+    """Arm the scenario's timed events (M07).
+
+    After the agents, because an event acts on them - a breakdown needs a driver to
+    report it, a surge needs riders who are not already travelling.
+    """
+    injector = EventInjector(engine)
+    engine.events = injector
+    engine._events_scheduled = injector.schedule(list(engine.scenario.events))
 
 
 def _spawn_riders(engine: Engine, world: SeededWorld) -> None:

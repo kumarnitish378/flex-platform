@@ -152,6 +152,20 @@ class EmployeeAgent:
             yield self.engine.env.timeout(delay)
             yield from self._ask_for_a_cab(direction)
 
+    def travel_now(self, direction: Direction = Direction.to_office) -> Process:
+        """Ask for a cab right now, outside the normal day (M07 `demand_surge`).
+
+        Goes through exactly the same path as a planned trip - the rider's own token, the
+        real endpoint, the same patience and give-up behaviour - so surge demand is
+        indistinguishable to the platform from demand the scenario planned.
+        """
+        yield from self._ask_for_a_cab(direction)
+
+    @property
+    def travelling(self) -> bool:
+        """Whether this rider already has a ride in play today."""
+        return self.record.request_id is not None
+
     def _request_moment(self, direction: Direction) -> datetime:
         """When this rider asks (`simulator-spec.md` section 5.2, demand model)."""
         if direction is Direction.to_office:

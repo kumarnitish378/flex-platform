@@ -366,3 +366,92 @@ def _distance_to_segment_m(point: LatLng, start: LatLng, end: LatLng) -> float:
     t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
     closest = LatLng(lat=ay + t * dy, lng=(ax + t * dx) / scale)
     return haversine_km(point, closest) * 1000.0
+
+
+# --- faults: no fix vs no network (S06, M07) ---------------------------------
+
+
+def test_a_cab_with_no_fix_sends_nothing() -> None:
+    """No satellite fix means no position was ever resolved. Nothing to send."""
+    engine, sink = build_engine(), MemoryPingSink()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
+    agent.go_on_duty()
+    agent.lose_fix()
+
+    engine.spawn(lambda: agent.drive_to(OFFICE))
+    engine.run()
+
+    assert sink.pings == []
+    assert agent.held_pings == 0
+
+
+def test_those_positions_are_gone_for_good() -> None:
+    """Regaining a fix does not resurrect what was never recorded."""
+    engine, sink = build_engine(), MemoryPingSink()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
+    agent.go_on_duty()
+    agent.lose_fix()
+    engine.spawn(lambda: agent.drive_to(OFFICE))
+    engine.run()
+
+    agent.regain_fix()
+
+    assert sink.pings == []
+
+
+def test_an_offline_cab_keeps_recording() -> None:
+    """No network is not no data: the driver app buffers and uploads later."""
+    engine, sink = build_engine(), MemoryPingSink()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
+    agent.go_on_duty()
+    agent.disconnect()
+
+    engine.spawn(lambda: agent.drive_to(OFFICE))
+    engine.run()
+
+    assert sink.pings == []
+    assert agent.held_pings > 0
+
+
+def test_reconnecting_uploads_the_backlog_in_order() -> None:
+    """mqtt-topics.md allows a batch upload after a reconnection, oldest first."""
+    engine, sink = build_engine(), MemoryPingSink()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
+    agent.go_on_duty()
+    agent.disconnect()
+    engine.spawn(lambda: agent.drive_to(OFFICE))
+    engine.run()
+    held = agent.held_pings
+
+    uploaded = agent.reconnect()
+
+    assert uploaded == held
+    assert len(sink.pings) == held
+    assert agent.held_pings == 0
+    timestamps = [ping.ts for ping in sink.pings]
+    assert timestamps == sorted(timestamps)
+
+
+def test_neither_fault_takes_the_cab_off_duty() -> None:
+    """Off duty means no GPS is collected at all - a privacy rule, not a fault."""
+    engine = build_engine()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, MemoryPingSink(), NO_NOISE)
+    agent.go_on_duty()
+
+    agent.lose_fix()
+    agent.disconnect()
+
+    assert agent.on_duty is True
+
+
+def test_an_off_duty_cab_buffers_nothing() -> None:
+    """The privacy rule wins: no GPS off duty, so there is nothing to upload later."""
+    engine, sink = build_engine(), MemoryPingSink()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
+    agent.disconnect()
+
+    engine.spawn(lambda: agent.drive_to(OFFICE))
+    engine.run()
+
+    assert agent.held_pings == 0
+    assert sink.pings == []

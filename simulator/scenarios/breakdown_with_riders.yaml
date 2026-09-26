@@ -1,0 +1,67 @@
+# S05 breakdown_with_riders (scenarios.md): a cab breaks down mid-trip with riders aboard.
+#
+# The event picks a cab that is actually driving, so the breakdown lands where it matters
+# rather than on a cab idling at the depot. What is being tested is the *recovery*: the
+# trip must end, an alert must reach the supervisor, and the riders must not simply
+# vanish - "0 lost requests" is the assertion that catches a rider stranded by a cab that
+# never arrives.
+name: breakdown_with_riders
+version: 1
+seed: 42
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 2
+speed_factor: 60
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    alert_wait_minutes: 20
+    # Two hours long, so a stranded request must be able to reach a terminal state
+    # inside the run rather than still sitting queued when it ends.
+    request_expiry_minutes: 45
+
+modes:
+  - {mode: manual}
+
+fleet:
+  - {type: suv_6, count: 2, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 6
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      priority_dist: {5: 1.0}
+      shifts:
+        # Early in the window so cabs are loaded and moving well before the breakdown.
+        - {start_ist: "06:50", end_ist: "15:50", share: 1.0}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # Timed for when a cab should be mid-route with riders aboard: requests go in around
+  # 06:05, get assigned within a couple of minutes, and the drive to the office takes
+  # roughly twenty.
+  - {at_ist: "06:35", type: vehicle_breakdown, vehicle: random}
+
+assertions:
+  # "0 lost requests" is exactly `all_requests_terminal`: every rider on the broken cab
+  # must end up somewhere definite - re-served, cancelled or expired - and not left in
+  # limbo by a trip that stopped existing underneath them.
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

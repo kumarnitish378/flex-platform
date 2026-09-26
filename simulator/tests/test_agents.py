@@ -509,3 +509,44 @@ def _always(value: float) -> Any:
 def _patient_for(minutes: float) -> Any:
     """Travels, and runs out of patience after `minutes`."""
     return _FixedRng(0.0, normal_value=minutes)
+
+
+# --- a rider who cancelled en route is not a driver fault (M07) --------------
+
+
+def test_a_stop_resolved_under_the_driver_is_not_an_error(engine: Engine) -> None:
+    """The rider cancelled while this cab was on its way; the backend skipped the stop.
+
+    Counting that as a fault would make every cancellation look like a bug, and S04-S06
+    assert on agent errors.
+    """
+    from sim.agents.driver import _is_a_stop_that_moved_on
+
+    assert _is_a_stop_that_moved_on(RuntimeError("409: stop cannot go from skipped to arrived"))
+    assert _is_a_stop_that_moved_on(RuntimeError("404: Stop not found"))
+    assert not _is_a_stop_that_moved_on(RuntimeError("500: Internal server error"))
+
+
+def test_a_real_failure_is_still_an_error() -> None:
+    from sim.agents.driver import _is_a_stop_that_moved_on
+
+    assert not _is_a_stop_that_moved_on(RuntimeError("connection refused"))
+
+
+def test_a_broken_down_driver_stops_working(engine: Engine) -> None:
+    """The backend has ended the trip; tapping through it would be a driver app bug.
+
+    Found by S05, where a broken-down cab kept marking stops and the run reported four
+    API failures that were really the backend correctly refusing.
+    """
+    platform = FakePlatform()
+    platform.trips = [a_trip()]
+    with_platform(engine, platform)
+    driver = driver_for(engine)
+    driver.broken_down = True
+
+    engine.spawn(driver.shift)
+    engine.run()
+
+    assert driver.record.trips_started == 0
+    assert driver.record.errors == []

@@ -140,10 +140,21 @@ class Traffic(Strict):
 
 
 class Event(Strict):
+    """One timed event (`simulator-spec.md` section 7).
+
+    `type` is validated by the injector rather than by an enum here, so that an event
+    listed in the spec but not yet implementable is refused with the reason why instead
+    of a bare "not a valid choice".
+    """
+
     at_ist: time
     type: str
-    duration_min: int | None = None
+    duration_min: int | None = Field(default=None, gt=0)
     vehicle: str | None = None
+    #: `demand_surge` / `vip_burst`: how many extra riders.
+    count: int | None = Field(default=None, gt=0)
+    #: `demand_surge`: 1.15 means "15% more demand than the day already has".
+    multiplier: float | None = Field(default=None, gt=0)
 
 
 class Assertions(Strict):

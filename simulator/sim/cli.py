@@ -162,6 +162,12 @@ def _run_scenario(
         # Anything the last sync did not cover still belongs on the broker.
         engine.mqtt.release_all()
         engine.mqtt.flush()
+        if metrics.events.scheduled:
+            print(
+                f"events   scheduled={metrics.events.scheduled} fired={metrics.events.fired} "
+                f"skipped={metrics.events.skipped} errors={metrics.events.errors}"
+                + (f" [{', '.join(metrics.events.types)}]" if metrics.events.types else "")
+            )
         print(
             f"mqtt     published={len(engine.mqtt.published)} "
             f"unpublished={engine.mqtt.failed} reconnects={engine.mqtt.reconnects}"
