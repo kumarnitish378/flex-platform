@@ -43,17 +43,44 @@ class FleetMetrics:
 
 @dataclass
 class DemandMetrics:
-    """Placeholders until M05 adds employee and driver agents."""
+    """What the riders did (M05).
 
+    `None` means "not measured in this run" and is deliberately distinct from zero:
+    "nobody gave up" and "give-ups were never counted" are different claims, and an
+    offline run measures neither.
+    """
+
+    riders: int | None = None
     requests: int | None = None
+    completed: int | None = None
     assigned: int | None = None
     cancelled: int | None = None
     gave_up: int | None = None
     no_shows: int | None = None
     expired: int | None = None
+    unresolved: int | None = None
+    not_travelling: int | None = None
     wait_minutes_median: float | None = None
     wait_minutes_p90: float | None = None
     eta_error_minutes_p90: float | None = None
+
+    @property
+    def all_terminal(self) -> bool | None:
+        """S01: nothing still hanging when the run ended."""
+        return None if self.unresolved is None else self.unresolved == 0
+
+
+@dataclass
+class DrivingMetrics:
+    """What the drivers did (M05)."""
+
+    drivers: int | None = None
+    on_duty: int | None = None
+    trips_started: int | None = None
+    trips_completed: int | None = None
+    stops_done: int | None = None
+    no_shows: int | None = None
+    faults: int | None = None
 
 
 @dataclass
@@ -63,6 +90,9 @@ class IntegrityMetrics:
     invalid_transitions: int = 0
     hard_rule_violations: int = 0
     api_5xx: int = 0
+    #: Anything an agent's API call raised. Counted rather than fatal, so a run finishes
+    #: and reports honestly instead of dying on the first hiccup.
+    agent_errors: int = 0
 
 
 @dataclass
@@ -75,6 +105,7 @@ class RunMetrics:
     simulated_hours: float
     fleet: FleetMetrics = field(default_factory=FleetMetrics)
     demand: DemandMetrics = field(default_factory=DemandMetrics)
+    driving: DrivingMetrics = field(default_factory=DrivingMetrics)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
 
     def to_dict(self) -> dict[str, Any]:

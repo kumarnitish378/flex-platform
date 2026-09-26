@@ -7,19 +7,30 @@ register themselves as SimPy processes here.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import simpy
 
-from sim.clock import SimClock
+from sim.agents.driver import DriverAgent
+from sim.agents.driver import summarise as summarise_fleet
+from sim.agents.employee import EmployeeAgent, EmployeeProfile
+from sim.agents.employee import summarise as summarise_demand
+from sim.clock import IST, SimClock
 from sim.geo import LatLng
-from sim.metrics import RunMetrics, compute_fleet_metrics
+from sim.metrics import (
+    DemandMetrics,
+    DrivingMetrics,
+    IntegrityMetrics,
+    RunMetrics,
+    compute_fleet_metrics,
+)
 from sim.mqtt import MqttPingSink, TeeingPingSink
 from sim.pings import MemoryPingSink
-from sim.platform import PlatformClient, PlatformError, SeededWorld
+from sim.platform import DutyCredentials, PlatformClient, PlatformError, SeededWorld
 from sim.rng import RngFactory
 from sim.routing import RoutingClient, build_routing
 from sim.scenario import Scenario
@@ -65,7 +76,24 @@ class Engine:
         #: The real backend, when this is a closed-loop run (M04). None means offline.
         self.platform = platform
         self.mqtt: MqttPingSink | None = None
+        #: The people (M05). Riders are indexed by request so a driver can ask the rider
+        #: it is waiting for whether they turned up, rather than sampling that twice.
+        self.riders: list[EmployeeAgent] = []
+        self.drivers: list[DriverAgent] = []
+        #: `no_show_wait_minutes` as the backend has it; the driver must not guess.
+        self.no_show_wait_minutes = DEFAULT_NO_SHOW_WAIT_MINUTES
+        #: Cabs, by the order the scenario's fleet declares them.
+        self.vehicles: list[Any] = []
+        #: MQTT credentials per vehicle id, from going on duty.
+        self.duty_credentials: dict[str, DutyCredentials] = {}
         self._log: list[str] = []
+
+    def rider_for_request(self, request_id: uuid.UUID) -> EmployeeAgent | None:
+        """The rider who made this request, if it was one of ours."""
+        for rider in self.riders:
+            if rider.record.request_id == request_id:
+                return rider
+        return None
 
     # --- closed loop (M04) ----------------------------------------------------
 
@@ -135,6 +163,46 @@ class Engine:
             ended_at=summary.ended_at.isoformat(),
             simulated_hours=summary.simulated_seconds / 3600.0,
             fleet=compute_fleet_metrics(self.pings.pings),
+            demand=self._demand_metrics(),
+            driving=self._driving_metrics(),
+            integrity=IntegrityMetrics(
+                agent_errors=sum(len(driver.record.errors) for driver in self.drivers)
+            ),
+        )
+
+    def _demand_metrics(self) -> DemandMetrics:
+        """`None` everywhere for an offline run: nothing was measured, not nothing happened."""
+        if not self.riders:
+            return DemandMetrics()
+
+        summary = summarise_demand([rider.record for rider in self.riders])
+        waits = sorted(summary.waits_minutes)
+        return DemandMetrics(
+            riders=summary.riders,
+            requests=summary.requested,
+            completed=summary.completed,
+            cancelled=summary.cancelled,
+            gave_up=summary.gave_up,
+            no_shows=summary.no_shows,
+            expired=summary.expired,
+            unresolved=summary.unresolved + summary.failed,
+            not_travelling=summary.not_travelling,
+            wait_minutes_median=_percentile(waits, 0.5),
+            wait_minutes_p90=_percentile(waits, 0.9),
+        )
+
+    def _driving_metrics(self) -> DrivingMetrics:
+        if not self.drivers:
+            return DrivingMetrics()
+        summary = summarise_fleet([driver.record for driver in self.drivers])
+        return DrivingMetrics(
+            drivers=summary.drivers,
+            on_duty=summary.on_duty,
+            trips_started=summary.trips_started,
+            trips_completed=summary.trips_completed,
+            stops_done=summary.stops_done,
+            no_shows=summary.no_shows,
+            faults=summary.faults,
         )
 
 
@@ -162,9 +230,12 @@ def spawn_fleet(engine: Engine, vehicle_ids: list[str] | None = None) -> list[An
                 else f"vehicle-{index + 1}"
             )
             agent = VehicleAgent(engine, identifier, depot, engine.sink)
-            agent.go_on_duty()
-            engine.spawn(agent.idle)
+            if engine.platform is None:
+                # Offline: no driver agent will ever start this cab, so it drives itself.
+                agent.go_on_duty()
+                engine.spawn(agent.idle)
             agents.append(agent)
+            engine.vehicles.append(agent)
             index += 1
     return agents
 
@@ -181,6 +252,14 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
     platform.set_clock(engine.clock.start + _LEAD)
     world = platform.reset()
 
+    overrides = engine.scenario.operator.config_overrides
+    if overrides:
+        platform.apply_config(world.token_for("operator_admin"), overrides)
+        engine.record(f"applied config overrides: {sorted(overrides)}")
+        engine.no_show_wait_minutes = int(
+            overrides.get("no_show_wait_minutes", DEFAULT_NO_SHOW_WAIT_MINUTES)
+        )
+
     tokens = world.tokens_for("driver")
     if not tokens:
         raise PlatformError("The reset fixture seeded no driver logins")
@@ -196,15 +275,91 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
 
     # Paced: pings wait for the backend clock to reach them (see MqttPingSink).
     mqtt = MqttPingSink(paced=True)
+    credentials_by_vehicle: dict[str, DutyCredentials] = {}
     for vehicle_id, driver_token in zip(world.vehicle_ids[:wanted], tokens[:wanted], strict=True):
         credentials = platform.go_on_duty(driver_token, vehicle_id)
         mqtt.register(vehicle_id, credentials)
+        credentials_by_vehicle[str(vehicle_id)] = credentials
         engine.record(f"vehicle {vehicle_id} on duty, publishing to {credentials.gps_topic}")
 
     engine.connect_to_platform(mqtt)
     engine.spawn(lambda: _keep_clocks_together(engine))
+    engine.duty_credentials = credentials_by_vehicle
     return world
 
+
+def spawn_people(engine: Engine, world: SeededWorld) -> None:
+    """Put riders and drivers into the run (M05).
+
+    Riders come first: a driver asks the rider it is waiting for whether they turned up,
+    so the rider must exist before any trip can be worked.
+    """
+    _spawn_riders(engine, world)
+    _spawn_drivers(engine, world)
+
+
+def _spawn_riders(engine: Engine, world: SeededWorld) -> None:
+    tokens = world.tokens_for("employee")
+    wanted = min(engine.scenario.employee_count, len(world.employee_ids), len(tokens))
+    if wanted < engine.scenario.employee_count:
+        engine.record(
+            f"demand limited to {wanted} riders: the seeded world has "
+            f"{len(world.employee_ids)} employees and {len(tokens)} logins"
+        )
+
+    shift_start, shift_end = _first_shift(engine)
+    for employee_id, token in zip(world.employee_ids[:wanted], tokens[:wanted], strict=True):
+        rider = EmployeeAgent(
+            engine,
+            EmployeeProfile(
+                employee_id=str(employee_id),
+                token=token,
+                home=None,
+                shift_start=shift_start,
+                shift_end=shift_end,
+            ),
+        )
+        engine.riders.append(rider)
+        engine.spawn(rider.day)
+
+
+def _spawn_drivers(engine: Engine, world: SeededWorld) -> None:
+    tokens = world.tokens_for("driver")
+    for index, vehicle in enumerate(engine.vehicles):
+        if index >= len(tokens):
+            break
+        credentials = engine.duty_credentials.get(vehicle.vehicle_id)
+        if credentials is None:
+            continue
+        driver = DriverAgent(
+            engine,
+            driver_id=f"driver-{index + 1}",
+            token=tokens[index],
+            vehicle=vehicle,
+            credentials=credentials,
+            late_start_probability=engine.scenario.drivers.late_start_p,
+        )
+        engine.drivers.append(driver)
+        engine.spawn(driver.shift)
+
+
+def _first_shift(engine: Engine) -> tuple[datetime, datetime]:
+    """The scenario's first shift, as absolute times on the run's date.
+
+    Shifts are written in IST because that is how an NCR operator thinks about them; the
+    run works in UTC.
+    """
+    shift = engine.scenario.clients[0].employees.shifts[0]
+    local_date = engine.clock.start.astimezone(IST).date()
+    start = datetime.combine(local_date, shift.start_ist, tzinfo=IST).astimezone(UTC)
+    end = datetime.combine(local_date, shift.end_ist, tzinfo=IST).astimezone(UTC)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+#: `allocation-rules.md` section 1 default. Overridden from the scenario's config.
+DEFAULT_NO_SHOW_WAIT_MINUTES = 5
 
 #: How often, in simulated seconds, to push the clock to the backend during a run.
 #: One minute keeps a ping at most a minute ahead of the backend's "now" - well inside
@@ -235,3 +390,20 @@ def _keep_clocks_together(engine: Engine) -> Process:
             engine.platform.set_clock(engine.now() + _LEAD)
             if engine.mqtt is not None:
                 engine.mqtt.release_up_to(engine.now())
+
+
+def _percentile(ordered: list[float], fraction: float) -> float | None:
+    """Same definition as the backend's report (`app/domain/stats.py`): R type 7.
+
+    Stated because a simulator whose p90 disagrees with the product's p90 makes every
+    comparison between them meaningless.
+    """
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return round(ordered[0], 1)
+    position = fraction * (len(ordered) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return round(ordered[lower] * (1 - weight) + ordered[upper] * weight, 1)

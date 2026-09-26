@@ -61,6 +61,12 @@ class DutyCredentials:
         return f"{self.topic_prefix}/gps"
 
 
+@dataclass(frozen=True, slots=True)
+class CreatedRequest:
+    id: uuid.UUID
+    status: str
+
+
 @dataclass(slots=True)
 class SeededWorld:
     operator_id: uuid.UUID
@@ -124,6 +130,17 @@ class PlatformClient:
             now=_parse_time(body.get("now")),
         )
 
+    def apply_config(self, token: str, overrides: dict[str, Any]) -> dict[str, Any]:
+        """Push the scenario's `operator.config_overrides` (B05, `PATCH /admin/config`).
+
+        Through the API, not the database: the ranges and the audit trail are part of what
+        the scenario is exercising, and a scenario that sets an out-of-range value should
+        fail loudly here rather than quietly run with something the product would refuse.
+        """
+        if not overrides:
+            return {}
+        return self._patch("/admin/config", json=dict(overrides), token=token)
+
     # --- time -------------------------------------------------------------------
 
     def set_clock(self, now: datetime) -> datetime:
@@ -164,6 +181,97 @@ class PlatformClient:
     def go_off_duty(self, driver_token: str) -> None:
         self._post("/driver/duty", json={"on_duty": False}, token=driver_token)
 
+    # --- riding (M05) ---------------------------------------------------------------
+
+    def create_request(
+        self,
+        token: str,
+        direction: str,
+        requested_time: datetime,
+        lat: float | None = None,
+        lng: float | None = None,
+        landmark: str | None = None,
+    ) -> CreatedRequest:
+        """`POST /ride-requests` as the employee. The same call the app makes (EMP-02).
+
+        With no coordinates the backend uses the employee's saved home, exactly as the
+        app does when a rider taps "home" rather than dropping a pin.
+        """
+        payload: dict[str, Any] = {
+            "direction": direction,
+            "requested_time": requested_time.isoformat(),
+            "landmark": landmark,
+        }
+        if lat is not None and lng is not None:
+            payload["location"] = {"lat": lat, "lng": lng}
+        body = self._post("/ride-requests", json=payload, token=token)
+        return CreatedRequest(id=uuid.UUID(body["id"]), status=str(body["status"]))
+
+    def request_status(self, token: str, request_id: uuid.UUID) -> str:
+        """What the backend says this request is now. Never inferred locally."""
+        body = self._get(f"/ride-requests/{request_id}", token=token)
+        return str(body["status"])
+
+    def cancel_request(self, token: str, request_id: uuid.UUID, reason: str) -> str:
+        body = self._post(
+            f"/ride-requests/{request_id}/cancel", json={"reason": reason}, token=token
+        )
+        return str(body.get("status", "cancelled"))
+
+    # --- driving a trip (M05) -----------------------------------------------------------
+
+    def driver_trips(self, token: str, scope: str = "active") -> list[dict[str, Any]]:
+        """The driver's own trips, with their stops in order (DRV-03)."""
+        body = self._get(f"/driver/trips?scope={scope}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def start_trip(self, token: str, trip_id: uuid.UUID, at: datetime) -> dict[str, Any]:
+        return self._driver_event(f"/driver/trips/{trip_id}/start", token, at)
+
+    def complete_trip(self, token: str, trip_id: uuid.UUID, at: datetime) -> dict[str, Any]:
+        return self._driver_event(f"/driver/trips/{trip_id}/complete", token, at)
+
+    def stop_action(
+        self,
+        token: str,
+        stop_id: uuid.UUID,
+        action: str,
+        at: datetime,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> dict[str, Any]:
+        """`arrived`, `done` or `no_show`, with the position the tap happened at."""
+        return self._driver_event(f"/driver/stops/{stop_id}/{action}", token, at, lat=lat, lng=lng)
+
+    def report_issue(
+        self, token: str, issue_type: str, note: str | None = None, trip_id: uuid.UUID | None = None
+    ) -> dict[str, Any]:
+        """DRV-06, used by the fault injector."""
+        return self._post(
+            "/driver/issues",
+            json={"type": issue_type, "note": note, "trip_id": str(trip_id) if trip_id else None},
+            token=token,
+        )
+
+    def _driver_event(
+        self,
+        path: str,
+        token: str,
+        at: datetime,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> dict[str, Any]:
+        """Every driver action carries a fresh idempotency key and the tap time (B15)."""
+        body: dict[str, Any] = {
+            "client_event_id": str(uuid.uuid4()),
+            "occurred_at": at.isoformat(),
+        }
+        if lat is not None and lng is not None:
+            body["lat"] = lat
+            body["lng"] = lng
+        return self._post(path, json=body, token=token)
+
     # --- reading back ------------------------------------------------------------------
 
     def live_vehicles(self, supervisor_token: str) -> list[dict[str, Any]]:
@@ -202,6 +310,9 @@ class PlatformClient:
 
     def _put(self, path: str, json: dict[str, Any], token: str | None = None) -> dict[str, Any]:
         return self._send("PUT", path, json=json, token=token)
+
+    def _patch(self, path: str, json: dict[str, Any], token: str | None = None) -> dict[str, Any]:
+        return self._send("PATCH", path, json=json, token=token)
 
     def _send(
         self,

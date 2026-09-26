@@ -11,6 +11,10 @@ routing: approx                    # ADR-0010 rule 6: never the public OSM serve
 operator:
   config_overrides:
     alert_wait_minutes: 20
+    # S01 is one hour long, so an unassigned request must be able to reach a terminal
+    # state inside it. The product default is 120 minutes, which would leave every
+    # request still queued when the run ends.
+    request_expiry_minutes: 30
 
 modes:
   - {mode: manual}
@@ -35,7 +39,10 @@ clients:
       vip_share: 0.0
       priority_dist: {5: 1.0}
       shifts:
-        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+        # Chosen so the to_office demand lands inside the one-hour window: requests go
+        # in at shift_start - Normal(45, 10) min, which is around 06:20 IST here - comfortably
+        # inside the window, and 30 minutes before the shortened expiry.
+        - {start_ist: "07:05", end_ist: "16:05", share: 1.0}
 
 supervisor:
   policy: manual_nearest

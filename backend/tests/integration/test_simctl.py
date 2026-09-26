@@ -362,16 +362,31 @@ async def test_the_seeded_driver_is_linked_to_a_driver_record(
 
 
 async def test_every_seeded_user_exists(sim_client: AsyncClient, db_session: AsyncSession) -> None:
-    """One login per role, plus one more per cab beyond the first.
+    """One login per role, plus one per cab and one per employee beyond the first of each.
 
-    The extra driver accounts exist because a driver may hold only one open duty session
-    (B11), so a simulated fleet cannot share an account (M04).
+    The extras exist because a driver may hold only one open duty session (B11) and a
+    rider may only create requests for themselves (B09), so simulated agents cannot share
+    an account (M04, M05).
     """
     body = (await sim_client.post("/simctl/reset", json={})).json()
 
-    expected = len(SEED_USERS) + len(body["vehicle_ids"]) - 1
+    extra_drivers = len(body["vehicle_ids"]) - 1
+    extra_employees = len(body["employee_ids"]) - 1
+    expected = len(SEED_USERS) + extra_drivers + extra_employees
+
     assert await db_session.scalar(select(func.count()).select_from(AppUser)) == expected
     assert len(body["users"]) == expected
+
+
+async def test_every_employee_has_their_own_login(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Each rider agent creates its own requests, so each needs its own account."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+
+    riders = [user for user in body["users"] if user["role"] == "employee"]
+    assert len(riders) == len(body["employee_ids"])
+    assert len({user["user_id"] for user in riders}) == len(riders)
 
 
 async def test_every_cab_has_its_own_driver_login(

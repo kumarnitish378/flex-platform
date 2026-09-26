@@ -227,9 +227,15 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   map widget itself is A11 (Flutter, still blocked); everything beneath it is proven by
   `simulator/tests/test_closed_loop_live.py` (opt-in, 5 tests).
 
-- [ ] **M05 · Employee + driver agents (full loop)** · deps M04, B15
+- [x] **M05 · Employee + driver agents (full loop)** · deps M04, B15
   Do: demand model, readiness, patience/give-up, driver acceptance delay, stop actions, faults.
   Done when: S01 `smoke_tiny` runs end to end with all requests terminal.
+  Verified against the running stack: 10 riders, 3 drivers, every request reaching a
+  terminal state and zero agent errors. Scenario assertions are now evaluated and a broken
+  one fails the run (exit 4). With no supervisor agent yet the requests **expire** rather
+  than complete - that is terminal and honest; M06 makes them rides. The driver's trip
+  handling (accept, start, arrive, board, done, no-show, complete) is built and unit-tested
+  against a fake platform, and starts being exercised by a scenario with M06.
 
 - [ ] **M06 · Supervisor agent (manual policies)** · deps M05, B14
   Policies: `manual_nearest`, `absent`.

@@ -60,6 +60,8 @@ class VehicleAgent:
         self.speed_ms = 0.0
         self.heading = 0.0
         self.on_duty = False
+        #: True while `drive_to` is running, so a background `idle` pinger stays quiet.
+        self.driving = False
 
         self._sink = sink
         self._config = config or VehicleConfig()
@@ -84,13 +86,26 @@ class VehicleAgent:
     # --- processes ----------------------------------------------------------
 
     def idle(self) -> Generator[simpy.Event, Any, None]:
-        """Sit still, pinging at the stationary cadence while on duty."""
+        """Sit still, pinging at the stationary cadence while on duty.
+
+        Stays quiet while `driving` is set: `drive_to` emits its own pings along the
+        route, and a background pinger running at the same time would double every
+        position the map receives.
+        """
         while True:
-            self._maybe_emit()
+            if not self.driving:
+                self._maybe_emit()
             yield self.engine.env.timeout(self._current_interval())
 
     def drive_to(self, destination: LatLng) -> Generator[simpy.Event, Any, None]:
         """Follow the routed geometry to `destination`, pinging on the way."""
+        self.driving = True
+        try:
+            yield from self._drive_to(destination)
+        finally:
+            self.driving = False
+
+    def _drive_to(self, destination: LatLng) -> Generator[simpy.Event, Any, None]:
         route = self.route_to(destination)
         if route.duration_seconds <= 0:
             self.position = destination

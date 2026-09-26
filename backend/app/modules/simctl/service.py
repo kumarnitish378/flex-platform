@@ -58,6 +58,9 @@ VEHICLES = (
 #: APP_ENV=sim (ADR-0008).
 SIM_TOKEN_TTL_SECONDS = 12 * 3600
 
+#: Distinct phone blocks per role, so seeded accounts cannot collide on the unique index.
+_PHONE_BLOCK = {Role.driver: "1", Role.employee: "2"}
+
 SEED_USERS = (
     (Role.operator_admin, "+910000000001"),
     (Role.supervisor, "+910000000002"),
@@ -188,10 +191,18 @@ class SimControlService:
                 priority=5,
                 is_vip=(index == 0),
             )
-            # Link the seeded rider login to the first employee so the agent can request.
+            # Every employee gets a login, not just the first: the simulator's employee
+            # agents each create their own requests, and `/ride-requests` scopes a
+            # rider to their own employee record (M05).
             if index == 0:
                 rider = next(u for u in users if u.role == str(Role.employee))
                 employee.user_id = rider.user_id
+            else:
+                extra = await self._seed_login(
+                    operator.id, Role.employee, index, client_id=corporate.id
+                )
+                employee.user_id = extra.user_id
+                users.append(extra)
             self.session.add(employee)
             employee_ids.append(employee.id)
 
@@ -223,7 +234,7 @@ class SimControlService:
                 seeded_driver = next(u for u in users if u.role == str(Role.driver))
                 driver.user_id = seeded_driver.user_id
             else:
-                extra = await self._seed_driver_login(operator.id, index)
+                extra = await self._seed_login(operator.id, Role.driver, index)
                 driver.user_id = extra.user_id
                 users.append(extra)
             self.session.add(driver)
@@ -243,33 +254,44 @@ class SimControlService:
             now=self.clock.now(),
         )
 
-    async def _seed_driver_login(self, operator_id: uuid.UUID, index: int) -> SeededUser:
-        """One more driver account, for the cab at `index`.
+    async def _seed_login(
+        self,
+        operator_id: uuid.UUID,
+        role: Role,
+        index: int,
+        client_id: uuid.UUID | None = None,
+    ) -> SeededUser:
+        """One more account for a person the simulator needs to act as.
 
-        Returned in `users` alongside the per-role logins, so the simulator can sign a
-        different driver into every vehicle.
+        The per-role logins in `SEED_USERS` are one each; agents need one *per* driver and
+        per employee, because a driver may hold only one open duty session (B11) and a
+        rider may only create requests for themselves (B09). Returned in `users` alongside
+        the role logins.
         """
-        phone = f"+910000001{index:03d}"
-        user = AppUser(id=_id("user", f"driver-{index}"), phone=phone, name=f"Sim driver {index}")
+        key = f"{role}-{index}"
+        phone = f"+9100{_PHONE_BLOCK[role]}{index:05d}"
+        user = AppUser(id=_id("user", key), phone=phone, name=f"Sim {role} {index}")
         self.session.add(user)
         await self.session.flush()
         self.session.add(
             UserRole(
-                id=_id("role", f"driver-{index}"),
+                id=_id("role", key),
                 user_id=user.id,
-                role=Role.driver,
+                role=role,
                 operator_id=operator_id,
+                client_id=client_id,
             )
         )
         token, _ = create_access_token(
             user_id=user.id,
-            role=str(Role.driver),
+            role=str(role),
             secret=self.settings.jwt_secret.get_secret_value(),
             clock=self.clock,
             ttl_seconds=SIM_TOKEN_TTL_SECONDS,
             operator_id=operator_id,
+            client_id=client_id,
         )
-        return SeededUser(role=str(Role.driver), phone=phone, user_id=user.id, access_token=token)
+        return SeededUser(role=str(role), phone=phone, user_id=user.id, access_token=token)
 
     async def _seed_users(self, operator_id: uuid.UUID, client_id: uuid.UUID) -> list[SeededUser]:
         """One login per role, with a ready-to-use access token.

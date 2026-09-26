@@ -24,7 +24,8 @@ from typing import Any
 
 import pytest
 
-from sim.engine import Engine, connect_fleet, spawn_fleet
+from sim.assertions import evaluate
+from sim.engine import Engine, connect_fleet, spawn_fleet, spawn_people
 from sim.platform import PlatformClient
 from sim.scenario import load_scenario
 
@@ -98,6 +99,9 @@ def test_simulated_cabs_appear_moving_on_the_live_map(platform: PlatformClient) 
 
     world = connect_fleet(engine, platform)
     spawn_fleet(engine, [str(value) for value in world.vehicle_ids])
+    # A cab pings because a driver started their shift (M05); without the driver agent
+    # the vehicle sits there silently, exactly as a real one would.
+    spawn_people(engine, world)
     assert engine.mqtt is not None
 
     engine.run()
@@ -133,6 +137,7 @@ def test_the_map_goes_stale_when_the_cabs_stop(platform: PlatformClient) -> None
     engine = Engine(scenario, platform=platform)
     world = connect_fleet(engine, platform)
     spawn_fleet(engine, [str(value) for value in world.vehicle_ids])
+    spawn_people(engine, world)
     engine.run()
     assert engine.mqtt is not None
     engine.mqtt.flush()
@@ -168,3 +173,39 @@ def _wait_for_the_map(platform: PlatformClient, token: str) -> list[dict[str, An
             return positioned
         time.sleep(1.0)
     return positioned
+
+
+@enabled
+def test_s01_runs_end_to_end_with_every_request_terminal(platform: PlatformClient) -> None:
+    """M05 acceptance, and S01's own assertion (`scenarios.md`).
+
+    Riders ask for cabs, wait, and either ride or stop waiting. Nothing may be left
+    hanging when the run ends - a request still `queued` at the end is a request the
+    product quietly lost.
+
+    With no supervisor agent yet (M06), the honest outcome is that the requests expire.
+    That is still terminal, and when M06 lands the same assertion will hold with rides
+    completed instead.
+    """
+    scenario = load_scenario(str(SCENARIOS / "smoke_tiny.yaml"))
+    engine = Engine(scenario, platform=platform)
+
+    world = connect_fleet(engine, platform)
+    spawn_fleet(engine, [str(value) for value in world.vehicle_ids])
+    spawn_people(engine, world)
+
+    assert engine.riders, "the scenario produced no riders"
+    assert engine.drivers, "the scenario produced no drivers"
+
+    summary = engine.run()
+    metrics = engine.metrics(summary)
+
+    assert metrics.demand.requests, "no rider ever asked for a cab"
+    assert metrics.demand.unresolved == 0, "a request was still open when the run ended"
+    assert metrics.integrity.agent_errors == 0, "an agent's API call failed"
+    assert evaluate(scenario.assertions, metrics) == []
+
+    if engine.mqtt is not None:
+        engine.mqtt.release_all()
+        engine.mqtt.flush()
+        engine.mqtt.close()

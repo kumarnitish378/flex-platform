@@ -13,7 +13,8 @@ import os
 import sys
 from pathlib import Path
 
-from sim.engine import Engine, connect_fleet, spawn_fleet
+from sim.assertions import evaluate
+from sim.engine import Engine, connect_fleet, spawn_fleet, spawn_people
 from sim.mqtt import MqttUnavailableError
 from sim.platform import PlatformClient, PlatformError
 from sim.recorder import Recorder, compare_runs, run_directory
@@ -126,6 +127,8 @@ def _run_scenario(
             f"vehicles={len(world.vehicle_ids)} clock={scenario.start.isoformat()}"
         )
         spawn_fleet(engine, [str(value) for value in world.vehicle_ids])
+        spawn_people(engine, world)
+        print(f"agents   {len(engine.riders)} riders, {len(engine.drivers)} drivers")
     else:
         spawn_fleet(engine)
 
@@ -137,6 +140,17 @@ def _run_scenario(
         f"vehicles={summary.vehicles} employees={summary.employees} "
         f"pings={metrics.fleet.pings}"
     )
+    if metrics.demand.riders is not None:
+        print(
+            f"demand   requests={metrics.demand.requests} "
+            f"completed={metrics.demand.completed} gave_up={metrics.demand.gave_up} "
+            f"expired={metrics.demand.expired} unresolved={metrics.demand.unresolved}"
+        )
+        print(
+            f"driving  trips={metrics.driving.trips_completed}/"
+            f"{metrics.driving.trips_started} stops={metrics.driving.stops_done} "
+            f"no_shows={metrics.driving.no_shows} errors={metrics.integrity.agent_errors}"
+        )
 
     if engine.mqtt is not None:
         # Anything the last sync did not cover still belongs on the broker.
@@ -152,7 +166,23 @@ def _run_scenario(
         Recorder(paths).write_all(metrics, engine.pings.pings, summary.events)
         print(f"output   {paths.root}")
 
-    # Assertions are evaluated once agents produce requests and trips (M05/M07).
+    if platform is None:
+        # An offline run moves cabs but never creates a request, so a promise about
+        # demand cannot be kept *or* broken by it. Saying "not checked" is honest; a
+        # green tick would be a lie and a red one would blame the wrong thing.
+        # `make sim-quick` runs offline today; M08 gives CI a backend to run against.
+        print("assert   not checked (offline run; use --platform to evaluate)")
+        return 0
+
+    failures = evaluate(scenario.assertions, metrics)
+    for failure in failures:
+        print(f"ASSERT   {failure}", file=sys.stderr)
+    if not failures:
+        print("assert   all scenario assertions held")
+    if failures:
+        # A scenario that broke its own promise is a failed run, and `make sim-quick`
+        # must say so rather than exiting 0 with a warning nobody reads.
+        return 4
     return 0
 
 
