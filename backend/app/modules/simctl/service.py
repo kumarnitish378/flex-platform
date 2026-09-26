@@ -25,8 +25,12 @@ from app.domain.enums import Role, TrackerType, VehicleType
 from app.modules.alerts.models import Alert
 from app.modules.auth.models import AppUser, Device, OtpChallenge, RefreshToken, UserRole
 from app.modules.config.models import OperatorConfig, OperatorConfigHistory
+from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
+from app.modules.notifications.models import Notification
 from app.modules.people.models import Employee, SavedPlace
+from app.modules.reports.models import TripRating
 from app.modules.requests.models import RideRequest, RideRequestEvent
 from app.modules.simctl.schemas import ResetResult, SeededUser
 from app.modules.tenancy.models import Client, ClientPolicy, Office, Operator, Zone
@@ -72,10 +76,22 @@ SEED_USERS = (
 #: Deleted in dependency order — children before parents.
 TRUNCATION_ORDER = (
     Alert,
+    Notification,
+    TripRating,
+    # Trips before requests and drivers: `trip_stop.request_id` and `trip.driver_id` are
+    # both RESTRICT/CASCADE parents, so deleting a driver with a trip is a foreign-key
+    # violation. This list predates B14; a table added later and forgotten here breaks
+    # the *second* reset, not the first, which is a miserable thing to debug.
+    TripEvent,
+    TripStop,
+    Trip,
     RideRequestEvent,
     RideRequest,
     SavedPlace,
     Employee,
+    # Before driver and vehicle, which it references. Left behind, a seeded driver looks
+    # already on duty on the next run and cannot sign in.
+    DutySession,
     Driver,
     Vehicle,
     Office,
@@ -96,6 +112,23 @@ TRUNCATION_ORDER = (
 def _id(*parts: object) -> uuid.UUID:
     """A stable id for a fixture entity."""
     return uuid.uuid5(SEED_NAMESPACE, ":".join(str(part) for part in parts))
+
+
+def _fleet(count: int) -> tuple[tuple[str, VehicleType, int], ...]:
+    """The fixture fleet, extended if a scenario wants more cabs than it lists.
+
+    The first six keep their fixed registrations so existing tests and their ids stay
+    stable; anything beyond repeats the same mix, which is what a real operator's fleet
+    looks like anyway.
+    """
+    if count <= len(VEHICLES):
+        return VEHICLES[:count]
+
+    extra = []
+    for index in range(len(VEHICLES), count):
+        _rego, vehicle_type, seats = VEHICLES[index % len(VEHICLES)]
+        extra.append((f"SIM{index + 1:04d}", vehicle_type, seats))
+    return VEHICLES + tuple(extra)
 
 
 def _point(lat: float, lng: float) -> object:
@@ -123,9 +156,11 @@ class SimControlService:
         self.clock = clock
         self.settings = settings
 
-    async def reset(self) -> ResetResult:
+    async def reset(self, employees: int | None = None, vehicles: int | None = None) -> ResetResult:
         await self._truncate()
-        result = await self._seed()
+        result = await self._seed(
+            employee_count=employees or EMPLOYEE_COUNT, vehicle_count=vehicles or len(VEHICLES)
+        )
         await self.session.flush()
         logger.info("simctl_reset", operator_id=str(result.operator_id), at=result.now.isoformat())
         return result
@@ -141,7 +176,7 @@ class SimControlService:
             await self.session.execute(delete(model))
         await self.session.flush()
 
-    async def _seed(self) -> ResetResult:
+    async def _seed(self, employee_count: int, vehicle_count: int) -> ResetResult:
         operator = Operator(id=_id("operator"), name=OPERATOR_NAME)
         self.session.add(operator)
         await self.session.flush()
@@ -177,7 +212,7 @@ class SimControlService:
         users = await self._seed_users(operator.id, corporate.id)
 
         employee_ids = []
-        for index in range(EMPLOYEE_COUNT):
+        for index in range(employee_count):
             # Spread homes across the zones so pooling has something to work with.
             base_lat, base_lng = ZONES[index % len(ZONES)][1:]
             employee = Employee(
@@ -208,7 +243,7 @@ class SimControlService:
 
         driver_ids = []
         vehicle_ids = []
-        for index, (rego, vehicle_type, seats) in enumerate(VEHICLES):
+        for index, (rego, vehicle_type, seats) in enumerate(_fleet(vehicle_count)):
             vehicle = Vehicle(
                 id=_id("vehicle", rego),
                 operator_id=operator.id,

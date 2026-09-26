@@ -118,7 +118,10 @@ class DriverAgent:
         if platform is None:
             return None
         try:
-            trips = platform.driver_trips(self.token, scope="active")
+            # "upcoming" is planned + dispatched (B15). A freshly assigned trip is
+            # `planned` until the driver starts it, so polling "active" - dispatched and
+            # in_progress - would never show the driver the work waiting for them.
+            trips = platform.driver_trips(self.token, scope="upcoming")
         except Exception as exc:  # noqa: BLE001 - a poll failure is not a crash
             self.record.errors.append(f"poll: {type(exc).__name__}")
             return None

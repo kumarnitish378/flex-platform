@@ -42,12 +42,14 @@ class Publication:
 class MqttPingSink:
     """Publishes each vehicle's pings as that vehicle, over its own connection."""
 
-    def __init__(self, keepalive_seconds: int = 30, paced: bool = False) -> None:
+    def __init__(self, keepalive_seconds: int = 120, paced: bool = False) -> None:
         self._keepalive = keepalive_seconds
         self._clients: dict[str, Any] = {}
         self._topics: dict[str, str] = {}
         self.published: list[Publication] = []
         self.failed = 0
+        #: How often a cab had to re-establish its connection. Worth seeing in a run.
+        self.reconnects = 0
         #: Pacing holds each ping until the shared clock has reached its timestamp.
         #: Without it a compressed run loses almost everything: paho drains 420 pings in
         #: under a second while the clock walks the same hour through 60 HTTP calls, so
@@ -127,7 +129,20 @@ class MqttPingSink:
             return
 
         payload = ping.to_payload()
-        result = client.publish(topic, json.dumps(payload), qos=GPS_QOS)
+        body = json.dumps(payload)
+        result = client.publish(topic, body, qos=GPS_QOS)
+
+        if result.rc != 0 and not client.is_connected():
+            # A paced run leaves long real-time gaps between bursts, and a cab whose
+            # connection lapsed must come back rather than drop the rest of its shift -
+            # which is exactly what the driver app does on a flaky mobile network.
+            self.reconnects += 1
+            try:
+                client.reconnect()
+                result = client.publish(topic, body, qos=GPS_QOS)
+            except OSError:
+                pass
+
         if result.rc != 0:
             self.failed += 1
             return

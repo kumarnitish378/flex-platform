@@ -31,6 +31,11 @@ class SimClockState(Strict):
 class ResetRequest(Strict):
     scenario_yaml: str | None = None
     start_time: datetime | None = None
+    #: How big a world to seed. The defaults are the fixture in `testing-strategy.md`
+    #: section 4; a scenario larger than that says so, because a fixed fixture caps every
+    #: scenario at the smallest one (M06).
+    employees: int | None = Field(default=None, ge=1, le=2000)
+    vehicles: int | None = Field(default=None, ge=1, le=500)
 
 
 class SeededUser(Strict):

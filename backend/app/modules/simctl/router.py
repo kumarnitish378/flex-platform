@@ -123,7 +123,7 @@ async def reset(
     if body.start_time is not None:
         fake.set(body.start_time if body.start_time.tzinfo else body.start_time.replace(tzinfo=UTC))
 
-    return await service.reset()
+    return await service.reset(employees=body.employees, vehicles=body.vehicles)
 
 
 def sim_epoch() -> datetime:

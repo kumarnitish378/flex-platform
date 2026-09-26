@@ -33,6 +33,7 @@ from app.main import create_app
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.requests.models import RideRequest
+from app.modules.requests.service import RideRequestService
 from tests.builders import (
     make_client,
     make_employee,
@@ -708,3 +709,71 @@ async def test_a_supervisor_cannot_act_as_the_driver(
 async def test_starting_needs_a_token(client: AsyncClient, world: dict[str, Any]) -> None:
     response = await client.post(f"/driver/trips/{world['trip_id']}/start", json=event())
     assert response.status_code == 401
+
+
+# --- a cancelled rider must not strand the cab (found by the S02 simulator run) --------
+
+
+async def test_cancelling_an_assigned_ride_skips_its_stops(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """Otherwise the driver drives to a pickup nobody is waiting at.
+
+    `done` would then be refused - a cancelled request cannot become `picked_up` - and
+    the trip could never complete. The S02 run stranded every assigned cab this way.
+    """
+    await start(client, driver, world["trip_id"])
+
+    request = world["requests"]["first"]
+    await RideRequestService(db_session, FakeClock(NOW)).cancel(
+        operator_id=world["operator_id"],
+        request_id=request.id,
+        actor_role=Role.employee,
+        actor_user_id=world["users"]["first"].id,
+        reason="Waited too long",
+        caller_employee_id=request.employee_id,
+    )
+
+    for key in ("pickup_first", "drop_first"):
+        stop = await reload_stop(db_session, world["stop_ids"][key])
+        assert stop.status == str(StopStatus.skipped)
+
+
+async def test_the_trip_can_still_be_completed_after_a_cancellation(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """The cab must be freed for its next job, not held by a rider who left."""
+    await start(client, driver, world["trip_id"])
+
+    request = world["requests"]["first"]
+    await RideRequestService(db_session, FakeClock(NOW)).cancel(
+        operator_id=world["operator_id"],
+        request_id=request.id,
+        actor_role=Role.employee,
+        actor_user_id=world["users"]["first"].id,
+        reason="Waited too long",
+        caller_employee_id=request.employee_id,
+    )
+
+    for key in ("pickup_second", "drop_second"):
+        await act(client, driver, world["stop_ids"][key], "arrived")
+        await act(client, driver, world["stop_ids"][key], "done")
+
+    response = await client.post(
+        f"/driver/trips/{world['trip_id']}/complete", json=event(), headers=driver
+    )
+    assert response.status_code == 200
+
+
+async def test_an_already_finished_stop_is_left_alone_by_a_cancellation(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A pickup that happened, happened; cancelling afterwards cannot unmake it."""
+    await start(client, driver, world["trip_id"])
+    await act(client, driver, world["stop_ids"]["pickup_first"], "arrived")
+    await act(client, driver, world["stop_ids"]["pickup_first"], "done")
+
+    # A picked-up rider cannot cancel at all - the state machine has no such edge - so
+    # the finished pickup simply stands.
+    pickup = await reload_stop(db_session, world["stop_ids"]["pickup_first"])
+    assert pickup.status == str(StopStatus.done)

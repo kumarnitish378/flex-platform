@@ -901,3 +901,40 @@ async def test_assigning_needs_a_token(client: AsyncClient) -> None:
         json={"request_id": str(uuid.uuid4()), "vehicle_id": str(uuid.uuid4())},
     )
     assert response.status_code == 401
+
+
+async def test_adding_a_rider_keeps_the_existing_stop_ids(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """A driver already holds these ids; changing them 404s their next tap.
+
+    Found by the S02 simulator run, where a driver's `arrived` came back "Stop not found"
+    because another rider had been added to the trip meanwhile. A re-sequenced stop is
+    the same stop.
+    """
+    far = await make_request(db_session, world, "far")
+    created = (await assign(client, supervisor, far, world["vehicles"]["alpha"])).json()
+    before = {stop["id"] for stop in created["stops"]}
+
+    mid = await make_request(db_session, world, "mid")
+    after = (
+        await assign(client, supervisor, mid, world["vehicles"]["alpha"], trip_id=created["id"])
+    ).json()
+
+    assert before <= {stop["id"] for stop in after["stops"]}
+
+
+async def test_the_sequence_still_has_no_gaps_or_duplicates_after_an_insertion(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """`(trip_id, sequence)` is unique, so re-ordering in place must not collide."""
+    far = await make_request(db_session, world, "far")
+    created = (await assign(client, supervisor, far, world["vehicles"]["alpha"])).json()
+
+    mid = await make_request(db_session, world, "mid")
+    trip = (
+        await assign(client, supervisor, mid, world["vehicles"]["alpha"], trip_id=created["id"])
+    ).json()
+
+    sequences = [stop["sequence"] for stop in trip["stops"]]
+    assert sequences == list(range(1, len(sequences) + 1))

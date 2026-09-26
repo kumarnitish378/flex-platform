@@ -147,6 +147,12 @@ def _run_scenario(
             f"expired={metrics.demand.expired} unresolved={metrics.demand.unresolved}"
         )
         print(
+            f"dispatch policy={metrics.dispatch.policy} "
+            f"assigned={metrics.dispatch.assignments} "
+            f"refused={metrics.dispatch.refusals} "
+            f"no_cab={metrics.dispatch.no_candidate}"
+        )
+        print(
             f"driving  trips={metrics.driving.trips_completed}/"
             f"{metrics.driving.trips_started} stops={metrics.driving.stops_done} "
             f"no_shows={metrics.driving.no_shows} errors={metrics.integrity.agent_errors}"
@@ -156,7 +162,10 @@ def _run_scenario(
         # Anything the last sync did not cover still belongs on the broker.
         engine.mqtt.release_all()
         engine.mqtt.flush()
-        print(f"mqtt     published={len(engine.mqtt.published)} unpublished={engine.mqtt.failed}")
+        print(
+            f"mqtt     published={len(engine.mqtt.published)} "
+            f"unpublished={engine.mqtt.failed} reconnects={engine.mqtt.reconnects}"
+        )
         engine.mqtt.close()
     if platform is not None:
         platform.close()

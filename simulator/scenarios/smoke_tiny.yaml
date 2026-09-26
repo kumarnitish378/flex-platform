@@ -40,9 +40,10 @@ clients:
       priority_dist: {5: 1.0}
       shifts:
         # Chosen so the to_office demand lands inside the one-hour window: requests go
-        # in at shift_start - Normal(45, 10) min, which is around 06:20 IST here - comfortably
-        # inside the window, and 30 minutes before the shortened expiry.
-        - {start_ist: "07:05", end_ist: "16:05", share: 1.0}
+        # in at shift_start - Normal(45, 10) min, around 06:05 IST here. Early in the
+        # window on purpose: a rider needs time to be assigned, collected and dropped
+        # before the hour is up, or the run can never show a completed ride.
+        - {start_ist: "06:50", end_ist: "15:50", share: 1.0}
 
 supervisor:
   policy: manual_nearest

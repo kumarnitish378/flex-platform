@@ -128,6 +128,7 @@ async def _handle(ingestor: GpsIngestor, message: Any) -> None:
     try:
         await ingestor.ingest(vehicle_id, operator_id, payload)
     except Exception as exc:  # noqa: BLE001
+        await _recover(ingestor.session)
         logger.exception(
             "ingestor_handler_failed", vehicle_id=str(vehicle_id), error=type(exc).__name__
         )
@@ -146,7 +147,19 @@ async def _flush_loop(ingestor: GpsIngestor, session: Any, stopping: asyncio.Eve
             if await ingestor.flush():
                 await session.commit()
         except Exception as exc:  # noqa: BLE001
+            # Roll back, or the session stays in an aborted transaction and *every*
+            # later flush fails with "current transaction is aborted" - one bad batch
+            # would silently end GPS ingestion for the life of the process.
+            await _recover(session)
             logger.exception("ingestor_flush_failed", error=type(exc).__name__)
+
+
+async def _recover(session: Any) -> None:
+    """Put the session back in a usable state after a failed statement."""
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001 - nothing more we can do; the next flush retries
+        logger.warning("ingestor_rollback_failed")
 
 
 def _install_signal_handlers(stopping: asyncio.Event) -> None:

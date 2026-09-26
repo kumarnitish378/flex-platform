@@ -84,6 +84,18 @@ class DrivingMetrics:
 
 
 @dataclass
+class DispatchMetrics:
+    """What the supervisor did (M06). `policy` is None when nobody was watching."""
+
+    policy: str | None = None
+    assignments: int = 0
+    refusals: int = 0
+    no_candidate: int = 0
+    violations_accepted: int = 0
+    errors: int = 0
+
+
+@dataclass
 class IntegrityMetrics:
     """Must stay at zero. Any non-zero value fails a scenario (`scenarios.md`)."""
 
@@ -106,6 +118,7 @@ class RunMetrics:
     fleet: FleetMetrics = field(default_factory=FleetMetrics)
     demand: DemandMetrics = field(default_factory=DemandMetrics)
     driving: DrivingMetrics = field(default_factory=DrivingMetrics)
+    dispatch: DispatchMetrics = field(default_factory=DispatchMetrics)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
 
     def to_dict(self) -> dict[str, Any]:

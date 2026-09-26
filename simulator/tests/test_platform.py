@@ -237,6 +237,7 @@ class FakeMqttClient:
         self.disconnected = False
         self.publish_rc = 0
         self.connect_error: OSError | None = None
+        self.reconnected = False
         FakeMqttClient.instances.append(self)
 
     def username_pw_set(self, username: str, password: str) -> None:
@@ -265,7 +266,17 @@ class FakeMqttClient:
     def disconnect(self) -> None:
         self.disconnected = True
 
+    def is_connected(self) -> bool:
+        return not self.disconnected
+
+    def reconnect(self) -> None:
+        self.reconnected = True
+        self.disconnected = False
+
     def publish(self, topic: str, payload: str, qos: int = 0) -> FakePublishResult:
+        if self.disconnected:
+            # paho returns MQTT_ERR_NO_CONN (4) rather than queueing while offline.
+            return FakePublishResult(4)
         self.messages.append((topic, payload, qos))
         return FakePublishResult(self.publish_rc)
 
@@ -510,3 +521,29 @@ def test_pacing_preserves_order(fake_paho: Any) -> None:
         json.loads(payload)["ts"] for _topic, payload, _qos in FakeMqttClient.instances[0].messages
     ]
     assert sent == sorted(sent)
+
+
+def test_a_lapsed_connection_is_re_established(fake_paho: Any) -> None:
+    """A paced run leaves long gaps; a cab must come back, not lose the rest of its shift."""
+    sink = MqttPingSink()
+    sink.register(VEHICLE, credentials())
+    client = FakeMqttClient.instances[0]
+    client.disconnected = True
+
+    sink.emit(a_ping())
+
+    assert client.reconnected is True
+    assert len(sink.published) == 1
+    assert sink.reconnects == 1
+
+
+def test_a_publish_that_fails_while_connected_is_not_retried(fake_paho: Any) -> None:
+    """Reconnecting would not help, and hiding a real rejection helps even less."""
+    sink = MqttPingSink()
+    sink.register(VEHICLE, credentials())
+    FakeMqttClient.instances[0].publish_rc = 1
+
+    sink.emit(a_ping())
+
+    assert FakeMqttClient.instances[0].reconnected is False
+    assert sink.failed == 1

@@ -237,9 +237,16 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   handling (accept, start, arrive, board, done, no-show, complete) is built and unit-tested
   against a fake platform, and starts being exercised by a scenario with M06.
 
-- [ ] **M06 · Supervisor agent (manual policies)** · deps M05, B14
+- [x] **M06 · Supervisor agent (manual policies)** · deps M05, B14
   Policies: `manual_nearest`, `absent`.
   Done when: S02 runs with realistic human bottleneck.
+  `manual_nearest` takes the soonest cab with a free seat after a Uniform(20, 120) s
+  reaction delay, **one request at a time** - that bottleneck is the point, not a
+  simplification. `absent` never responds, for the failsafe scenarios. Phase 2's
+  `approve_all` and `mixed` raise rather than quietly behaving like `manual_nearest`.
+  `scenarios/normal_weekday.yaml` (S02) added and run at full scale against the live
+  stack: 300 employees, 35 cabs, 16 simulated hours. `/simctl/reset` takes `employees`
+  and `vehicles` now, because a fixed fixture capped every scenario at the smallest one.
 
 - [ ] **M07 · Event injector + traffic factors** · deps M05
   Done when: S04–S06 run and their assertions are evaluated.

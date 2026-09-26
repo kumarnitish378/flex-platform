@@ -108,9 +108,14 @@ class PlatformClient:
 
     # --- the world ------------------------------------------------------------
 
-    def reset(self) -> SeededWorld:
-        """Truncate and seed. The only destructive call, and sim-only on the server."""
-        body = self._post("/simctl/reset", json={})
+    def reset(self, employees: int | None = None, vehicles: int | None = None) -> SeededWorld:
+        """Truncate and seed a world the size this scenario needs.
+
+        Sizing it here rather than taking the fixture's defaults: a fixed fixture caps
+        every scenario at the smallest one, and a run quietly working with twenty riders
+        when the scenario asked for three hundred measures the wrong thing.
+        """
+        body = self._post("/simctl/reset", json={"employees": employees, "vehicles": vehicles})
         return SeededWorld(
             operator_id=uuid.UUID(body["operator_id"]),
             client_id=uuid.UUID(body["client_id"]),
@@ -217,6 +222,40 @@ class PlatformClient:
             f"/ride-requests/{request_id}/cancel", json={"reason": reason}, token=token
         )
         return str(body.get("status", "cancelled"))
+
+    # --- dispatching (M06) ------------------------------------------------------------
+
+    def pending_requests(self, token: str, status: str = "queued") -> list[dict[str, Any]]:
+        """The supervisor's queue, oldest first (SUP-02)."""
+        body = self._get(f"/dispatch/requests?status={status}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def candidates(self, token: str, request_id: uuid.UUID) -> list[dict[str, Any]]:
+        """Vehicles that could take it, best first, with ETA and violations (SUP-03)."""
+        body = self._get(f"/dispatch/requests/{request_id}/candidates", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def assign(
+        self,
+        token: str,
+        request_id: uuid.UUID,
+        vehicle_id: uuid.UUID,
+        trip_id: uuid.UUID | None = None,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        """`POST /dispatch/assign` - the button the supervisor actually presses."""
+        return self._post(
+            "/dispatch/assign",
+            json={
+                "request_id": str(request_id),
+                "vehicle_id": str(vehicle_id),
+                "trip_id": str(trip_id) if trip_id else None,
+                "reason_code": reason_code,
+            },
+            token=token,
+        )
 
     # --- driving a trip (M05) -----------------------------------------------------------
 

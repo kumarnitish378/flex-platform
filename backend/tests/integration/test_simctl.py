@@ -398,3 +398,31 @@ async def test_every_cab_has_its_own_driver_login(
     drivers = [user for user in body["users"] if user["role"] == "driver"]
     assert len(drivers) == len(body["vehicle_ids"])
     assert len({user["access_token"] for user in drivers}) == len(drivers)
+
+
+async def test_reset_truncates_every_tenant_table(sim_client: AsyncClient) -> None:
+    """A table missing from `TRUNCATION_ORDER` breaks the *second* reset, not the first.
+
+    That is a miserable bug to meet: the first run is clean, the next one dies on a
+    foreign key. This walks the metadata instead of trusting the list to stay current.
+    """
+    import app.models  # noqa: F401
+    from app.core.db import Base
+    from app.core.models import TenantEntity
+    from app.modules.simctl.service import TRUNCATION_ORDER
+
+    listed = {model.__tablename__ for model in TRUNCATION_ORDER}
+    tenant_tables = {
+        mapper.class_.__tablename__
+        for mapper in Base.registry.mappers
+        if issubclass(mapper.class_, TenantEntity)
+    }
+
+    missing = tenant_tables - listed
+    assert missing == set(), f"reset would leave rows behind in: {sorted(missing)}"
+
+
+async def test_reset_twice_in_a_row_works(sim_client: AsyncClient) -> None:
+    """The simulator resets before every run, so this is the common path, not an edge."""
+    assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
+    assert (await sim_client.post("/simctl/reset", json={})).status_code == 200

@@ -37,10 +37,12 @@ from app.domain.state_machines import (
     Actor,
     RequestContext,
     RequestStatus,
+    StopStatus,
     TransitionEvent,
     actor_type_for,
     is_terminal_request,
     transition_request,
+    transition_stop,
 )
 from app.modules.alerts.models import Alert
 from app.modules.config.service import ConfigService
@@ -346,6 +348,7 @@ class RideRequestService:
         )
         request.cancel_reason = effective_reason
         self._apply(request, event, actor_user_id)
+        await self._release_the_trip(request, actor_user_id)
         await self.session.flush()
 
         # `trip-lifecycle.md` section 6 splits this by who cancelled: the employee
@@ -368,6 +371,51 @@ class RideRequestService:
 
         logger.info("ride_request_cancelled", request_id=str(request.id), actor=str(actor_role))
         return request
+
+    async def _release_the_trip(
+        self, request: RideRequest, actor_user_id: uuid.UUID | None
+    ) -> None:
+        """Take a cancelled rider off the trip they were on.
+
+        Without this the trip keeps their stops: the driver drives to a pickup nobody is
+        waiting at, and `done` is refused because a cancelled request cannot become
+        `picked_up` - so the trip can never complete and the cab is stuck on it forever.
+        Found by the S02 simulator run, where it stranded every assigned cab.
+        """
+        if request.trip_id is None:
+            return
+
+        from app.modules.dispatch.models import TripStop
+
+        stops = (
+            (
+                await self.session.execute(
+                    select(TripStop)
+                    .where(TripStop.trip_id == request.trip_id)
+                    .where(TripStop.request_id == request.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        skipped = 0
+        for stop in stops:
+            if stop.status in {str(StopStatus.done), str(StopStatus.skipped)}:
+                continue
+            # Through the state machine like everything else (hard rule 5).
+            transition = transition_stop(
+                StopStatus(stop.status), StopStatus.skipped, actor=Actor.system
+            )
+            stop.status = transition.to_status
+            skipped += 1
+
+        if skipped:
+            logger.info(
+                "trip_stops_released",
+                request_id=str(request.id),
+                trip_id=str(request.trip_id),
+                skipped=skipped,
+            )
 
     async def _user_of_employee(self, employee_id: uuid.UUID) -> uuid.UUID | None:
         return await self.session.scalar(select(Employee.user_id).where(Employee.id == employee_id))

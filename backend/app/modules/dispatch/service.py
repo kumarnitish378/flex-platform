@@ -354,7 +354,7 @@ class DispatchService:
             # The state machine would refuse too, but this says why in the supervisor's
             # language rather than as an edge that does not exist.
             raise Conflict(
-                f"A {request.status} request cannot be assigned",
+                f"A request that is {request.status} cannot be assigned",
                 {"request_id": str(request_id), "status": request.status},
             )
 
@@ -558,11 +558,11 @@ class DispatchService:
             .scalars()
             .all()
         )
-        done = {
-            (stop.request_id, stop.stop_type): stop
-            for stop in existing
-            if stop.status != str(StopStatus.pending)
-        }
+        # Keyed by rider and kind, and **every** existing stop is reused, not only the
+        # finished ones. Deleting and recreating pending rows changed their ids under a
+        # driver already holding them, and their next tap came back 404 - found by the
+        # S02 simulator run. A re-sequenced stop is the same stop.
+        keep = {(stop.request_id, stop.stop_type): stop for stop in existing}
         plan = build_plan(
             Direction(trip.direction),
             Place(*_coords(office.location)),
@@ -570,14 +570,24 @@ class DispatchService:
             self._planner_duration(),
         )
 
-        for stop in existing:
-            if (stop.request_id, stop.stop_type) not in done:
+        planned_keys = {(stop.request_id, str(stop.kind)) for stop in plan.stops}
+        for key, stop in keep.items():
+            if key not in planned_keys:
+                # A rider who is no longer on the trip at all.
                 await self.session.delete(stop)
         await self.session.flush()
 
         eta_at = now + timedelta(seconds=eta_seconds)
+        # Two passes: clear the sequences first, because `(trip_id, sequence)` is unique
+        # and re-ordering in place would collide with a row that has not moved yet.
+        for offset, planned in enumerate(plan.stops):
+            kept = keep.get((planned.request_id, str(planned.kind)))
+            if kept is not None:
+                kept.sequence = -(offset + 1)
+        await self.session.flush()
+
         for planned in plan.stops:
-            kept = done.get((planned.request_id, str(planned.kind)))
+            kept = keep.get((planned.request_id, str(planned.kind)))
             if kept is not None:
                 kept.sequence = planned.sequence
                 continue

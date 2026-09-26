@@ -7,6 +7,7 @@ register themselves as SimPy processes here.
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
@@ -19,10 +20,13 @@ from sim.agents.driver import DriverAgent
 from sim.agents.driver import summarise as summarise_fleet
 from sim.agents.employee import EmployeeAgent, EmployeeProfile
 from sim.agents.employee import summarise as summarise_demand
+from sim.agents.supervisor import SupervisorAgent
+from sim.agents.supervisor import summarise as summarise_dispatch
 from sim.clock import IST, SimClock
 from sim.geo import LatLng
 from sim.metrics import (
     DemandMetrics,
+    DispatchMetrics,
     DrivingMetrics,
     IntegrityMetrics,
     RunMetrics,
@@ -33,7 +37,7 @@ from sim.pings import MemoryPingSink
 from sim.platform import DutyCredentials, PlatformClient, PlatformError, SeededWorld
 from sim.rng import RngFactory
 from sim.routing import RoutingClient, build_routing
-from sim.scenario import Scenario
+from sim.scenario import LatLngModel, Scenario
 
 # A SimPy process is a generator yielding events.
 Process = Generator[simpy.Event, Any, Any]
@@ -80,6 +84,8 @@ class Engine:
         #: it is waiting for whether they turned up, rather than sampling that twice.
         self.riders: list[EmployeeAgent] = []
         self.drivers: list[DriverAgent] = []
+        #: One person watching the queue (M06). None until a platform run spawns them.
+        self.supervisor: SupervisorAgent | None = None
         #: `no_show_wait_minutes` as the backend has it; the driver must not guess.
         self.no_show_wait_minutes = DEFAULT_NO_SHOW_WAIT_MINUTES
         #: Cabs, by the order the scenario's fleet declares them.
@@ -165,10 +171,29 @@ class Engine:
             fleet=compute_fleet_metrics(self.pings.pings),
             demand=self._demand_metrics(),
             driving=self._driving_metrics(),
-            integrity=IntegrityMetrics(
-                agent_errors=sum(len(driver.record.errors) for driver in self.drivers)
-            ),
+            dispatch=self._dispatch_metrics(),
+            integrity=IntegrityMetrics(agent_errors=self._agent_errors()),
         )
+
+    def _dispatch_metrics(self) -> DispatchMetrics:
+        summary = summarise_dispatch(
+            self.supervisor.record if self.supervisor is not None else None
+        )
+        return DispatchMetrics(
+            policy=summary.policy,
+            assignments=summary.assignments,
+            refusals=summary.refusals,
+            no_candidate=summary.no_candidate,
+            violations_accepted=summary.violations_accepted,
+            errors=summary.errors,
+        )
+
+    def _agent_errors(self) -> int:
+        """Every API call an agent could not make. Counted, never fatal."""
+        errors = sum(len(driver.record.errors) for driver in self.drivers)
+        if self.supervisor is not None:
+            errors += len(self.supervisor.record.errors)
+        return errors
 
     def _demand_metrics(self) -> DemandMetrics:
         """`None` everywhere for an offline run: nothing was measured, not nothing happened."""
@@ -222,7 +247,11 @@ def spawn_fleet(engine: Engine, vehicle_ids: list[str] | None = None) -> list[An
     agents: list[Any] = []
     index = 0
     for group in engine.scenario.fleet:
-        depot = LatLng(lat=group.depot[1], lng=group.depot[0])
+        # `from_pair` is the scenario's own reader: the YAML pairs are [lat, lng], and
+        # reading them the other way round put the depot 8,000 km away, which surfaced as
+        # a candidate ETA of fourteen days.
+        pair = LatLngModel.from_pair(group.depot)
+        depot = LatLng(lat=pair.lat, lng=pair.lng)
         for _ in range(group.count):
             identifier = (
                 str(vehicle_ids[index])
@@ -250,7 +279,9 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
     than whenever the operator happened to run the scenario.
     """
     platform.set_clock(engine.clock.start + _LEAD)
-    world = platform.reset()
+    world = platform.reset(
+        employees=engine.scenario.employee_count, vehicles=engine.scenario.vehicle_count
+    )
 
     overrides = engine.scenario.operator.config_overrides
     if overrides:
@@ -296,6 +327,7 @@ def spawn_people(engine: Engine, world: SeededWorld) -> None:
     """
     _spawn_riders(engine, world)
     _spawn_drivers(engine, world)
+    _spawn_supervisor(engine, world)
 
 
 def _spawn_riders(engine: Engine, world: SeededWorld) -> None:
@@ -343,6 +375,20 @@ def _spawn_drivers(engine: Engine, world: SeededWorld) -> None:
         engine.spawn(driver.shift)
 
 
+def _spawn_supervisor(engine: Engine, world: SeededWorld) -> None:
+    """The human in the loop (M06). Without one, nothing is ever assigned."""
+    settings = engine.scenario.supervisor
+    low, high = settings.reaction_delay_s
+    supervisor = SupervisorAgent(
+        engine,
+        token=world.token_for("supervisor"),
+        policy=settings.policy,
+        reaction_delay_seconds=(low, high),
+    )
+    engine.supervisor = supervisor
+    engine.spawn(supervisor.watch)
+
+
 def _first_shift(engine: Engine) -> tuple[datetime, datetime]:
     """The scenario's first shift, as absolute times on the run's date.
 
@@ -379,8 +425,10 @@ def _keep_clocks_together(engine: Engine) -> Process:
     pings stamped an hour ahead of the backend's "now" and the ingestor correctly drops
     every one of them as `too_far_future`. Nothing errors; the map simply stays empty.
     """
+    started_wall = time.monotonic()
     while True:
         yield engine.env.timeout(CLOCK_SYNC_INTERVAL_SECONDS)
+        _pace(engine, started_wall)
         if engine.platform is not None:
             # One interval *ahead*, deliberately. Pings are published as the simulation
             # reaches them, but a clock jump is an HTTP call that runs the backend's due
@@ -407,3 +455,22 @@ def _percentile(ordered: list[float], fraction: float) -> float | None:
     upper = min(lower + 1, len(ordered) - 1)
     weight = position - lower
     return round(ordered[lower] * (1 - weight) + ordered[upper] * weight, 1)
+
+
+def _pace(engine: Engine, started_wall: float) -> None:
+    """Hold the simulation to the scenario's `speed_factor` in a closed-loop run.
+
+    Offline, running flat out is the whole point. Against a real backend it is a trap:
+    the simulator finishes an hour in seconds, while the ingestor is still writing the
+    first minute's GPS and the supervisor asks for candidate vehicles that have no known
+    position yet. The result looks like a dispatch bug and is not one.
+
+    `speed_factor: 60` means an hour a minute, which is fast enough to be useful and slow
+    enough that the system under test keeps up.
+    """
+    if engine.platform is None:
+        return
+    target = engine.clock.real_seconds_for(engine.env.now)
+    behind = target - (time.monotonic() - started_wall)
+    if behind > 0:
+        time.sleep(behind)
