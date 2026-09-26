@@ -126,9 +126,13 @@ python -m pytest tests/test_closed_loop_live.py
 `normal_weekday` (300 riders, 35 cabs, 16 simulated hours) runs, and the manual loop does
 not cope: **one supervisor assigning one request at a time cannot serve a morning peak.**
 The first full run had most riders give up waiting and p90 wait far past the 30-minute
-target in `scenarios.md`. Those exact numbers are not trustworthy - that run was polluted
-when the database was re-seeded underneath it - but the shape is the point, and it is the
-measurement that justifies Phase 2's automation. Re-run it for clean figures:
+target in `scenarios.md`. Those exact numbers are **not** trustworthy - that run was
+polluted when the database was re-seeded underneath it - but the shape is the point, and
+it is the measurement that justifies Phase 2's automation.
+
+Getting clean figures needs **OQ-26** fixed first: at 300 riders the run manages about 6x
+real time rather than the 60x it asks for, so a 16-hour scenario takes hours. The command,
+once it is fast enough:
 
 ```powershell
 python -m sim run scenarios/normal_weekday.yaml --platform http://localhost:8000/api/v1
@@ -220,3 +224,4 @@ Append-only log below; newest entries at the bottom of each section.
 | 13:40 | bug | fixed | **`/simctl/reset` could not run twice.** Its truncation list predates the trip tables and `duty_session`, so the second reset died on a foreign key - and a left-behind duty session made seeded drivers look already on duty. There is now a test that walks the metadata instead of trusting the list to stay current | Nothing |
 | 13:40 | bug | fixed | **One failed insert killed GPS ingestion for good.** The ingestor never rolled back, so an aborted transaction made every later flush fail with "current transaction is aborted" - silently, for the life of the process | Nothing |
 | 13:40 | note | - | `/simctl/reset` takes `employees` and `vehicles` now. A fixed 20/6 fixture capped every scenario at the smallest one, and a run quietly working with twenty riders when the scenario asked for three hundred measures the wrong thing | Nothing |
+| 14:30 | finding | open | **S02 cannot finish in reasonable wall-clock time** (OQ-26). It asks for 60x real time and manages about 6x with 300 riders and 35 drivers, because every agent API call is synchronous inside a single-threaded SimPy loop, so each one blocks the whole simulation. smoke_tiny and anything of that size are unaffected. Fix is either concurrent agent HTTP or much less polling - riders poll every simulated minute and drivers every 30 seconds, far more often than either needs | Needed before M08's nightly suite; does not block M07 |

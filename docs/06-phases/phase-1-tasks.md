@@ -245,8 +245,12 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   simplification. `absent` never responds, for the failsafe scenarios. Phase 2's
   `approve_all` and `mixed` raise rather than quietly behaving like `manual_nearest`.
   `scenarios/normal_weekday.yaml` (S02) added and run at full scale against the live
-  stack: 300 employees, 35 cabs, 16 simulated hours. `/simctl/reset` takes `employees`
-  and `vehicles` now, because a fixed fixture capped every scenario at the smallest one.
+  stack: 300 employees, 35 cabs, 16 simulated hours, 83k GPS pings. `/simctl/reset` takes
+  `employees` and `vehicles` now, because a fixed fixture capped every scenario at the
+  smallest one. **Caveat (OQ-26):** at that scale the run manages about 6x real time
+  rather than the 60x it asks for, because every agent's API call is synchronous inside a
+  single-threaded SimPy loop. The bottleneck it demonstrates is real and measured; the
+  precise p90 and give-up figures need a faster harness before they can be quoted.
 
 - [ ] **M07 · Event injector + traffic factors** · deps M05
   Done when: S04–S06 run and their assertions are evaluated.
