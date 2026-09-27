@@ -31,3 +31,7 @@ Newest first. Significant technical decisions also have an ADR.
 | (from earlier brainstorm) | VIP → VIP car immediately, no waiting, no sharing | User requirement | allocation-rules.md |
 | (from earlier brainstorm) | Priority 1 (highest)–10; urgency High/Medium/Low | User requirement | glossary.md |
 | (from earlier brainstorm) | Pickup ±10 min; evening hold 10–30 min; high priority no wait; return-trip reuse; zone pooling; history-based prediction | User requirements | allocation-rules.md |
+| 2026-09-27 | A breakdown ends the trip (aborted mid-way, cancelled before start); uncollected riders return to `queued` | The lifecycle edge existed and nothing called it, so a driver could complete a ride in a broken-down cab | ADR-0012, trip-lifecycle.md |
+| 2026-09-27 | Off duty, no GPS fix and no network are three distinct vehicle states | Off duty is a privacy rule, not a fault; a lost fix destroys positions while a lost network only delays them | ADR-0013, mqtt-topics.md |
+| 2026-09-27 | One simulation run at a time per backend, enforced by the backend with an atomic claim | Two runs sharing a backend silently destroyed each other's world; it cost three long runs | ADR-0014 |
+| 2026-09-27 | A scenario feature the simulator cannot model faithfully is refused with the reason, never approximated | A run that measures the wrong thing produces confident wrong answers, which is worse than a missing feature | ADR-0015, simulator-spec.md |

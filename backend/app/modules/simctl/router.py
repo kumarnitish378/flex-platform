@@ -159,21 +159,36 @@ async def _claim_the_backend(request: Request, run_id: str | None, *, force: boo
     if redis is None or run_id is None:
         return
 
+    # SET NX, not GET-then-SET. Two suites started in the same instant both read "no
+    # owner" and both claimed, which is exactly the collision the claim exists to stop -
+    # and it happened, racing two full suites against one backend.
     try:
-        owner = await redis.get(SIM_RUN_KEY)
+        if force:
+            await redis.set(SIM_RUN_KEY, run_id, ex=SIM_RUN_TTL_SECONDS)
+            return
+        claimed = await redis.set(SIM_RUN_KEY, run_id, nx=True, ex=SIM_RUN_TTL_SECONDS)
     except Exception:  # noqa: BLE001 - a missing Redis must not block a reset
         return
 
-    current = owner.decode() if isinstance(owner, bytes) else owner
-    if current and current != run_id and not force:
-        raise Conflict(
-            f"run {current} is using this backend; resetting would destroy its world. "
-            f"Wait for it, or pass force=true to take over.",
-            {"owner": current, "requested_by": run_id},
-        )
+    if claimed:
+        return
 
+    owner = None
     with contextlib.suppress(Exception):
-        await redis.set(SIM_RUN_KEY, run_id, ex=SIM_RUN_TTL_SECONDS)
+        owner = await redis.get(SIM_RUN_KEY)
+    current = owner.decode() if isinstance(owner, bytes) else owner
+
+    if current == run_id:
+        # Already ours: a suite resets once per scenario under one claim.
+        with contextlib.suppress(Exception):
+            await redis.expire(SIM_RUN_KEY, SIM_RUN_TTL_SECONDS)
+        return
+
+    raise Conflict(
+        f"run {current} is using this backend; resetting would destroy its world. "
+        f"Wait for it, or pass force=true to take over.",
+        {"owner": current, "requested_by": run_id},
+    )
 
 
 async def _renew_the_claim(request: Request) -> None:

@@ -592,3 +592,23 @@ async def test_only_the_holder_may_release(sim_client: AsyncClient, unclaimed: N
 
     assert released.json() == {"released": False}
     assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 409
+
+
+async def test_a_claim_never_overwrites_a_live_owner(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """The invariant a read-then-write claim broke.
+
+    GET-then-SET let a second run read "no owner", then write its own id over one that
+    had been set in between - so two suites both believed they held the backend and
+    raced each other over it. `SET NX` makes the check and the write one operation.
+    """
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    refused = await sim_client.post("/simctl/reset", json={"run_id": "run-b"})
+    assert refused.status_code == 409
+
+    # The loser must not have stolen the key on its way out: the original owner still
+    # holds it, and can still work.
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-a"})).status_code == 200
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 409
