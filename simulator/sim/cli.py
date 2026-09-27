@@ -30,10 +30,10 @@ QUICK_SUITE = ("smoke_tiny",)
 
 #: The nightly suite, cheapest first so a broken build reports in a minute rather than
 #: an hour. `normal_weekday` and `rain_day` are 16 simulated hours each and dominate the
-#: runtime; `vip_burst` (S07) is missing because the seeded world does not yet say which
-#: employees are VIP - see the M08 notes.
+#: runtime.
 FULL_SUITE = (
     "smoke_tiny",
+    "vip_burst",
     "breakdown_with_riders",
     "gps_loss",
     "evening_surge",

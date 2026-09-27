@@ -26,7 +26,13 @@ from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
 from app.modules.dispatch.eta_refresh import EtaRefresher
 from app.modules.requests.service import RideRequestService
-from app.modules.simctl.schemas import ResetRequest, ResetResult, SimClockState, SimClockUpdate
+from app.modules.simctl.schemas import (
+    ReleaseRequest,
+    ResetRequest,
+    ResetResult,
+    SimClockState,
+    SimClockUpdate,
+)
 from app.modules.simctl.service import SimControlService
 
 logger = get_logger(__name__)
@@ -126,7 +132,12 @@ async def reset(
     if body.start_time is not None:
         fake.set(body.start_time if body.start_time.tzinfo else body.start_time.replace(tzinfo=UTC))
 
-    return await service.reset(employees=body.employees, vehicles=body.vehicles)
+    return await service.reset(
+        employees=body.employees,
+        vehicles=body.vehicles,
+        vip_employees=body.vip_employees,
+        fleet=[(group.type, group.count) for group in body.fleet] if body.fleet else None,
+    )
 
 
 #: Who is currently driving this backend, and for how long the claim stands without
@@ -172,6 +183,38 @@ async def _renew_the_claim(request: Request) -> None:
         return
     with contextlib.suppress(Exception):
         await redis.expire(SIM_RUN_KEY, SIM_RUN_TTL_SECONDS)
+
+
+@router.post(
+    "/simctl/release",
+    summary="Give up this run's claim on the backend so another can start",
+    dependencies=[Depends(public_route())],
+)
+async def release(body: ReleaseRequest, request: Request) -> dict[str, bool]:
+    """Free the backend as soon as a run finishes.
+
+    Without this the claim sits until its TTL expires, and the next run - often the same
+    developer, seconds later - is refused by a run that is no longer there. The TTL is
+    the fallback for a crash, not the normal way a claim ends.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        return {"released": False}
+
+    try:
+        owner = await redis.get(SIM_RUN_KEY)
+    except Exception:  # noqa: BLE001
+        return {"released": False}
+
+    current = owner.decode() if isinstance(owner, bytes) else owner
+    # Only the holder may release, or a crashed run's successor could free a claim that
+    # a live run is still relying on.
+    if current and current != body.run_id:
+        return {"released": False}
+
+    with contextlib.suppress(Exception):
+        await redis.delete(SIM_RUN_KEY)
+    return {"released": True}
 
 
 def sim_epoch() -> datetime:

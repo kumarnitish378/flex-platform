@@ -242,6 +242,31 @@ class Engine:
             not_travelling=summary.not_travelling,
             wait_minutes_median=_percentile(waits, 0.5),
             wait_minutes_p90=_percentile(waits, 0.9),
+            vip_requests=self._vip_requests(),
+            vip_pooled=self._vip_pooled(),
+        )
+
+    def _vip_requests(self) -> int:
+        return sum(1 for rider in self.riders if rider.profile.is_vip and rider.travelling)
+
+    def _vip_pooled(self) -> int:
+        """VIP riders who ended up sharing a cab (`allocation-rules.md` section 2 rule 4).
+
+        Read from the trips the drivers actually drove rather than from what dispatch
+        intended: the rule is about what happened to the rider, and a trip that gained a
+        second rider after the VIP boarded breaks it just as surely as one planned that
+        way.
+        """
+        shared: set[str] = set()
+        for driver in self.drivers:
+            for riders in driver.record.riders_per_trip.values():
+                if len(riders) > 1:
+                    shared |= riders
+
+        return sum(
+            1
+            for rider in self.riders
+            if rider.profile.is_vip and str(rider.record.request_id) in shared
         )
 
     def _driving_metrics(self) -> DrivingMetrics:
@@ -308,7 +333,12 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
     """
     platform.set_clock(engine.clock.start + _LEAD)
     world = platform.reset(
-        employees=engine.scenario.employee_count, vehicles=engine.scenario.vehicle_count
+        employees=engine.scenario.employee_count,
+        vehicles=engine.scenario.vehicle_count,
+        vip_employees=engine.scenario.vip_employee_count,
+        # The exact mix, not just the count: a scenario asking for two VIP cars that
+        # silently got one would test nothing it claims to.
+        fleet=[(str(group.type), group.count) for group in engine.scenario.fleet],
     )
 
     overrides = engine.scenario.operator.config_overrides
@@ -381,6 +411,7 @@ def _spawn_riders(engine: Engine, world: SeededWorld) -> None:
         )
 
     shift_start, shift_end = _first_shift(engine)
+    vip = set(world.vip_employee_ids)
     for employee_id, token in zip(world.employee_ids[:wanted], tokens[:wanted], strict=True):
         rider = EmployeeAgent(
             engine,
@@ -390,6 +421,7 @@ def _spawn_riders(engine: Engine, world: SeededWorld) -> None:
                 home=None,
                 shift_start=shift_start,
                 shift_end=shift_end,
+                is_vip=employee_id in vip,
             ),
         )
         engine.riders.append(rider)

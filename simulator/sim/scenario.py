@@ -7,6 +7,7 @@ misspelled `seed` would quietly destroy reproducibility.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, time, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -179,6 +180,9 @@ class Assertions(Strict):
     invalid_transitions: int | None = None
     api_5xx_max: int | None = None
     all_requests_terminal: bool | None = None
+    #: S07: a VIP is never pooled with another rider (`allocation-rules.md` section 2
+    #: rule 4). Checked from the trips the drivers actually drove, not from intent.
+    vip_never_pooled: bool | None = None
 
 
 class Scenario(Strict):
@@ -219,6 +223,18 @@ class Scenario(Strict):
     @property
     def employee_count(self) -> int:
         return sum(client.employees.count for client in self.clients)
+
+    @property
+    def vip_employee_count(self) -> int:
+        """How many seeded employees must be VIPs, from each client's `vip_share`.
+
+        Rounded up: a scenario asking for VIP behaviour with a share that rounds to zero
+        would seed no VIPs at all and quietly test nothing.
+        """
+        return sum(
+            math.ceil(client.employees.count * client.employees.vip_share)
+            for client in self.clients
+        )
 
 
 class ScenarioError(Exception):

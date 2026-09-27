@@ -33,6 +33,18 @@ def evaluate(assertions: Assertions, metrics: RunMetrics) -> list[Failure]:
     """Every assertion the run did not satisfy. Empty means the scenario passed."""
     failures: list[Failure] = []
 
+    if assertions.vip_never_pooled:
+        pooled = metrics.demand.vip_pooled
+        if pooled is None:
+            failures.append(Failure("vip_never_pooled", "no VIP travel was measured in this run"))
+        elif pooled > 0:
+            failures.append(
+                Failure(
+                    "vip_never_pooled",
+                    f"{pooled} VIP rider(s) shared a cab with someone else",
+                )
+            )
+
     if assertions.all_requests_terminal:
         unresolved = metrics.demand.unresolved
         if unresolved is None:

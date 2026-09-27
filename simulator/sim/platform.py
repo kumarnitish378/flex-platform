@@ -18,6 +18,7 @@ Three things it needs from the platform:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -74,7 +75,11 @@ class SeededWorld:
     client_id: uuid.UUID
     office_ids: list[uuid.UUID] = field(default_factory=list)
     employee_ids: list[uuid.UUID] = field(default_factory=list)
+    #: Which of them are VIPs (S07). Without this a VIP scenario would burst ordinary
+    #: riders and report a result it never tested.
+    vip_employee_ids: list[uuid.UUID] = field(default_factory=list)
     vehicle_ids: list[uuid.UUID] = field(default_factory=list)
+    vip_vehicle_ids: list[uuid.UUID] = field(default_factory=list)
     driver_ids: list[uuid.UUID] = field(default_factory=list)
     users: list[SeededUser] = field(default_factory=list)
     now: datetime | None = None
@@ -116,7 +121,13 @@ class PlatformClient:
 
     # --- the world ------------------------------------------------------------
 
-    def reset(self, employees: int | None = None, vehicles: int | None = None) -> SeededWorld:
+    def reset(
+        self,
+        employees: int | None = None,
+        vehicles: int | None = None,
+        vip_employees: int | None = None,
+        fleet: Sequence[tuple[str, int]] | None = None,
+    ) -> SeededWorld:
         """Truncate and seed a world the size this scenario needs.
 
         Refused with a 409 if another run is already driving this backend.
@@ -125,13 +136,27 @@ class PlatformClient:
         every scenario at the smallest one, and a run quietly working with twenty riders
         when the scenario asked for three hundred measures the wrong thing.
         """
-        body = self._post("/simctl/reset", json={"employees": employees, "vehicles": vehicles})
+        body = self._post(
+            "/simctl/reset",
+            json={
+                "employees": employees,
+                "vehicles": vehicles,
+                "vip_employees": vip_employees,
+                "fleet": (
+                    [{"type": name, "count": count} for name, count in fleet] if fleet else None
+                ),
+                "run_id": self.run_id,
+                "force": self.force,
+            },
+        )
         return SeededWorld(
             operator_id=uuid.UUID(body["operator_id"]),
             client_id=uuid.UUID(body["client_id"]),
             office_ids=[uuid.UUID(value) for value in body.get("office_ids", [])],
             employee_ids=[uuid.UUID(value) for value in body.get("employee_ids", [])],
+            vip_employee_ids=[uuid.UUID(value) for value in body.get("vip_employee_ids", [])],
             vehicle_ids=[uuid.UUID(value) for value in body.get("vehicle_ids", [])],
+            vip_vehicle_ids=[uuid.UUID(value) for value in body.get("vip_vehicle_ids", [])],
             driver_ids=[uuid.UUID(value) for value in body.get("driver_ids", [])],
             users=[
                 SeededUser(
@@ -398,7 +423,17 @@ class PlatformClient:
         parsed: dict[str, Any] = response.json()
         return parsed
 
+    def release(self) -> None:
+        """Give up this run's claim so the next run need not wait out the TTL."""
+        # A run that has finished must not fail on cleanup.
+        with contextlib.suppress(Exception):
+            self._post("/simctl/release", json={"run_id": self.run_id})
+
     def close(self) -> None:
+        # Release first: the claim is only useful while this run is live, and leaving it
+        # behind means the next run - often the same person seconds later - is refused
+        # by a run that no longer exists.
+        self.release()
         if self._owns_client:
             self._client.close()
 

@@ -108,6 +108,9 @@ class EmployeeProfile:
     #: Chance this rider travels at all today. On the profile rather than hidden in a
     #: module constant, so a scenario can dial demand up or down.
     participation: float = PARTICIPATION_PROBABILITY
+    #: VIP riders must never be pooled and must never travel in an ordinary cab
+    #: (`allocation-rules.md` section 2 rule 4). S07 asserts both.
+    is_vip: bool = False
 
 
 class EmployeeAgent:

@@ -1,0 +1,75 @@
+# S07 vip_burst (scenarios.md): 5 VIP requests inside 5 minutes, against 2 VIP cars.
+#
+# The point is scarcity. Five VIPs and two VIP cars means the fleet cannot serve them all
+# at once, and `allocation-rules.md` section 2 rule 4 says the platform must not solve
+# that by bending the rules: a VIP is never pooled with another rider, and never put in
+# an ordinary cab without an explicit override. The right answer when neither is possible
+# is to alert and leave the request waiting - so a run where VIPs wait is a pass, and one
+# where they all get served suspiciously quickly is worth reading closely.
+#
+# Not part of `make sim-quick` - it needs a live backend.
+name: vip_burst
+version: 1
+seed: 42
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 3
+speed_factor: 60
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    alert_wait_minutes: 20
+    # Three hours long, so a VIP nobody could serve still reaches a terminal state
+    # inside the window rather than being reported as unresolved.
+    request_expiry_minutes: 60
+
+modes:
+  - {mode: manual}
+
+fleet:
+  # Two VIP cars and six ordinary ones: the ordinary cabs are there so that putting a
+  # VIP in one is *possible*, which is what makes "never on a non-VIP car" a real test
+  # rather than a fleet with no wrong answer available.
+  - {type: vip, count: 2, depot: [28.5355, 77.3910]}
+  - {type: sedan_4, count: 6, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 20
+      home_zones: [sector_135, sector_168]
+      # 5 of 20. The burst below asks for exactly these five.
+      vip_share: 0.25
+      priority_dist: {1: 0.25, 5: 0.75}
+      shifts:
+        # Late enough that the VIP burst at 06:10 lands before the ordinary morning
+        # demand, so the five VIPs are competing for cabs with each other rather than
+        # with a crowd - which is the situation the rule is written for.
+        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  - {at_ist: "06:10", type: vip_burst, count: 5}
+
+assertions:
+  # The rule that matters, checked against the trips the drivers actually drove rather
+  # than against what dispatch intended - a trip that gained a second rider after the
+  # VIP boarded breaks the rule just as surely as one planned that way.
+  vip_never_pooled: true
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

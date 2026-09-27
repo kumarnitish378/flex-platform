@@ -516,3 +516,79 @@ async def test_a_reset_without_a_run_id_is_unaffected(
     await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
 
     assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
+
+
+# --- the world a scenario actually asked for (S07) ---------------------------
+
+
+async def test_the_fleet_composition_is_honoured(sim_client: AsyncClient) -> None:
+    """Only the vehicle *count* used to be honoured; the mix came from the fixture.
+
+    A scenario asking for two VIP cars silently got one, so a VIP scenario could run
+    green while testing nothing it claimed to.
+    """
+    body = (
+        await sim_client.post(
+            "/simctl/reset",
+            json={"fleet": [{"type": "vip", "count": 2}, {"type": "sedan_4", "count": 6}]},
+        )
+    ).json()
+
+    assert len(body["vehicle_ids"]) == 8
+    assert len(body["vip_vehicle_ids"]) == 2
+
+
+async def test_seat_counts_follow_the_vehicle_type(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Pooling capacity depends on seats, so the type has to bring its own."""
+    await sim_client.post("/simctl/reset", json={"fleet": [{"type": "suv_6", "count": 2}]})
+
+    seats = (await db_session.execute(select(Vehicle.seat_capacity))).scalars().all()
+
+    assert set(seats) == {6}
+
+
+async def test_a_scenario_can_ask_for_several_vips(sim_client: AsyncClient) -> None:
+    body = (
+        await sim_client.post("/simctl/reset", json={"employees": 20, "vip_employees": 5})
+    ).json()
+
+    assert len(body["vip_employee_ids"]) == 5
+    assert set(body["vip_employee_ids"]) <= set(body["employee_ids"])
+
+
+async def test_one_vip_by_default(sim_client: AsyncClient) -> None:
+    """The historic fixture, unchanged for every scenario that does not ask."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    assert len(body["vip_employee_ids"]) == 1
+
+
+async def test_more_vips_than_employees_is_clamped(sim_client: AsyncClient) -> None:
+    body = (
+        await sim_client.post("/simctl/reset", json={"employees": 3, "vip_employees": 10})
+    ).json()
+    assert len(body["vip_employee_ids"]) == 3
+
+
+# --- releasing the claim -----------------------------------------------------
+
+
+async def test_a_finished_run_frees_the_backend(sim_client: AsyncClient, unclaimed: None) -> None:
+    """Otherwise the next run - often the same person seconds later - waits out the TTL."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    released = await sim_client.post("/simctl/release", json={"run_id": "run-a"})
+
+    assert released.json() == {"released": True}
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 200
+
+
+async def test_only_the_holder_may_release(sim_client: AsyncClient, unclaimed: None) -> None:
+    """Otherwise a crashed run's successor could free a claim a live run relies on."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    released = await sim_client.post("/simctl/release", json={"run_id": "someone-else"})
+
+    assert released.json() == {"released": False}
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 409

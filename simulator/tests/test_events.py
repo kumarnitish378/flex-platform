@@ -118,17 +118,27 @@ def test_a_router_with_no_speed_knob_is_left_alone() -> None:
 
 
 def test_a_phase_two_event_is_refused_with_the_reason(engine: Engine) -> None:
-    """Approximating it would make S07 report a VIP result it never tested."""
+    """Approximating it would make a Phase 2 scenario measure the wrong thing."""
     injector = EventInjector(engine)
 
-    with pytest.raises(UnsupportedEventError, match="which employees are VIP"):
-        injector.schedule([event("vip_burst")])
+    with pytest.raises(UnsupportedEventError, match="Phase 2"):
+        injector.schedule([event("optimizer_down")])
 
 
 def test_every_unimplementable_event_explains_itself() -> None:
-    assert set(NOT_YET) == {"vip_burst", "optimizer_down"}
+    assert set(NOT_YET) == {"optimizer_down"}
     for reason in NOT_YET.values():
         assert len(reason) > 20
+
+
+def test_a_vip_burst_with_no_vip_riders_is_recorded(engine: Engine) -> None:
+    """Bursting ordinary riders would make S07 report a VIP result it never tested."""
+    injector = EventInjector(engine)
+    injector.schedule([event("vip_burst", at="06:05")])
+
+    engine.run()
+
+    assert any("no VIP rider" in message for message in injector.record.errors)
 
 
 def test_an_unknown_event_type_is_refused(engine: Engine) -> None:

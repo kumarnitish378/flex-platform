@@ -11,6 +11,7 @@ same run really is reproducible (`simulator-spec.md` §13).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Point as ShapelyPoint
@@ -116,6 +117,14 @@ def _id(*parts: object) -> uuid.UUID:
     return uuid.uuid5(SEED_NAMESPACE, ":".join(str(part) for part in parts))
 
 
+#: Seats per vehicle type, matching the fixture in `testing-strategy.md` section 4.
+SEATS: dict[VehicleType, int] = {
+    VehicleType.sedan_4: 4,
+    VehicleType.suv_6: 6,
+    VehicleType.vip: 4,
+}
+
+
 def _fleet(count: int) -> tuple[tuple[str, VehicleType, int], ...]:
     """The fixture fleet, extended if a scenario wants more cabs than it lists.
 
@@ -131,6 +140,23 @@ def _fleet(count: int) -> tuple[tuple[str, VehicleType, int], ...]:
         _rego, vehicle_type, seats = VEHICLES[index % len(VEHICLES)]
         extra.append((f"SIM{index + 1:04d}", vehicle_type, seats))
     return VEHICLES + tuple(extra)
+
+
+def _fleet_from_spec(
+    groups: Sequence[tuple[VehicleType, int]],
+) -> tuple[tuple[str, VehicleType, int], ...]:
+    """Exactly the cabs a scenario asked for.
+
+    Composition matters, not just the count: a VIP scenario seeded from the fixture mix
+    gets one VIP car where it asked for two, and then tests nothing it claims to. Seat
+    counts come from the type, so pooling capacity follows the scenario too.
+    """
+    built: list[tuple[str, VehicleType, int]] = []
+    for vehicle_type, count in groups:
+        for _ in range(count):
+            index = len(built) + 1
+            built.append((f"SIM{index:04d}", vehicle_type, SEATS[vehicle_type]))
+    return tuple(built)
 
 
 def _point(lat: float, lng: float) -> object:
@@ -158,10 +184,23 @@ class SimControlService:
         self.clock = clock
         self.settings = settings
 
-    async def reset(self, employees: int | None = None, vehicles: int | None = None) -> ResetResult:
+    async def reset(
+        self,
+        employees: int | None = None,
+        vehicles: int | None = None,
+        vip_employees: int | None = None,
+        fleet: Sequence[tuple[VehicleType, int]] | None = None,
+    ) -> ResetResult:
         await self._truncate()
+        employee_count = employees or EMPLOYEE_COUNT
         result = await self._seed(
-            employee_count=employees or EMPLOYEE_COUNT, vehicle_count=vehicles or len(VEHICLES)
+            employee_count=employee_count,
+            vehicle_count=vehicles or len(VEHICLES),
+            fleet=fleet,
+            # One by default, which is the historic fixture. A VIP scenario asks for more.
+            vip_employee_count=min(
+                vip_employees if vip_employees is not None else 1, employee_count
+            ),
         )
         await self.session.flush()
         logger.info("simctl_reset", operator_id=str(result.operator_id), at=result.now.isoformat())
@@ -178,7 +217,13 @@ class SimControlService:
             await self.session.execute(delete(model))
         await self.session.flush()
 
-    async def _seed(self, employee_count: int, vehicle_count: int) -> ResetResult:
+    async def _seed(
+        self,
+        employee_count: int,
+        vehicle_count: int,
+        vip_employee_count: int = 1,
+        fleet: Sequence[tuple[VehicleType, int]] | None = None,
+    ) -> ResetResult:
         operator = Operator(id=_id("operator"), name=OPERATOR_NAME)
         self.session.add(operator)
         await self.session.flush()
@@ -226,7 +271,7 @@ class SimControlService:
                 office_id=office_ids[index % len(office_ids)],
                 home_location=_point(base_lat + index * 0.001, base_lng + index * 0.001),
                 priority=5,
-                is_vip=(index == 0),
+                is_vip=index < vip_employee_count,
             )
             # Every employee gets a login, not just the first: the simulator's employee
             # agents each create their own requests, and `/ride-requests` scopes a
@@ -245,7 +290,9 @@ class SimControlService:
 
         driver_ids = []
         vehicle_ids = []
-        for index, (rego, vehicle_type, seats) in enumerate(_fleet(vehicle_count)):
+        vip_vehicle_ids = []
+        cabs = _fleet_from_spec(fleet) if fleet else _fleet(vehicle_count)
+        for index, (rego, vehicle_type, seats) in enumerate(cabs):
             vehicle = Vehicle(
                 id=_id("vehicle", rego),
                 operator_id=operator.id,
@@ -256,6 +303,8 @@ class SimControlService:
             )
             self.session.add(vehicle)
             vehicle_ids.append(vehicle.id)
+            if vehicle_type is VehicleType.vip:
+                vip_vehicle_ids.append(vehicle.id)
 
             driver = Driver(
                 id=_id("driver", index),
@@ -285,7 +334,9 @@ class SimControlService:
             office_ids=office_ids,
             zone_ids=zone_ids,
             employee_ids=employee_ids,
+            vip_employee_ids=employee_ids[:vip_employee_count],
             vehicle_ids=vehicle_ids,
+            vip_vehicle_ids=vip_vehicle_ids,
             driver_ids=driver_ids,
             users=users,
             now=self.clock.now(),

@@ -69,6 +69,10 @@ class DriverRecord:
     #: who cancelled en route, not a fault.
     stale_stops: int = 0
     no_shows: int = 0
+    #: Who shared each trip, keyed by trip id. The driver is the only agent that sees a
+    #: whole trip's stop list, so this is where "was this rider pooled?" can be answered
+    #: without inventing an endpoint (S07).
+    riders_per_trip: dict[str, set[str]] = field(default_factory=dict)
     faults: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -159,6 +163,11 @@ class DriverAgent:
         if not self._call(lambda: platform.start_trip(self.token, trip_id, self.engine.now())):
             return
         self.record.trips_started += 1
+        self.record.riders_per_trip[str(trip_id)] = {
+            str(stop["request_id"])
+            for stop in trip.get("stops", [])
+            if stop.get("request_id") is not None
+        }
         self.engine.record(f"driver {self.driver_id} started trip {trip_id}")
 
         for stop in sorted(trip.get("stops", []), key=lambda item: item["sequence"]):

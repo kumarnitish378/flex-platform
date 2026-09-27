@@ -64,6 +64,11 @@ class DemandMetrics:
     wait_minutes_median: float | None = None
     wait_minutes_p90: float | None = None
     eta_error_minutes_p90: float | None = None
+    #: VIP riders who travelled (S07).
+    vip_requests: int | None = None
+    #: VIP riders who ended up sharing a cab. `allocation-rules.md` section 2 rule 4
+    #: says this must never happen, so any value above zero fails S07.
+    vip_pooled: int | None = None
 
     @property
     def all_terminal(self) -> bool | None:

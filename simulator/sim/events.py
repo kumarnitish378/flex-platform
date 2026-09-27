@@ -43,15 +43,12 @@ SUPPORTED = (
     "gps_loss",
     "offline",
     "supervisor_absent",
+    "vip_burst",
 )
 
 #: Listed in section 7 but not implementable yet, with the reason. Refused loudly so a
 #: scenario cannot quietly measure something other than what it claims to.
 NOT_YET = {
-    "vip_burst": (
-        "the seeded world does not say which employees are VIP, so a burst would use "
-        "ordinary riders and S07 would report a VIP result it never tested"
-    ),
     "optimizer_down": (
         "there is no optimizer to take down in Phase 1; automatic mode arrives in Phase 2"
     ),
@@ -190,6 +187,34 @@ class EventInjector:
             # `multiplier: 1.15` means "15% more demand than the day already has".
             return max(1, round(population * (event.multiplier - 1.0)))
         return max(1, round(population * 0.1))
+
+    def _on_vip_burst(self, event: Event) -> Process:
+        """Several VIPs ask at once (S07).
+
+        Only riders the backend actually seeded as VIP are used. Bursting ordinary riders
+        would produce a run that looks like S07 and tests none of it - the whole scenario
+        is about VIPs never being pooled and never getting an ordinary cab.
+        """
+        idle = [
+            rider for rider in self.engine.riders if rider.profile.is_vip and not rider.travelling
+        ]
+        wanted = event.count or 5
+        if not idle:
+            self.record.errors.append("vip_burst: the seeded world has no VIP rider free to travel")
+            return
+
+        if len(idle) < wanted:
+            # Worth saying: a burst of three when the scenario asked for five is a
+            # weaker test, and silently shrinking it would hide that.
+            self.record.errors.append(
+                f"vip_burst: wanted {wanted} VIPs, only {len(idle)} were free"
+            )
+
+        direction = event.direction or Direction.to_office
+        for rider in idle[:wanted]:
+            self.engine.spawn(lambda rider=rider: rider.travel_now(direction))  # type: ignore[misc]
+        self.engine.record(f"vip burst: {min(wanted, len(idle))} VIP riders {direction}")
+        yield self.engine.env.timeout(0)
 
     # --- faults -----------------------------------------------------------------------
 

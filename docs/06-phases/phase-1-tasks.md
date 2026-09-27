@@ -270,11 +270,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   suite on a cron and uploads each run's metrics and logs. `scripts/live_stack.sh` is
   the one way to bring up broker, migrations, API and ingestor, shared by CI and by a
   developer reproducing a CI failure. S03 `evening_surge` added.
-  **Six of the seven scenarios are in the suite.** S07 `vip_burst` is missing: the
-  seeded world does not say which employees are VIP, so the burst would use ordinary
-  riders, and the simulator has no way to assert "VIP never pooled" - it would run and
-  report a VIP result it never tested. Needs `/simctl/reset` to seed and return VIP
-  employees, plus a pooling assertion.
+  **All seven scenarios are in the suite.** S07 `vip_burst` needed `/simctl/reset` to
+  seed and report VIP employees and to honour the scenario's **fleet composition** -
+  only the vehicle count was honoured before, so a scenario asking for two VIP cars
+  silently got one. The `vip_never_pooled` assertion reads the trips the drivers
+  actually drove, so it cannot pass vacuously: the run reports 5 VIP requests, 0 pooled.
 
 ## Optional / later
 
