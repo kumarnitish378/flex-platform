@@ -246,11 +246,17 @@ def _suite(name: str, runs_dir: str = "runs", platform_url: str | None = None) -
     failed: list[str] = []
     for scenario_name in names:
         path = SCENARIO_DIR / f"{scenario_name}.yaml"
-        print(f"--- {scenario_name} ---")
+        # Flushed, because the full suite runs for hours and Python buffers stdout when
+        # it is redirected to a file. A nightly job that printed nothing until it
+        # finished would be undiagnosable the moment it timed out.
+        print(f"--- {scenario_name} ---", flush=True)
         if _run(str(path), runs_dir, platform_url=platform_url) != 0:
             failed.append(scenario_name)
 
-    print(f"suite    {name}: {len(names) - len(failed)}/{len(names)} scenarios passed")
+    print(
+        f"suite    {name}: {len(names) - len(failed)}/{len(names)} scenarios passed",
+        flush=True,
+    )
     if failed:
         print(f"failed   {', '.join(failed)}", file=sys.stderr)
     return 1 if failed else 0

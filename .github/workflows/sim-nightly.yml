@@ -20,6 +20,9 @@ on:
         default: full
 
 env:
+  # Unbuffered: the suite runs for hours, and a job that printed nothing until it
+  # finished would leave nothing to read if it timed out.
+  PYTHONUNBUFFERED: '1'
   # ADR-0010: never the public OSM servers, in any job.
   ROUTING_PROVIDER: approx
   GEOCODING_PROVIDER: none
