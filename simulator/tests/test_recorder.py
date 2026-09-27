@@ -292,3 +292,26 @@ def test_cli_compare_reports_a_missing_run(tmp_path: Path) -> None:
 def test_cli_suite_writes_run_folders(tmp_path: Path) -> None:
     assert main(["suite", "quick", "--runs-dir", str(tmp_path)]) == 0
     assert list(tmp_path.iterdir())
+
+
+def test_two_runs_of_one_scenario_do_not_overwrite_each_other() -> None:
+    """A scenario always starts at the same *simulated* instant.
+
+    Keyed on that alone, every run of it wrote to the same directory - so a run that
+    failed before writing left the previous run's metrics looking like a result. A stale
+    offline run was mistaken for a live one that way, and CI would have uploaded it.
+    """
+    started = datetime(2026, 10, 5, 0, 30, tzinfo=UTC)
+
+    first = run_directory("smoke_tiny", started, run_id="sim-aaaa1111")
+    second = run_directory("smoke_tiny", started, run_id="sim-bbbb2222")
+
+    assert first.root != second.root
+    assert "smoke_tiny" in first.root.name
+    assert first.root.name.startswith("20261005T003000Z")
+
+
+def test_a_run_without_an_id_keeps_the_plain_name() -> None:
+    """Offline runs and existing callers are unaffected."""
+    started = datetime(2026, 10, 5, 0, 30, tzinfo=UTC)
+    assert run_directory("smoke_tiny", started).root.name == "20261005T003000Z_smoke_tiny"

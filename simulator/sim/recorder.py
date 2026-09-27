@@ -49,10 +49,23 @@ class RunPaths:
         return self.root / "events.log"
 
 
-def run_directory(scenario: str, started_at: datetime, base: Path | str = RUNS_DIR) -> RunPaths:
-    """`runs/20261005T003000Z_smoke_tiny/`. Sorts chronologically by name."""
+def run_directory(
+    scenario: str,
+    started_at: datetime,
+    base: Path | str = RUNS_DIR,
+    run_id: str | None = None,
+) -> RunPaths:
+    """`runs/20261005T003000Z_smoke_tiny__sim-1a2b3c/`. Sorts chronologically by name.
+
+    The simulated start time alone is not unique: a scenario always starts at the same
+    simulated instant, so every run of it overwrote the same directory. A run that failed
+    before writing then left the *previous* run's metrics sitting there looking like a
+    result - which is exactly how a stale offline run was mistaken for a live one, and
+    what CI would have uploaded as the nightly artifact.
+    """
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
-    return RunPaths(Path(base) / f"{stamp}_{scenario}")
+    suffix = f"__{run_id}" if run_id else ""
+    return RunPaths(Path(base) / f"{stamp}_{scenario}{suffix}")
 
 
 class Recorder:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from sim.assertions import evaluate
@@ -123,8 +124,11 @@ def _run_scenario(
     platform_url: str | None = None,
 ) -> int:
     platform = None
+    # Identifies this run in the backend's claim and in the output directory's name, so
+    # two runs of the same scenario never overwrite one another's artefacts.
+    run_id = f"sim-{uuid.uuid4().hex[:8]}"
     if platform_url:
-        platform = PlatformClient(platform_url)
+        platform = PlatformClient(platform_url, run_id=run_id)
         if not platform.health():
             print(f"OFFLINE  no backend at {platform_url}", file=sys.stderr)
             return 3
@@ -197,7 +201,7 @@ def _run_scenario(
         platform.close()
 
     if not no_output:
-        paths = run_directory(scenario.name, summary.started_at, runs_dir)
+        paths = run_directory(scenario.name, summary.started_at, runs_dir, run_id=run_id)
         Recorder(paths).write_all(metrics, engine.pings.pings, summary.events)
         print(f"output   {paths.root}")
 
