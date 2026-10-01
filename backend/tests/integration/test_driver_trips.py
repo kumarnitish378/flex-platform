@@ -875,7 +875,7 @@ async def strand(
     response = await client.post("/driver/issues", json=body, headers=driver)
     assert response.status_code == 201
 
-    request = world["requests"]["first"]
+    request: RideRequest = world["requests"]["first"]
     await db_session.refresh(request)
     return request
 

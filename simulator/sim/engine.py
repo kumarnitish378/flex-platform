@@ -19,7 +19,7 @@ import simpy
 
 from sim.agents.driver import DriverAgent
 from sim.agents.driver import summarise as summarise_fleet
-from sim.agents.employee import EmployeeAgent, EmployeeProfile
+from sim.agents.employee import EmployeeAgent, EmployeeProfile, Outcome
 from sim.agents.employee import summarise as summarise_demand
 from sim.agents.supervisor import SupervisorAgent
 from sim.agents.supervisor import summarise as summarise_dispatch
@@ -47,6 +47,10 @@ from sim.traffic import TrafficModel
 # A SimPy process is a generator yielding events.
 Process = Generator[simpy.Event, Any, Any]
 
+#: How far the clock moves per step while draining. The riders' own poll interval, so the
+#: drain notices the last cab emptying within one poll rather than overshooting the cap.
+DRAIN_STEP_SECONDS = 60.0
+
 
 @dataclass
 class RunSummary:
@@ -61,6 +65,12 @@ class RunSummary:
     vehicles: int
     employees: int
     events: list[str] = field(default_factory=list)
+    #: Overtime spent letting rides already under way finish (OQ-28). Not part of the
+    #: measured window: `simulated_seconds` is still the scenario's own duration.
+    drain_minutes: float = 0.0
+    #: True when the cap ran out with someone still in a cab. The run is then reporting
+    #: a genuinely stuck ride, not an artefact of where the clock stopped.
+    drain_capped: bool = False
 
 
 class Engine:
@@ -138,7 +148,22 @@ class Engine:
 
     @property
     def duration_seconds(self) -> float:
+        """The demand window. What the run's metrics are about."""
         return self.scenario.duration_hours * 3600.0
+
+    @property
+    def drain_limit_seconds(self) -> float:
+        """The latest the clock may reach while a ride finishes (OQ-28)."""
+        return self.duration_seconds + self.scenario.drain_minutes_max * 60.0
+
+    @property
+    def drain_end(self) -> datetime:
+        """The same moment as wall time, for agents that have to compare against it."""
+        return self.scenario.drain_end
+
+    def rides_in_progress(self) -> int:
+        """Riders sitting in a moving cab right now."""
+        return sum(1 for rider in self.riders if rider.on_board)
 
     # --- processes ----------------------------------------------------------
 
@@ -169,10 +194,12 @@ class Engine:
     # --- running ------------------------------------------------------------
 
     def run(self) -> RunSummary:
-        """Run to the scenario's end and summarise."""
+        """Run to the scenario's end, let rides in progress finish, and summarise."""
         started = self.clock.start
         self.env.run(until=self.duration_seconds)
         ended = self.clock.advance_to(self.duration_seconds)
+        drained = self._drain()
+        stuck = self._record_rides_that_never_ended()
 
         return RunSummary(
             scenario=self.scenario.name,
@@ -184,7 +211,60 @@ class Engine:
             vehicles=self.scenario.vehicle_count,
             employees=self.scenario.employee_count,
             events=list(self._log),
+            drain_minutes=drained / 60.0,
+            drain_capped=stuck > 0,
         )
+
+    def _drain(self) -> float:
+        """Keep the clock running while someone is still in a cab (OQ-28).
+
+        A run that stops dead on the hour leaves whoever was mid-journey `picked_up`,
+        which is not terminal - so `all_requests_terminal` failed for no reason other
+        than where the clock stopped, and failed only *sometimes*, because live timing
+        varies. A gate that fails at random gets ignored.
+
+        Nothing new happens in here. Riders ask for nothing after the window and the
+        supervisor has stopped assigning, so the only processes still doing work are the
+        drivers finishing the trips they were already driving. It ends the moment the
+        last cab empties, so a healthy run pays almost nothing for it.
+        """
+        if self.scenario.drain_minutes_max <= 0 or not self.riders:
+            return 0.0
+
+        start = self.env.now
+        while self.env.now < self.drain_limit_seconds and self.rides_in_progress():
+            step = min(self.env.now + DRAIN_STEP_SECONDS, self.drain_limit_seconds)
+            self.env.run(until=step)
+            self.clock.advance_to(self.env.now)
+
+        drained = self.env.now - start
+        if drained:
+            riding = self.rides_in_progress()
+            self.record(
+                f"drained {drained / 60.0:.0f} min for rides in progress; "
+                + (f"{riding} still riding at the cap" if riding else "all cabs empty")
+            )
+        return float(drained)
+
+    def _record_rides_that_never_ended(self) -> int:
+        """Write the outcome of anyone still in a cab when the clock stopped.
+
+        Their process is suspended inside a poll and will never resume, so nobody else
+        will record them, and the default outcome reads as "stayed at home" - a stuck
+        ride would be reported as no demand. Doing it here rather than in the agent is
+        also what makes the result deterministic: it no longer depends on whether one of
+        the rider's minute-by-minute polls happened to land past the end (OQ-28).
+        """
+        stuck = 0
+        for rider in self.riders:
+            if not rider.on_board:
+                continue
+            rider.record.outcome = Outcome.unresolved
+            rider.record.detail = "still riding when the run stopped"
+            stuck += 1
+        if stuck:
+            self.record(f"{stuck} rider(s) were still in a cab when the run stopped")
+        return stuck
 
     def metrics(self, summary: RunSummary) -> RunMetrics:
         """Metrics for a finished run (`simulator-spec.md` §9)."""
@@ -195,6 +275,8 @@ class Engine:
             started_at=summary.started_at.isoformat(),
             ended_at=summary.ended_at.isoformat(),
             simulated_hours=summary.simulated_seconds / 3600.0,
+            drain_minutes=summary.drain_minutes,
+            drain_capped=summary.drain_capped,
             fleet=compute_fleet_metrics(self.pings.pings),
             demand=self._demand_metrics(),
             driving=self._driving_metrics(),
@@ -240,6 +322,7 @@ class Engine:
             expired=summary.expired,
             unresolved=summary.unresolved + summary.failed,
             not_travelling=summary.not_travelling,
+            still_waiting=summary.still_waiting,
             wait_minutes_median=_percentile(waits, 0.5),
             wait_minutes_p90=_percentile(waits, 0.9),
             vip_requests=self._vip_requests(),

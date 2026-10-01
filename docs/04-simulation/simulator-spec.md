@@ -108,6 +108,7 @@ version: 1
 seed: 42
 start: "2026-10-05T00:30:00Z"     # 06:00 IST
 duration_hours: 16
+drain_minutes_max: 60           # overtime for rides already under way (default 60; 0 = off)
 speed_factor: 60
 routing: approx                   # approx (default) | osrm (self-hosted only)
 operator:
@@ -148,8 +149,26 @@ assertions:
   invalid_transitions: 0
 ```
 
+### The demand window and the drain
+`duration_hours` is the **demand window**: riders ask for nothing after it and the
+supervisor stops assigning. A run then keeps the clock going for up to
+`drain_minutes_max` so that rides already under way can finish, and stops the moment no
+rider is in a cab — so a healthy run pays nothing for it. Nothing new happens during the
+drain; the only processes still working are drivers completing trips they had already
+started.
+
+Without this, a run stopped dead on the hour and whoever was mid-journey was left
+`picked_up`, which is not terminal, so `all_requests_terminal` failed for no reason other
+than where the clock stopped — and failed only sometimes, because live timing varies
+(OQ-28, ADR-0017). `metrics.json` reports `drain_minutes` and `drain_capped`; the cap
+running out with someone still aboard is a genuinely stuck ride and still fails the run.
+
 ## 9. Metrics recorded
 Per run (JSON + CSV): requests, assigned, dropped, cancelled, gave up, no-shows, expired; wait (median, p90, max) overall and by direction/client/priority; ETA error (median, p90); vehicles used; trips; riders per trip; km total and empty km share; supervisor actions count and time; suggestion acceptance; failsafe triggers; override count; hard-rule violations (must be 0); invalid state transitions (must be 0); API errors; backend latency percentiles.
+
+Also `drain_minutes` and `drain_capped` (see the drain, above), and `still_waiting` —
+riders who asked for a cab and were still waiting when the window closed. They are
+reported rather than counted as a failure; see OQ-29.
 
 ## 10. Outputs and visualization
 - `runs/<timestamp>_<scenario>/metrics.json`, `requests.csv`, `trips.csv`, `pings.csv`, `summary.md`, plots (wait histogram, vehicles in use over time).

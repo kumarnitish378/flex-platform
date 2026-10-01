@@ -61,6 +61,10 @@ class DemandMetrics:
     expired: int | None = None
     unresolved: int | None = None
     not_travelling: int | None = None
+    #: Asked for a cab, still waiting when the demand window closed, and never recorded
+    #: an outcome. Reported so the gap is visible rather than hidden inside
+    #: `not_travelling`; whether it should fail a run is OQ-29.
+    still_waiting: int | None = None
     wait_minutes_median: float | None = None
     wait_minutes_p90: float | None = None
     eta_error_minutes_p90: float | None = None
@@ -121,6 +125,12 @@ class RunMetrics:
     started_at: str
     ended_at: str
     simulated_hours: float
+    #: Overtime the run spent letting rides already under way finish, after the demand
+    #: window closed (OQ-28). Outside `simulated_hours`, which is the measured window.
+    drain_minutes: float = 0.0
+    #: True when that overtime ran out with someone still in a cab - a stuck ride, which
+    #: is a real failure, rather than a run that merely stopped at an awkward moment.
+    drain_capped: bool = False
     fleet: FleetMetrics = field(default_factory=FleetMetrics)
     demand: DemandMetrics = field(default_factory=DemandMetrics)
     driving: DrivingMetrics = field(default_factory=DrivingMetrics)

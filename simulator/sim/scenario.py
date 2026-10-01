@@ -191,6 +191,11 @@ class Scenario(Strict):
     seed: int
     start: datetime
     duration_hours: float = Field(gt=0, le=24 * 14)
+    #: Overtime, after the demand window closes, for rides already under way to finish
+    #: (OQ-28). No new demand is created and the supervisor stops assigning; the run ends
+    #: as soon as nobody is in a cab, so this is a cap and not a cost. Zero means "stop
+    #: dead at the window", which leaves whoever was mid-journey counted as unresolved.
+    drain_minutes_max: float = Field(default=60.0, ge=0, le=24 * 60)
     speed_factor: float = Field(default=60.0, gt=0)
     routing: RoutingMode = RoutingMode.approx
     operator: Operator = Field(default_factory=Operator)
@@ -214,7 +219,13 @@ class Scenario(Strict):
 
     @property
     def end(self) -> datetime:
+        """When the demand window closes. Nothing new is asked for after this."""
         return self.start + timedelta(hours=self.duration_hours)
+
+    @property
+    def drain_end(self) -> datetime:
+        """The latest a run may still be finishing a ride that started in the window."""
+        return self.end + timedelta(minutes=self.drain_minutes_max)
 
     @property
     def vehicle_count(self) -> int:

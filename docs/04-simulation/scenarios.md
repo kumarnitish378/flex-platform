@@ -4,7 +4,7 @@ Each scenario lives in `simulator/scenarios/<name>.yaml`. Assertions must pass f
 
 | ID | Name | Phase | Setup | Key assertions |
 |---|---|---|---|---|
-| S01 | `smoke_tiny` | 0+ | 3 cabs, 10 employees, 1 hour | All requests end in terminal state; 0 invalid transitions; 0 API 5xx |
+| S01 | `smoke_tiny` | 0+ | 3 cabs, 10 employees, 1 hour | All requests end in terminal state (measured after rides in progress have drained - ADR-0017); 0 invalid transitions; 0 API 5xx |
 | S02 | `normal_weekday` | 1+ | 35 cabs, 300 employees, 2 shifts, manual_nearest supervisor | p90 wait ≤ 30 min; gave up ≤ 2%; ETA error p90 ≤ 8 min |
 | S03 | `evening_surge` | 1+ | 150 drop requests within 20 min | No request expires; supervisor queue visible; alerts raised for > 20 min waits |
 | S04 | `rain_day` | 1+ | S02 + rain 0.7 factor all day, +15% demand | System stable; metrics recorded; no crashes |

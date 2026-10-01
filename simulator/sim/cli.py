@@ -55,6 +55,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--runs-dir", default="runs", help="where to write the run folder")
     run.add_argument("--no-output", action="store_true", help="run without writing files")
     run.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="override the scenario's seed, to check a result is not one lucky draw",
+    )
+    run.add_argument(
         "--platform",
         default=None,
         metavar="URL",
@@ -80,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         return _validate(args.scenario)
     if args.command == "run":
-        return _run(args.scenario, args.runs_dir, args.no_output, args.platform)
+        return _run(args.scenario, args.runs_dir, args.no_output, args.platform, args.seed)
     if args.command == "compare":
         return _compare(args.run_a, args.run_b)
     return _suite(args.name, args.runs_dir, args.platform_url)
@@ -95,6 +101,7 @@ def _validate(path: str) -> int:
 
     print(f"OK       {scenario.name} (version {scenario.version}, seed {scenario.seed})")
     print(f"  window   {scenario.start.isoformat()} .. {scenario.end.isoformat()}")
+    print(f"  drain    up to {scenario.drain_minutes_max:.0f} min for rides in progress")
     print(f"  fleet    {scenario.vehicle_count} vehicles in {len(scenario.fleet)} groups")
     print(f"  demand   {scenario.employee_count} employees across {len(scenario.clients)} clients")
     print(f"  routing  {scenario.routing}  (speed factor {scenario.speed_factor})")
@@ -108,12 +115,17 @@ def _run(
     runs_dir: str = "runs",
     no_output: bool = False,
     platform_url: str | None = None,
+    seed: int | None = None,
 ) -> int:
     try:
         scenario = load_scenario(path)
     except ScenarioError as exc:
         print(f"INVALID  {exc}", file=sys.stderr)
         return 1
+    if seed is not None:
+        # One seed is one draw. A scenario's result is only worth quoting if it holds
+        # across a few of them.
+        scenario = scenario.model_copy(update={"seed": seed})
     return _run_scenario(scenario, runs_dir, no_output, platform_url)
 
 

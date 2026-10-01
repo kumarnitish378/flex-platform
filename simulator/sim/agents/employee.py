@@ -125,6 +125,8 @@ class EmployeeAgent:
         self.engine = engine
         self.profile = profile
         self.record = RiderRecord(employee_id=profile.employee_id)
+        #: In a moving cab right now. The run's drain waits on this (OQ-28).
+        self.on_board = False
         self._rng: np.random.Generator = engine.rng.for_agent(f"employee:{profile.employee_id}")
 
     # --- the day ----------------------------------------------------------------
@@ -236,7 +238,11 @@ class EmployeeAgent:
 
             if status == "picked_up":
                 # On board: patience no longer applies, the ride is happening.
-                yield from self._ride_home(request_id, started)
+                self.on_board = True
+                try:
+                    yield from self._ride_home(request_id, started)
+                finally:
+                    self.on_board = False
                 return
 
             if now >= deadline:
@@ -249,16 +255,19 @@ class EmployeeAgent:
                 return
 
     def _ride_home(self, request_id: uuid.UUID, started: datetime) -> Process:
+        """Ride until the platform says the journey ended.
+
+        No deadline of its own. The rider cannot know when the run stops, and asking them
+        to check made the outcome depend on whether a poll happened to land past the end -
+        which is how `all_requests_terminal` came to fail at random (OQ-28). The run
+        drains rides in progress and then records whoever is still aboard.
+        """
         while True:
             yield self.engine.env.timeout(POLL_INTERVAL_SECONDS)
             status = self._status_of(request_id)
             if status in TERMINAL_STATUSES:
                 self.record.waited_minutes = (self.engine.now() - started).total_seconds() / 60.0
                 self.record.outcome = _outcome_for(status)
-                return
-            if self.engine.now() >= self.engine.scenario.end:
-                self.record.outcome = Outcome.unresolved
-                self.record.detail = f"still {status} when the scenario ended"
                 return
 
     def _status_of(self, request_id: uuid.UUID) -> str | None:
@@ -335,6 +344,11 @@ class DemandSummary:
     unresolved: int = 0
     failed: int = 0
     not_travelling: int = 0
+    #: Riders who asked for a cab and were still waiting when the window closed. Counted
+    #: separately because their process was suspended mid-wait and never wrote an
+    #: outcome, so they are indistinguishable from someone who stayed home without this
+    #: (OQ-29). Not part of `all_terminal` yet - that is the open question.
+    still_waiting: int = 0
     waits_minutes: list[float] = field(default_factory=list)
 
     @property
@@ -358,6 +372,8 @@ def summarise(records: list[RiderRecord]) -> DemandSummary:
     for record in records:
         if record.request_id is not None:
             summary.requested += 1
+            if record.outcome is Outcome.not_travelling:
+                summary.still_waiting += 1
         setattr(summary, counters[record.outcome], getattr(summary, counters[record.outcome]) + 1)
         if record.waited_minutes is not None:
             summary.waits_minutes.append(record.waited_minutes)

@@ -218,6 +218,109 @@ def test_a_rider_on_board_stops_counting_patience(engine: Engine) -> None:
     assert rider.record.outcome is Outcome.completed
 
 
+class StillRiding(FakePlatform):
+    """A rider who is in a moving cab when the demand window closes."""
+
+    def __init__(self, engine: Engine, drop_after: timedelta | None) -> None:
+        super().__init__(["queued", "picked_up"])
+        self._engine = engine
+        self._drop_at = None if drop_after is None else engine.scenario.end + drop_after
+
+    def request_status(self, token: str, request_id: uuid.UUID) -> str:
+        if self._drop_at is not None and self._engine.now() >= self._drop_at:
+            return "dropped"
+        return super().request_status(token, request_id)
+
+
+def test_a_ride_still_running_at_the_window_is_allowed_to_finish(engine: Engine) -> None:
+    """OQ-28. The run used to stop dead on the hour and record a rider in a moving cab
+    as `unresolved`, failing `all_requests_terminal` for no reason but where the clock
+    stopped - and only sometimes, which is worse."""
+    with_platform(engine, StillRiding(engine, drop_after=timedelta(minutes=10)))
+    rider = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    summary = engine.run()
+
+    assert rider.record.outcome is Outcome.completed
+    assert 10 <= summary.drain_minutes <= 12
+    assert summary.drain_capped is False
+
+
+def test_a_ride_that_never_ends_still_fails_the_run(engine: Engine) -> None:
+    """The cap is what keeps the drain a fix and not a cover-up: a genuinely stuck ride
+    must still be reported."""
+    with_platform(engine, StillRiding(engine, drop_after=None))
+    rider = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    summary = engine.run()
+
+    assert rider.record.outcome is Outcome.unresolved
+    assert rider.record.detail == "still riding when the run stopped"
+    assert summary.drain_minutes == engine.scenario.drain_minutes_max
+    assert summary.drain_capped is True
+
+
+def test_a_scenario_can_refuse_to_wait(engine: Engine) -> None:
+    """`drain_minutes_max: 0` is the old behaviour, kept for a scenario that wants to
+    measure exactly its own window."""
+    engine.scenario = engine.scenario.model_copy(update={"drain_minutes_max": 0.0})
+    with_platform(engine, StillRiding(engine, drop_after=timedelta(minutes=10)))
+    rider = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    summary = engine.run()
+
+    assert rider.record.outcome is Outcome.unresolved
+    assert summary.drain_minutes == 0.0
+    assert summary.drain_capped is True
+
+
+def test_a_rider_left_waiting_when_the_window_closed_is_counted(engine: Engine) -> None:
+    """OQ-29. They asked for a cab and never got an answer; without this they are
+    indistinguishable from someone who stayed at home."""
+    with_platform(engine, FakePlatform(["queued"]))
+    rider = EmployeeAgent(engine, profile(engine, participation=1.0))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    engine.run()
+    summary = summarise_demand([rider.record])
+
+    assert summary.requested == 1
+    assert summary.still_waiting == 1
+
+
+def test_a_rider_who_stayed_home_is_not_counted_as_waiting(engine: Engine) -> None:
+    rider = EmployeeAgent(engine, profile(engine, participation=0.0))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    engine.run()
+    summary = summarise_demand([rider.record])
+
+    assert summary.not_travelling == 1
+    assert summary.still_waiting == 0
+
+
+def test_a_run_nobody_is_riding_through_does_not_wait(engine: Engine) -> None:
+    """A healthy run pays nothing for the drain."""
+    with_platform(engine, FakePlatform(["queued", "dropped"]))
+    rider = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    summary = engine.run()
+
+    assert rider.record.outcome is Outcome.completed
+    assert summary.drain_minutes == 0.0
+    assert summary.drain_capped is False
+
+
 def test_a_refused_request_is_recorded_not_raised(engine: Engine) -> None:
     """One rider's bad day must not end the run."""
     platform = with_platform(engine, FakePlatform())
