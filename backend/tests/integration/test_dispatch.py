@@ -741,6 +741,90 @@ async def test_a_from_office_trip_collects_at_the_office(
     assert drop["location"]["lat"] == pytest.approx(MID[0], abs=1e-6)
 
 
+# --- a rider who must be collected somewhere unusual (ADR-0016) ---------------------
+
+
+#: Between MID and FAR, and 4.9 km from the office: nearer to the cab parked at FAR than
+#: to either the office or the rider's own home.
+ROADSIDE = (28.5450, 77.4000)
+
+
+async def test_a_stranded_from_office_rider_is_collected_where_they_stand(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """The case `pickup_location` exists for. A `from_office` trip collects at the office,
+    so without the override the re-ride after a breakdown would drive to the office while
+    the rider waited on a kerb 5 km away."""
+    request = await make_request(
+        db_session,
+        world,
+        "mid",
+        direction=Direction.from_office,
+        pickup_location=to_point(*ROADSIDE),
+    )
+
+    trip = (await assign(client, supervisor, request, world["vehicles"]["alpha"])).json()
+
+    pickup, drop = trip["stops"]
+    assert pickup["location"]["lat"] == pytest.approx(ROADSIDE[0], abs=1e-6)
+    assert drop["location"]["lat"] == pytest.approx(MID[0], abs=1e-6)
+
+
+async def test_a_stranded_to_office_rider_still_ends_up_at_the_office(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    request = await make_request(db_session, world, "mid", pickup_location=to_point(*ROADSIDE))
+
+    trip = (await assign(client, supervisor, request, world["vehicles"]["alpha"])).json()
+
+    pickup, drop = trip["stops"]
+    assert pickup["location"]["lat"] == pytest.approx(ROADSIDE[0], abs=1e-6)
+    assert drop["location"]["lat"] == pytest.approx(OFFICE[0], abs=1e-6)
+
+
+async def test_candidates_are_measured_to_where_the_rider_actually_is(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """Otherwise the supervisor picks the cab nearest the wrong place. For this
+    `from_office` request the office would favour alpha (parked at NEAR); the roadside
+    the rider is actually standing on is bravo's doorstep."""
+    request = await make_request(
+        db_session,
+        world,
+        "mid",
+        direction=Direction.from_office,
+        pickup_location=to_point(*ROADSIDE),
+    )
+
+    items = (
+        await client.get(f"/dispatch/requests/{request.id}/candidates", headers=supervisor)
+    ).json()["items"]
+
+    assert items[0]["registration_no"] == world["vehicles"]["bravo"].registration_no
+
+
+async def test_the_board_shows_the_pickup_a_stranded_rider_is_waiting_at(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """A supervisor reading the queue has to see the kerb, not the home address."""
+    await make_request(db_session, world, "mid", pickup_location=to_point(*ROADSIDE))
+
+    items = (await client.get("/dispatch/requests", headers=supervisor)).json()["items"]
+
+    assert items[0]["pickup_location"]["lat"] == pytest.approx(ROADSIDE[0], abs=1e-6)
+    assert items[0]["location"]["lat"] == pytest.approx(MID[0], abs=1e-6)
+
+
+async def test_an_ordinary_request_has_no_pickup_override(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    await make_request(db_session, world, "mid")
+
+    items = (await client.get("/dispatch/requests", headers=supervisor)).json()["items"]
+
+    assert items[0]["pickup_location"] is None
+
+
 async def test_stops_carry_an_eta(
     client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
 ) -> None:

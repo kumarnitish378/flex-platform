@@ -1011,6 +1011,16 @@ components:
         direction: {$ref: '#/components/schemas/Direction'}
         office_id: {type: string, format: uuid}
         location: {$ref: '#/components/schemas/LatLng'}
+        pickup_location:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/LatLng'
+          description: >
+            Where the vehicle must collect the rider, when that is not the usual place
+            for their direction (`location` for to_office, the office for from_office).
+            Set only by the platform, today when a breakdown left a rider who was
+            already on board standing at the roadside - see ADR-0016. Clients should
+            show this pin rather than `location` whenever it is present.
         landmark: {type: [string, 'null']}
         requested_time: {type: string, format: date-time}
         urgency: {$ref: '#/components/schemas/Urgency'}

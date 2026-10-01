@@ -24,17 +24,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import FakeClock
 from app.core.events import RecordingEventPublisher
-from app.core.geo import to_point
+from app.core.geo import coords, to_point
 from app.core.security import create_access_token
 from app.core.settings import Settings
-from app.domain.enums import Direction, Role, Urgency, VehicleType
+from app.domain.enums import AlertType, Direction, Role, Urgency, VehicleType
 from app.domain.state_machines import RequestStatus, StopKind, StopStatus, TripStatus, VehicleStatus
 from app.main import create_app
+from app.modules.alerts.models import Alert
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.requests.models import RideRequest
 from app.modules.requests.service import RideRequestService
+from app.modules.tracking.models import LocationPing
 from tests.builders import (
     make_client,
     make_employee,
@@ -846,6 +848,170 @@ async def test_a_rider_not_yet_collected_goes_back_on_the_queue(
     await db_session.refresh(request)
     assert request.status == str(RequestStatus.queued)
     assert request.trip_id is None
+
+
+# --- the rider who was already in the cab (OQ-27, ADR-0016) -----------------
+
+
+ROADSIDE = (28.5450, 77.4000)
+
+
+async def strand(
+    client: AsyncClient,
+    world: dict[str, Any],
+    driver: dict[str, str],
+    db_session: AsyncSession,
+    position: tuple[float, float] | None = ROADSIDE,
+) -> RideRequest:
+    """Collect the first rider, then break down with them on board."""
+    await on_duty(db_session, world)
+    await start(client, driver, world["trip_id"])
+    await act(client, driver, world["stop_ids"]["pickup_first"], "arrived")
+    await act(client, driver, world["stop_ids"]["pickup_first"], "done")
+
+    body: dict[str, Any] = {"type": "breakdown"}
+    if position is not None:
+        body |= {"lat": position[0], "lng": position[1]}
+    response = await client.post("/driver/issues", json=body, headers=driver)
+    assert response.status_code == 201
+
+    request = world["requests"]["first"]
+    await db_session.refresh(request)
+    return request
+
+
+async def test_a_rider_already_on_board_goes_back_on_the_queue(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """OQ-27. They were in the cab, so until now they had no legal transition at all and
+    sat on an aborted trip until they expired."""
+    request = await strand(client, world, driver, db_session)
+
+    assert request.status == str(RequestStatus.queued)
+    assert request.trip_id is None
+
+
+async def test_the_next_cab_is_sent_to_where_the_breakdown_happened(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    request = await strand(client, world, driver, db_session)
+
+    assert request.pickup_location is not None
+    lat, lng = coords(request.pickup_location)
+    assert (round(lat, 5), round(lng, 5)) == ROADSIDE
+
+
+async def test_a_stranded_rider_keeps_the_destination_they_asked_for(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """`location` is the rider's own end of the journey - and on a `from_office` request
+    it is the **drop**. Writing the breakdown point there would delete where they were
+    going, which is why the pickup is a field of its own (ADR-0016)."""
+    request = await strand(client, world, driver, db_session)
+
+    assert coords(request.location) == coords(world["requests"]["first"].location)
+    assert round(coords(request.location)[0], 4) == round(FAR[0], 4)
+
+
+async def test_a_stranded_rider_goes_ahead_of_people_still_at_home(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """They have already been let down once, and they are standing outdoors."""
+    request = await strand(client, world, driver, db_session)
+
+    assert request.urgency == str(Urgency.high)
+
+
+async def test_the_cabs_last_ping_locates_a_rider_the_driver_did_not_locate(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A driver dealing with a broken cab may tap the button with no position attached."""
+    db_session.add(
+        LocationPing(
+            operator_id=world["operator_id"],
+            vehicle_id=world["vehicle"].id,
+            recorded_at=NOW - timedelta(seconds=30),
+            received_at=NOW - timedelta(seconds=30),
+            location=to_point(*ROADSIDE),
+            source="sim",
+        )
+    )
+    await db_session.flush()
+
+    request = await strand(client, world, driver, db_session, position=None)
+
+    assert request.pickup_location is not None
+    lat, lng = coords(request.pickup_location)
+    assert (round(lat, 5), round(lng, 5)) == ROADSIDE
+
+
+async def test_an_unlocatable_rider_is_still_re_queued(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """No report, no ping: a re-ride the supervisor has to place beats no re-ride."""
+    request = await strand(client, world, driver, db_session, position=None)
+
+    assert request.status == str(RequestStatus.queued)
+    assert request.pickup_location is None
+
+
+async def test_a_rider_never_collected_keeps_their_ordinary_pickup(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """The override is for people the cab had already collected. Everyone else is exactly
+    where they always were, and an override would send the next cab to a kerb they have
+    never seen."""
+    await strand(client, world, driver, db_session)
+
+    second = world["requests"]["second"]
+    await db_session.refresh(second)
+    assert second.status == str(RequestStatus.queued)
+    assert second.pickup_location is None
+    assert second.urgency == str(Urgency.medium)
+
+
+async def test_the_supervisor_is_told_someone_is_standing_at_the_roadside(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A rider on a kerb is a different job from a rider at home, and the board cannot
+    tell them apart from the breakdown alert alone."""
+    await strand(client, world, driver, db_session)
+
+    alerts = list(
+        (
+            await db_session.execute(
+                select(Alert)
+                .where(Alert.operator_id == world["operator_id"])
+                .where(Alert.type == str(AlertType.system))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(alerts) == 1
+    assert alerts[0].data is not None
+    assert alerts[0].data["reason"] == "riders_stranded_by_breakdown"
+    assert alerts[0].data["riders"] == 1
+    assert alerts[0].data["pickup_known"] is True
+
+
+async def test_nobody_on_board_means_no_stranded_rider_alert(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A breakdown before the first pickup strands nobody; a second alert would be noise."""
+    await on_duty(db_session, world)
+    await start(client, driver, world["trip_id"])
+
+    await client.post("/driver/issues", json={"type": "breakdown"}, headers=driver)
+
+    alerts = (
+        await db_session.execute(
+            select(Alert)
+            .where(Alert.operator_id == world["operator_id"])
+            .where(Alert.type == str(AlertType.system))
+        )
+    ).all()
+    assert alerts == []
 
 
 async def test_the_driver_cannot_carry_on_after_breaking_down(

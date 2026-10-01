@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-27
+- Amended by ADR-0016, which settles the rider-on-board case left open below.
 
 ## Context
 DRV-06 says a breakdown "marks the vehicle `out_of_service` pending supervisor
@@ -45,7 +46,8 @@ is what the S05 run now shows happening.
 are deliberately not deciding here. `picked_up` leads only to `dropped`; marking them
 dropped would record a journey that did not happen, and inventing an edge would be
 guessing at a product decision. `trip-lifecycle.md` §2 says such riders "get new handling
-by supervisor" without saying what that is. Tracked as **OQ-27**.
+by supervisor" without saying what that is. Tracked as **OQ-27**, and since settled by
+**ADR-0016**: they return to `queued` too, collected from where the cab stopped.
 
 ## Consequences
 - A driver cannot complete a ride in a broken-down cab. The next stop action returns 409,
@@ -57,7 +59,7 @@ by supervisor" without saying what that is. Tracked as **OQ-27**.
   assignment is a human decision, and a breakdown is exactly when judgement is wanted.
 - A rider in the cab still ends up giving up or expiring until OQ-27 is settled. That is
   visible in the S05 metrics rather than hidden, which is the point of leaving it open
-  rather than papering over it.
+  rather than papering over it. (Settled by ADR-0016; they now get a re-ride.)
 
 ## Alternatives considered
 - **Leave the trip open and let the supervisor cancel it.** Rejected: the window between

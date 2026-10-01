@@ -52,7 +52,7 @@ flowchart LR
 **duty_session** — `driver_id`, `vehicle_id`, `started_at`, `ended_at`.
 
 ## Requests and trips
-**ride_request** — `operator_id`, `client_id`, `employee_id`, `direction` (`to_office`,`from_office`), `office_id`, `location` point (home/pickup or drop), `landmark`, `requested_time` timestamptz, `urgency` (`high`,`medium`,`low`), `no_sharing` bool, `status` (see lifecycle), `channel` (`app`,`supervisor`,`offer`,`sim`), `created_by_user_id`, `trip_id` nullable, `lock_vehicle_id` nullable, `forced_priority` bool, `hold_until` nullable, `override_until` nullable, `cancel_reason` nullable, `expires_at`.
+**ride_request** — `operator_id`, `client_id`, `employee_id`, `direction` (`to_office`,`from_office`), `office_id`, `location` point (home/pickup or drop), `pickup_location` point nullable (collect here instead of the usual place for the direction - set when a breakdown strands a rider who was already on board, ADR-0016), `landmark`, `requested_time` timestamptz, `urgency` (`high`,`medium`,`low`), `no_sharing` bool, `status` (see lifecycle), `channel` (`app`,`supervisor`,`offer`,`sim`), `created_by_user_id`, `trip_id` nullable, `lock_vehicle_id` nullable, `forced_priority` bool, `hold_until` nullable, `override_until` nullable, `cancel_reason` nullable, `expires_at`.
 Indexes: (operator_id, status), (employee_id, requested_time), GIST(location).
 
 **ride_request_event** — `request_id`, `from_status`, `to_status`, `actor_type` (`employee`,`driver`,`supervisor`,`system`,`system_failsafe`,`optimizer`), `actor_user_id`, `reason`, `at`, `data` jsonb.

@@ -44,6 +44,10 @@ class RideRequestOut(Strict):
     direction: Direction
     office_id: uuid.UUID
     location: LatLng
+    #: Where the vehicle must collect them, when that is not the usual place for their
+    #: direction - today only after a breakdown stranded them (ADR-0016). Clients show
+    #: this pin in preference to `location` whenever it is set.
+    pickup_location: LatLng | None = None
     landmark: str | None = None
     requested_time: datetime
     urgency: Urgency

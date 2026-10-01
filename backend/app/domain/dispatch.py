@@ -13,6 +13,8 @@ and every rider contributes two stops.
     from_office  pickup(r1) pickup(r2) ... at the office -> drop(r1) -> drop(r2) -> ...
 
 So adding a rider means choosing **one** insertion position in the rider order, not two.
+A rider may carry a `pickup` of their own, which replaces the usual collection point for
+their direction - see `Rider`. The shape is unchanged; only that one stop moves.
 The drops of a `to_office` trip are separate rows at the same location because each one
 completes a different request (a pickup stop going `done` sets `picked_up`, a drop sets
 `dropped`), and `trip_stop` is unique on `(trip_id, sequence)`.
@@ -64,10 +66,26 @@ class Place:
 
 @dataclass(frozen=True, slots=True)
 class Rider:
-    """One request's contribution to a trip: the rider's own end of the journey."""
+    """One request's contribution to a trip: the rider's own end of the journey.
+
+    `pickup` overrides where this rider is collected. It is `None` for every ordinary
+    request - collection follows the trip's direction - and set only when the rider is
+    somewhere other than the usual place, which today means a breakdown left them at the
+    roadside (ADR-0016). It cannot be folded into `place`, which is the rider's *drop* on
+    a `from_office` trip.
+    """
 
     request_id: uuid.UUID
     place: Place
+    pickup: Place | None = None
+
+    def pickup_place(self, direction: Direction, office: Place) -> Place:
+        if self.pickup is not None:
+            return self.pickup
+        return self.place if direction is Direction.to_office else office
+
+    def drop_place(self, direction: Direction, office: Place) -> Place:
+        return office if direction is Direction.to_office else self.place
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,20 +142,23 @@ def build_plan(
 
     stops: list[PlannedStop] = []
     sequence = 1
-    if direction is Direction.to_office:
-        for rider in riders:
-            stops.append(PlannedStop(sequence, StopKind.pickup, rider.request_id, rider.place))
-            sequence += 1
-        for rider in riders:
-            stops.append(PlannedStop(sequence, StopKind.drop, rider.request_id, office))
-            sequence += 1
-    else:
-        for rider in riders:
-            stops.append(PlannedStop(sequence, StopKind.pickup, rider.request_id, office))
-            sequence += 1
-        for rider in riders:
-            stops.append(PlannedStop(sequence, StopKind.drop, rider.request_id, rider.place))
-            sequence += 1
+    # Pickups first, then drops, in rider order - that is the trip shape above. A rider
+    # with a `pickup` override simply contributes a pickup somewhere other than the usual
+    # place; the arithmetic below, and so every detour figure, follows it.
+    for rider in riders:
+        stops.append(
+            PlannedStop(
+                sequence, StopKind.pickup, rider.request_id, rider.pickup_place(direction, office)
+            )
+        )
+        sequence += 1
+    for rider in riders:
+        stops.append(
+            PlannedStop(
+                sequence, StopKind.drop, rider.request_id, rider.drop_place(direction, office)
+            )
+        )
+        sequence += 1
 
     # Cumulative driving time to each stop. Stops at the same place cost nothing extra,
     # which is exactly right for the block of drops at one office.

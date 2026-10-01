@@ -16,6 +16,7 @@ stateDiagram-v2
     assigned --> picked_up: driver marks picked up
     assigned --> no_show: driver marks no-show
     picked_up --> dropped: driver marks dropped
+    picked_up --> queued: trip aborted under them (re-ride)
     requested --> cancelled
     queued --> cancelled
     suggested --> cancelled
@@ -41,6 +42,11 @@ stateDiagram-v2
 
 Rules:
 - `assigned → queued` only via supervisor reassign/unassign or trip cancellation; the employee is notified.
+- `picked_up → queued` **only** when the rider's trip was `aborted` (section 2) — a breakdown or emergency
+  that ended the ride under them. It is the re-ride edge: they are standing at the roadside, so the request
+  goes back on the queue with `pickup_location` set to where the cab stopped and `urgency` raised to `high`.
+  No actor may use this edge for anything else; a rider who was collected cannot be un-collected after the
+  fact (ADR-0016, OQ-27).
 - Employee cancel is allowed until `picked_up`; after the stop is `arrived`, a reason is required.
 - `no_show` requires stop status `arrived` for at least `no_show_wait_minutes`.
 - A locked request (`lock_vehicle_id` set) can only change vehicle through a supervisor override.
@@ -68,11 +74,13 @@ stateDiagram-v2
 | `in_progress` | Driver started. Only additions that pass detour rules, or supervisor overrides. |
 | `completed` | All stops done. |
 | `cancelled` | Before start. All non-terminal requests return to `queued`. |
-| `aborted` | Stopped mid-way. Riders not yet dropped get new handling by supervisor; alert raised. |
+| `aborted` | Stopped mid-way. Every rider not yet dropped returns to `queued` — `assigned → queued` for those still waiting, `picked_up → queued` for those on board, who also get a `pickup_location` and an alert of their own; the trip's remaining stops are `skipped`. |
 
 ## 3. Stop states
 `pending → en_route → arrived → done` or `arrived → skipped` (no-show / cancelled rider).
 - A pickup stop's `done` sets its request to `picked_up`; a drop stop's `done` sets it to `dropped`.
+- A pickup stop is at the request's `pickup_location` when it has one, otherwise at the usual place for the
+  direction: `location` for `to_office`, the office for `from_office` (ADR-0016).
 - Stops carry `planned_eta`, `latest_eta` (updated), `arrived_at`, `done_at`, GPS at each event.
 
 ## 4. Vehicle / driver states

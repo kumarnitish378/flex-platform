@@ -45,6 +45,11 @@ class RideRequest(TenantEntity):
     )
     #: Home/pickup for to_office, drop for from_office.
     location: Mapped[object] = mapped_column(Point(), nullable=False)
+    #: Where the vehicle must collect them, when that is not the usual place for their
+    #: direction. `None` for every ordinary request; set when a breakdown left a rider
+    #: who was already on board standing at the roadside (ADR-0016). It cannot be folded
+    #: into `location`, which is the *drop* for a from_office request.
+    pickup_location: Mapped[object | None] = mapped_column(Point(), nullable=True)
     landmark: Mapped[str | None] = mapped_column(String(200))
     requested_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     urgency: Mapped[str] = mapped_column(

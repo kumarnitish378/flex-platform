@@ -16,15 +16,17 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
 from app.core.events import Event, EventPublisher, NullEventPublisher, operator_channel
+from app.core.geo import to_point
 from app.core.logging import get_logger
-from app.domain.enums import AlertSeverity, AlertStatus, AlertType
+from app.domain.enums import AlertSeverity, AlertStatus, AlertType, Urgency
 from app.domain.errors import Conflict, NotFound, ValidationFailed
 from app.domain.notifications import NotificationType
 from app.domain.state_machines import (
@@ -68,6 +70,12 @@ SEVERITY: dict[AlertType, AlertSeverity] = {
 }
 
 OPEN_STATUSES = (AlertStatus.open, AlertStatus.acknowledged)
+
+#: How far back a breakdown looks for the cab's own last position, when the driver's
+#: report carried none. Older than this and the ping says where the cab *was*, not where
+#: it stopped; sending the next cab to a wrong place is worse than admitting we do not
+#: know and letting the supervisor read the alert.
+LAST_POSITION_LOOKBACK = timedelta(minutes=15)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +215,7 @@ class AlertService:
 
         if issue_type in ISSUE_TAKES_VEHICLE_OFF_ROAD and vehicle_id is not None:
             await self._take_off_road(vehicle_id)
-            await self._abort_the_trip(vehicle_id)
+            await self._abort_the_trip(operator_id, vehicle_id, lat, lng)
 
         # DRV-06 says "supervisor is alerted", which is the alert itself plus the event on
         # the operator's alerts channel. No push: a breakdown is urgent for whoever is
@@ -229,7 +237,47 @@ class AlertService:
         vehicle.status = transition.to_status
         logger.info("vehicle_out_of_service", vehicle_id=str(vehicle_id), reason="driver_issue")
 
-    async def _abort_the_trip(self, vehicle_id: uuid.UUID) -> None:
+    async def _where_the_cab_stopped(
+        self, vehicle_id: uuid.UUID, lat: float | None, lng: float | None
+    ) -> object | None:
+        """Where a stranded rider actually is: the driver's reported position, or the
+        cab's last known one.
+
+        `None` when neither is known. A re-ride with no pickup point is still better than
+        no re-ride, so the rider is re-queued anyway and the supervisor alert says so.
+        """
+        if lat is not None and lng is not None:
+            reported: object = to_point(lat, lng)
+            return reported
+
+        # `location_ping`, not Redis: Redis holds the live map's hot path and expires, and
+        # a position read from a cold cache is no position at all - the same reason
+        # dispatch reads pings for its decisions.
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT ST_Y(location::geometry) AS lat, ST_X(location::geometry) AS lng
+                    FROM location_ping
+                    WHERE vehicle_id = :vehicle_id AND recorded_at >= :since
+                    ORDER BY recorded_at DESC
+                    LIMIT 1
+                    """
+                ).bindparams(vehicle_id=vehicle_id, since=self.clock.now() - LAST_POSITION_LOOKBACK)
+            )
+        ).first()
+        if row is None:
+            return None
+        point: object = to_point(row.lat, row.lng)
+        return point
+
+    async def _abort_the_trip(
+        self,
+        operator_id: uuid.UUID,
+        vehicle_id: uuid.UUID,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> None:
         """`trip-lifecycle.md`: `in_progress --> aborted: breakdown / emergency`.
 
         Taking the cab off the road is not enough on its own. Without this the trip stays
@@ -238,9 +286,11 @@ class AlertService:
 
         Riders who had not been collected go back on the queue for the supervisor to
         reassign, which is the `assigned -> queued` edge the state machine already has.
-        A rider already **in** the broken cab has no such edge and is left on the aborted
-        trip: `trip-lifecycle.md` says they "get new handling by supervisor" without
-        saying what that is, and inventing a transition here would be guessing (OQ-27).
+        A rider who was already **on board** goes back on the queue too, by the
+        `picked_up -> queued` edge that exists for exactly this (ADR-0016, OQ-27), with
+        `pickup_location` set to where the cab stopped - they are standing at the
+        roadside, and the next cab must come to them rather than to their home or to the
+        office.
         """
         from app.modules.dispatch.models import Trip, TripStop
         from app.modules.requests.models import RideRequest
@@ -276,20 +326,59 @@ class AlertService:
             if stop.request_id is not None:
                 stranded.append(stop.request_id)
 
+        breakdown_at = await self._where_the_cab_stopped(vehicle_id, lat, lng)
         requeued = 0
+        aboard = 0
         for request_id in set(stranded):
             request = await self.session.scalar(
                 select(RideRequest).where(RideRequest.id == request_id)
             )
-            if request is None or request.status != str(RequestStatus.assigned):
+            if request is None:
                 continue
+
+            rider_status = RequestStatus(request.status)
+            if rider_status is RequestStatus.picked_up:
+                # This rider is standing at the roadside, not at home and not at the
+                # office. `location` is the *drop* for a from_office request, so writing
+                # the breakdown point there would lose their destination; the pickup
+                # override is the field that moves (ADR-0016).
+                if breakdown_at is not None:
+                    request.pickup_location = breakdown_at
+                # They have already waited once and been let down. Ahead of someone who
+                # has not been collected yet is the only defensible order.
+                request.urgency = str(Urgency.high)
+                aboard += 1
+            elif rider_status is not RequestStatus.assigned:
+                continue
+
             request.status = transition_request(
-                RequestStatus.assigned,
+                rider_status,
                 RequestStatus.queued,
-                RequestContext(actor=Actor.system, reason="vehicle_breakdown"),
+                RequestContext(
+                    actor=Actor.system,
+                    reason="vehicle_breakdown",
+                    trip_status=TripStatus.aborted,
+                ),
             ).to_status
             request.trip_id = None
             requeued += 1
+
+        if aboard:
+            # A rider left on the roadside is a different problem from one still at home,
+            # and the supervisor has to know which they are looking at.
+            await self.raise_alert(
+                operator_id,
+                AlertType.system,
+                data={
+                    "reason": "riders_stranded_by_breakdown",
+                    "riders": aboard,
+                    "trip_id": str(trip.id),
+                    # So the board can say "and we do not know where", which is a
+                    # different job for the supervisor.
+                    "pickup_known": breakdown_at is not None,
+                },
+                vehicle_id=vehicle_id,
+            )
 
         logger.info(
             "trip_ended_by_driver_issue",
@@ -298,6 +387,7 @@ class AlertService:
             reason="driver_issue",
             ended_as=str(ending),
             requeued=requeued,
+            stranded_aboard=aboard,
         )
 
     async def vip_without_vehicle(

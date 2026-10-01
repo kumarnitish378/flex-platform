@@ -42,6 +42,7 @@ def _operator_id(current_user: CurrentUserDep) -> uuid.UUID:
 
 def _out(request: Any, employee_name: str | None = None) -> RideRequestOut:
     shape = to_shape(request.location)
+    pickup = to_shape(request.pickup_location) if request.pickup_location is not None else None
     return RideRequestOut(
         id=request.id,
         employee_id=request.employee_id,
@@ -50,6 +51,7 @@ def _out(request: Any, employee_name: str | None = None) -> RideRequestOut:
         direction=request.direction,
         office_id=request.office_id,
         location=LatLng(lat=shape.y, lng=shape.x),
+        pickup_location=None if pickup is None else LatLng(lat=pickup.y, lng=pickup.x),
         landmark=request.landmark,
         requested_time=request.requested_time,
         urgency=request.urgency,

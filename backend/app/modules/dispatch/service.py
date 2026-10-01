@@ -414,7 +414,7 @@ class DispatchService:
             self.session.add(trip)
             await self.session.flush()
 
-        riders = [*on_board, Rider(request.id, _rider_place(request))]
+        riders = [*on_board, _rider_of(request)]
         if insertion is not None:
             riders = list(insertion.plan.order)
         await self._write_stops(trip, riders, office, eta_seconds, eta_approximate, now)
@@ -677,7 +677,7 @@ class DispatchService:
         grouped: dict[uuid.UUID, list[Rider]] = {}
         for row in rows:
             assert row.trip_id is not None
-            grouped.setdefault(row.trip_id, []).append(Rider(row.id, _rider_place(row)))
+            grouped.setdefault(row.trip_id, []).append(_rider_of(row))
         return grouped
 
     async def _riders_of(self, trip: Trip) -> list[Rider]:
@@ -692,14 +692,18 @@ class DispatchService:
         One matrix call covering every stop place, then pure arithmetic over every
         insertion position.
         """
-        newcomer = Rider(request.id, _rider_place(request))
+        newcomer = _rider_of(request)
+        office_place = Place(*_coords(office.location))
+        riders = [*on_board, newcomer]
         places = _unique_places(
-            [rider.place for rider in [*on_board, newcomer]] + [Place(*_coords(office.location))]
+            [rider.place for rider in riders]
+            + [rider.pickup for rider in riders if rider.pickup is not None]
+            + [office_place]
         )
         duration = await self._duration_table(places)
         return best_insertion(
             Direction(trip.direction),
-            Place(*_coords(office.location)),
+            office_place,
             on_board,
             newcomer,
             duration,
@@ -817,7 +821,12 @@ class DispatchService:
         office_place = Place(*_coords(office.location))
         direct: dict[uuid.UUID, float] = {}
         for row in rows:
-            direct[row.id] = _haversine_seconds(_rider_place(row), office_place)
+            rider = _rider_of(row)
+            direction = Direction(row.direction)
+            direct[row.id] = _haversine_seconds(
+                rider.pickup_place(direction, office_place),
+                rider.drop_place(direction, office_place),
+            )
         return limits, direct
 
     async def _eta_to_pickup(
@@ -957,11 +966,23 @@ def _rider_place(request: RideRequest) -> Place:
     return Place(*_coords(request.location))
 
 
+def _pickup_override(request: RideRequest) -> Place | None:
+    """Set only when the rider is not where their direction says they are (ADR-0016)."""
+    if request.pickup_location is None:
+        return None
+    return Place(*_coords(request.pickup_location))
+
+
+def _rider_of(request: RideRequest) -> Rider:
+    """The planner's view of one request, carrying any pickup override with it."""
+    return Rider(request.id, _rider_place(request), _pickup_override(request))
+
+
 def _pickup_place(request: RideRequest, office: Office) -> Place:
     """Where the vehicle collects them."""
-    if request.direction == str(Direction.to_office):
-        return Place(*_coords(request.location))
-    return Place(*_coords(office.location))
+    return _rider_of(request).pickup_place(
+        Direction(request.direction), Place(*_coords(office.location))
+    )
 
 
 def _is_stale(position: Position | None, now: datetime, stale_after_seconds: int) -> bool:

@@ -143,7 +143,9 @@ REQUEST_TRANSITIONS: dict[RequestStatus, frozenset[RequestStatus]] = {
             RequestStatus.cancelled,
         }
     ),
-    RequestStatus.picked_up: frozenset({RequestStatus.dropped}),
+    # `queued` only when the rider's trip was aborted under them - see `_guard_restrand`.
+    # Normally a picked-up rider has exactly one way out, which is being dropped off.
+    RequestStatus.picked_up: frozenset({RequestStatus.dropped, RequestStatus.queued}),
     RequestStatus.dropped: frozenset(),
     RequestStatus.no_show: frozenset(),
     RequestStatus.cancelled: frozenset(),
@@ -190,6 +192,8 @@ class RequestContext:
     reason: str | None = None
     # no_show: the stop must have been `arrived` long enough (trip-lifecycle.md §1).
     stop_status: StopStatus | None = None
+    # picked_up -> queued: only when the rider's trip was aborted (OQ-27).
+    trip_status: TripStatus | None = None
     stop_arrived_at: datetime | None = None
     now: datetime | None = None
     no_show_wait_minutes: int = 5
@@ -225,6 +229,8 @@ def transition_request(
         _guard_no_show(ctx)
     if current is RequestStatus.assigned and target is RequestStatus.queued:
         _guard_unassign(ctx)
+    if current is RequestStatus.picked_up and target is RequestStatus.queued:
+        _guard_restrand(ctx)
 
     return TransitionEvent(
         entity="ride_request",
@@ -392,6 +398,23 @@ def _guard_no_show(ctx: RequestContext) -> None:
                 "waited_seconds": int(waited.total_seconds()),
                 "required_seconds": int(required.total_seconds()),
             },
+        )
+
+
+def _guard_restrand(ctx: RequestContext) -> None:
+    """`picked_up -> queued` exists for exactly one situation: the cab broke down.
+
+    A rider who is already in a vehicle has no ordinary way back to the queue - they are
+    in the cab, and the only honest next state is being dropped somewhere. When the trip
+    is **aborted** underneath them (`trip-lifecycle.md` section 2) they are standing at
+    the roadside needing another cab, and the queue is where that is arranged. Opening
+    this edge for anything else would let a rider be un-collected after the fact, which
+    no actor should be able to do.
+    """
+    if ctx.trip_status is not TripStatus.aborted:
+        raise InvalidTransition(
+            "a picked-up rider returns to the queue only when their trip is aborted",
+            {"trip_status": str(ctx.trip_status) if ctx.trip_status else None},
         )
 
 

@@ -47,7 +47,9 @@ EXPECTED_REQUEST_EDGES: dict[RequestStatus, set[RequestStatus]] = {
     R.queued: {R.suggested, R.assigned, R.cancelled, R.expired},
     R.suggested: {R.queued, R.assigned, R.cancelled},
     R.assigned: {R.queued, R.picked_up, R.no_show, R.cancelled},
-    R.picked_up: {R.dropped},
+    # `queued` only via the abort guard (OQ-27); the matrix supplies a context that
+    # satisfies it, and `test_a_rider_cannot_be_un_collected_otherwise` covers the rest.
+    R.picked_up: {R.dropped, R.queued},
     R.dropped: set(),
     R.no_show: set(),
     R.cancelled: set(),
@@ -92,6 +94,8 @@ def satisfying_context(current: RequestStatus, target: RequestStatus) -> Request
         )
     if current is R.assigned and target is R.queued:
         return RequestContext(actor=Actor.supervisor)
+    if current is R.picked_up and target is R.queued:
+        return RequestContext(actor=Actor.system, trip_status=T.aborted)
     return RequestContext(actor=Actor.system)
 
 
@@ -456,3 +460,29 @@ def test_every_actor_has_a_mapping() -> None:
     """A new Actor must not silently become `system` in the audit trail."""
     for actor in Actor:
         assert actor in _ACTOR_TYPES, f"{actor} has no ActorType mapping"
+
+
+# --- picked_up -> queued: only when the cab broke down (OQ-27) ---------------
+
+
+def test_a_stranded_rider_returns_to_the_queue() -> None:
+    """The one situation where a rider already in a cab goes back to waiting.
+
+    `trip-lifecycle.md` section 2: an aborted trip leaves riders who were not dropped
+    needing new handling. They are standing at the roadside, so the queue is where
+    another cab is arranged.
+    """
+    event = transition_request(
+        R.picked_up, R.queued, RequestContext(actor=Actor.system, trip_status=T.aborted)
+    )
+
+    assert event.to_status == str(R.queued)
+
+
+@pytest.mark.parametrize("trip_status", [T.in_progress, T.completed, T.cancelled, None])
+def test_a_rider_cannot_be_un_collected_otherwise(trip_status: TripStatus | None) -> None:
+    """Without the abort, this edge would let anyone undo a pickup after the fact."""
+    with pytest.raises(InvalidTransition, match="only when their trip is aborted"):
+        transition_request(
+            R.picked_up, R.queued, RequestContext(actor=Actor.system, trip_status=trip_status)
+        )

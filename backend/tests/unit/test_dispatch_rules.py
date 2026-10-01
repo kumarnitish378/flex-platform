@@ -201,6 +201,51 @@ def test_from_office_insertion_orders_the_drops() -> None:
     assert drops == [NEAR, FAR]
 
 
+# --- a rider collected somewhere other than the usual place (ADR-0016) --------------
+
+
+def test_a_pickup_override_moves_only_that_pickup_on_a_to_office_trip() -> None:
+    stranded = Rider(uuid.uuid4(), FAR, pickup=MID)
+    plan = build_plan(Direction.to_office, OFFICE, [stranded, rider(NEAR)], straight_line)
+
+    assert [stop.place for stop in plan.stops] == [MID, NEAR, OFFICE, OFFICE]
+
+
+def test_a_pickup_override_is_the_whole_point_on_a_from_office_trip() -> None:
+    """The case the field exists for: `place` is the *drop* here, so there is nowhere
+    else to put "collect them at the roadside"."""
+    stranded = Rider(uuid.uuid4(), FAR, pickup=MID)
+    plan = build_plan(Direction.from_office, OFFICE, [stranded, rider(NEAR)], straight_line)
+
+    assert [stop.place for stop in plan.stops] == [MID, OFFICE, FAR, NEAR]
+
+
+def test_an_override_is_paid_for_in_the_detour_arithmetic() -> None:
+    """A stranded rider's ride is measured from where they actually are."""
+    request_id = uuid.uuid4()
+    usual = build_plan(
+        Direction.to_office, OFFICE, [Rider(request_id, FAR)], straight_line
+    ).ride_seconds[request_id]
+    moved = build_plan(
+        Direction.to_office, OFFICE, [Rider(request_id, FAR, pickup=MID)], straight_line
+    ).ride_seconds[request_id]
+
+    assert moved < usual
+    assert moved == pytest.approx(straight_line(MID, OFFICE))
+
+
+def test_a_rider_with_no_override_is_planned_exactly_as_before() -> None:
+    """The field is additive: `None` must change nothing anywhere."""
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    for direction in Direction:
+        riders = [Rider(ids[0], FAR), Rider(ids[1], NEAR)]
+        explicit = [Rider(ids[0], FAR, pickup=None), Rider(ids[1], NEAR, pickup=None)]
+        assert (
+            build_plan(direction, OFFICE, riders, straight_line).stops
+            == build_plan(direction, OFFICE, explicit, straight_line).stops
+        )
+
+
 # --- hard rules -----------------------------------------------------------------------
 
 
