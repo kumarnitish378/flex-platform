@@ -163,22 +163,28 @@ class DriverAgent:
         if not self._call(lambda: platform.start_trip(self.token, trip_id, self.engine.now())):
             return
         self.record.trips_started += 1
-        self.record.riders_per_trip[str(trip_id)] = {
-            str(stop["request_id"])
-            for stop in trip.get("stops", [])
-            if stop.get("request_id") is not None
-        }
+        self._note_riders(trip_id, trip)
         self.engine.record(f"driver {self.driver_id} started trip {trip_id}")
 
-        for stop in sorted(trip.get("stops", []), key=lambda item: item["sequence"]):
-            if stop["status"] in FINISHED_STOP_STATUSES:
-                continue
+        attempted: set[uuid.UUID] = set()
+        while True:
             if self.broken_down:
                 # The cab stopped working. The backend has already ended this trip
                 # (`trip-lifecycle.md`: breakdown -> aborted), so carrying on would be a
                 # driver tapping through a trip that no longer exists.
                 self.engine.record(f"driver {self.driver_id} abandoned trip {trip_id}")
                 return
+            stop = self._next_stop(trip_id)
+            if stop is None:
+                break
+            stop_id = uuid.UUID(stop["id"])
+            if stop_id in attempted:
+                # Worked once and still not finished. Trying again would spin for the
+                # rest of the run; the driver stops and the run says so.
+                self.record.errors.append(f"stop stuck: {stop_id}")
+                self.engine.record(f"driver {self.driver_id} could not finish stop {stop_id}")
+                return
+            attempted.add(stop_id)
             yield from self._work_a_stop(trip_id, stop)
 
         if self.broken_down:
@@ -186,6 +192,53 @@ class DriverAgent:
         if self._call(lambda: platform.complete_trip(self.token, trip_id, self.engine.now())):
             self.record.trips_completed += 1
             self.engine.record(f"driver {self.driver_id} completed trip {trip_id}")
+
+    def _next_stop(self, trip_id: uuid.UUID) -> dict[str, Any] | None:
+        """The first stop of this trip still to do, re-read from the platform.
+
+        Re-read rather than taken from the list the trip was polled with: dispatch adds
+        riders to a trip already under way (SUP-03), and a driver app polls, so it sees
+        the new stop. Working a snapshot meant the extra rider was never collected and
+        the driver then tried to complete a trip with unfinished stops - a 409, a rider
+        left standing, and a `smoke_tiny` failure that looked like a measurement
+        artefact.
+        """
+        platform = self.engine.platform
+        assert platform is not None
+        try:
+            trips = platform.driver_trips(self.token, scope="active")
+        except Exception as exc:  # noqa: BLE001 - a poll failure is not a crash
+            self.record.errors.append(f"poll: {type(exc).__name__}")
+            return None
+
+        for trip in trips:
+            if uuid.UUID(trip["id"]) != trip_id:
+                continue
+            self._note_riders(trip_id, trip)
+            pending = [
+                stop
+                for stop in trip.get("stops", [])
+                if stop["status"] not in FINISHED_STOP_STATUSES
+            ]
+            if not pending:
+                return None
+            return min(pending, key=lambda item: item["sequence"])
+        # The trip is no longer active - cancelled or aborted under the driver.
+        return None
+
+    def _note_riders(self, trip_id: uuid.UUID, trip: dict[str, Any]) -> None:
+        """Who this driver is actually carrying, including riders added mid-trip.
+
+        S07 reads this to check a VIP was never pooled, and a trip that gained a second
+        rider after the VIP boarded breaks that rule just as surely as one planned that
+        way.
+        """
+        riders = self.record.riders_per_trip.setdefault(str(trip_id), set())
+        riders.update(
+            str(stop["request_id"])
+            for stop in trip.get("stops", [])
+            if stop.get("request_id") is not None
+        )
 
     def _work_a_stop(self, trip_id: uuid.UUID, stop: dict[str, Any]) -> Process:
         """Drive there, arrive, wait for the rider, then finish or call a no-show."""

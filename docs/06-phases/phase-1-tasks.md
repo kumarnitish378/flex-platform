@@ -275,6 +275,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   only the vehicle count was honoured before, so a scenario asking for two VIP cars
   silently got one. The `vip_never_pooled` assertion reads the trips the drivers
   actually drove, so it cannot pass vacuously: the run reports 5 VIP requests, 0 pooled.
+  **`all_requests_terminal` is no longer flaky** (OQ-28, ADR-0017): `duration_hours` is
+  the demand window, and a run then drains rides already under way for up to
+  `drain_minutes_max` before measuring, so a rider in a moving cab when the clock stops
+  no longer fails a scenario. The run - not the rider agent - records anyone still
+  aboard, which also removes the older dependence on whether a poll happened to land past
+  the end. Riders left *waiting* at the window are now counted as `still_waiting`; what
+  should happen to them is OQ-29.
 
 ## Optional / later
 

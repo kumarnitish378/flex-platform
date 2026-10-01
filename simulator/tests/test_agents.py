@@ -94,7 +94,17 @@ class FakePlatform:
         lat: float | None = None,
         lng: float | None = None,
     ) -> dict[str, Any]:
+        if action in self.fail_on:
+            raise RuntimeError("backend said no")
         self.stop_actions.append((stop_id, action))
+        # The real backend moves the stop, and the driver re-reads its stops between
+        # them. A double that never moved would hand the driver the same stop forever.
+        for trip in self.trips:
+            for stop in trip.get("stops", []):
+                if str(stop["id"]) == str(stop_id) and action in {"arrived", "done", "no_show"}:
+                    stop["status"] = {"arrived": "arrived", "done": "done", "no_show": "skipped"}[
+                        action
+                    ]
         return {}
 
     def report_issue(self, token: str, issue_type: str, note: str | None = None, **kw: Any) -> Any:
@@ -446,6 +456,59 @@ def test_stops_are_worked_in_order(engine: Engine) -> None:
 
     arrived = [stop_id for stop_id, action in platform.stop_actions if action == "arrived"]
     assert arrived == [uuid.UUID(stop["id"]) for stop in trip["stops"]]
+
+
+def test_a_rider_added_after_the_trip_started_is_still_collected(engine: Engine) -> None:
+    """Dispatch adds riders to a trip already under way (SUP-03), and a driver app polls,
+    so it sees the new stop. Working the list the trip was polled with left the extra
+    rider standing on the kerb and the driver completing a trip with unfinished stops -
+    which is what `smoke_tiny` had been failing on."""
+    platform = with_platform(engine, FakePlatform())
+    trip = a_trip(stop_count=2)
+    platform.trips = [trip]
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    latecomer = str(uuid.uuid4())
+
+    def add_a_rider() -> Any:
+        # Once the first pickup is done, somebody else joins the trip.
+        while not any(action == "done" for _, action in platform.stop_actions):
+            yield engine.env.timeout(60)
+        trip["stops"].extend(
+            {
+                "id": str(uuid.uuid4()),
+                "sequence": 3 + index,
+                "stop_type": ["pickup", "drop"][index],
+                "request_id": latecomer,
+                "status": "pending",
+                "location": {"lat": 28.57 + index * 0.01, "lng": 77.39},
+            }
+            for index in range(2)
+        )
+
+    engine.spawn(add_a_rider)
+    engine.run()
+
+    assert driver.record.stops_done == 4
+    assert driver.record.trips_completed == 1
+    assert latecomer in driver.record.riders_per_trip[trip["id"]]
+
+
+def test_a_stop_that_cannot_be_finished_ends_the_trip_not_the_run(engine: Engine) -> None:
+    """Re-reading the stops must not become a loop: a stop the backend will not move
+    would otherwise be worked for the rest of the run."""
+    platform = with_platform(engine, FakePlatform())
+    platform.trips = [a_trip(stop_count=2)]
+    platform.fail_on.add("arrived")
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    assert driver.record.stops_done == 0
+    assert driver.record.trips_completed == 0
+    assert any("stop stuck" in error for error in driver.record.errors)
 
 
 def test_every_stop_is_arrived_before_it_is_done(engine: Engine) -> None:

@@ -62,6 +62,10 @@ assertions:
   # "0 lost requests" is exactly `all_requests_terminal`: every rider on the broken cab
   # must end up somewhere definite - re-served, cancelled or expired - and not left in
   # limbo by a trip that stopped existing underneath them.
+  #
+  # Since ADR-0016 this reaches the riders who were already *on board*: they go back on
+  # the queue with a pickup at the roadside, so a cab can actually be sent to them. Until
+  # then they sat on the aborted trip and the only honest outcome was expiry.
   all_requests_terminal: true
   invalid_transitions: 0
   api_5xx_max: 0
