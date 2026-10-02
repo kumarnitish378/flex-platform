@@ -50,6 +50,8 @@ class FakePlatform:
         self.trips: list[dict[str, Any]] = []
         self._statuses = list(status_sequence or ["queued"])
         self.fail_on: set[str] = set()
+        #: Stops this platform refuses to move, like a no-show it will not accept yet.
+        self.refuse_stops: set[uuid.UUID] = set()
 
     # --- what the rider uses ------------------------------------------------
 
@@ -97,6 +99,11 @@ class FakePlatform:
         if action in self.fail_on:
             raise RuntimeError("backend said no")
         self.stop_actions.append((stop_id, action))
+        if stop_id in self.refuse_stops:
+            # Arrived is accepted, finishing is not - so the stop stays unfinished.
+            if action != "arrived":
+                raise RuntimeError("backend said no")
+            return {}
         # The real backend moves the stop, and the driver re-reads its stops between
         # them. A double that never moved would hand the driver the same stop forever.
         for trip in self.trips:
@@ -532,7 +539,7 @@ def test_a_rider_added_after_the_trip_started_is_still_collected(engine: Engine)
     assert latecomer in driver.record.riders_per_trip[trip["id"]]
 
 
-def test_a_stop_that_cannot_be_finished_ends_the_trip_not_the_run(engine: Engine) -> None:
+def test_a_stop_that_cannot_be_finished_is_left_behind_not_retried(engine: Engine) -> None:
     """Re-reading the stops must not become a loop: a stop the backend will not move
     would otherwise be worked for the rest of the run."""
     platform = with_platform(engine, FakePlatform())
@@ -544,7 +551,26 @@ def test_a_stop_that_cannot_be_finished_ends_the_trip_not_the_run(engine: Engine
     engine.run()
 
     assert driver.record.stops_done == 0
-    assert driver.record.trips_completed == 0
+    assert sum("stop stuck" in error for error in driver.record.errors) == 2
+    # Each stop was attempted once and given up on once - never a third time.
+    assert sum(action == "arrived" for _, action in platform.stop_actions) == 0
+
+
+def test_a_driver_with_one_stuck_stop_still_drops_everyone_else(engine: Engine) -> None:
+    """Abandoning the trip would strand the people already in the cab - which is exactly
+    what `evening_surge` showed: five riders still aboard after the drain."""
+    platform = with_platform(engine, FakePlatform())
+    trip = a_trip(stop_count=2)
+    platform.trips = [trip]
+    # The first stop will not move: a no-show the backend refuses, or a rider who
+    # cancelled while the cab was at the kerb.
+    platform.refuse_stops.add(uuid.UUID(trip["stops"][0]["id"]))
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    assert driver.record.stops_done == 1, "the second rider still got their ride"
     assert any("stop stuck" in error for error in driver.record.errors)
 
 

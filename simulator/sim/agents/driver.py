@@ -167,6 +167,7 @@ class DriverAgent:
         self.engine.record(f"driver {self.driver_id} started trip {trip_id}")
 
         attempted: set[uuid.UUID] = set()
+        stuck: set[uuid.UUID] = set()
         while True:
             if self.broken_down:
                 # The cab stopped working. The backend has already ended this trip
@@ -174,16 +175,20 @@ class DriverAgent:
                 # driver tapping through a trip that no longer exists.
                 self.engine.record(f"driver {self.driver_id} abandoned trip {trip_id}")
                 return
-            stop = self._next_stop(trip_id)
+            stop = self._next_stop(trip_id, stuck)
             if stop is None:
                 break
             stop_id = uuid.UUID(stop["id"])
             if stop_id in attempted:
-                # Worked once and still not finished. Trying again would spin for the
-                # rest of the run; the driver stops and the run says so.
+                # Worked once and still not finished - a no-show the backend refused to
+                # accept yet, or a rider who cancelled at the kerb. Retrying would spin
+                # for the rest of the run, and *abandoning the trip* would strand the
+                # people already in the cab, so the driver leaves this one behind and
+                # drives the rest. The trip will fail to complete, which is the truth.
+                stuck.add(stop_id)
                 self.record.errors.append(f"stop stuck: {stop_id}")
                 self.engine.record(f"driver {self.driver_id} could not finish stop {stop_id}")
-                return
+                continue
             attempted.add(stop_id)
             yield from self._work_a_stop(trip_id, stop)
 
@@ -193,7 +198,9 @@ class DriverAgent:
             self.record.trips_completed += 1
             self.engine.record(f"driver {self.driver_id} completed trip {trip_id}")
 
-    def _next_stop(self, trip_id: uuid.UUID) -> dict[str, Any] | None:
+    def _next_stop(
+        self, trip_id: uuid.UUID, skip: set[uuid.UUID] | None = None
+    ) -> dict[str, Any] | None:
         """The first stop of this trip still to do, re-read from the platform.
 
         Re-read rather than taken from the list the trip was polled with: dispatch adds
@@ -219,6 +226,7 @@ class DriverAgent:
                 stop
                 for stop in trip.get("stops", [])
                 if stop["status"] not in FINISHED_STOP_STATUSES
+                and uuid.UUID(stop["id"]) not in (skip or set())
             ]
             if not pending:
                 return None
