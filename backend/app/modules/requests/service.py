@@ -77,6 +77,8 @@ class ExpirySweep:
 
     expired: int = 0
     warned: int = 0
+    #: Requests nobody had served after `retry_after_minutes` (ADR-0019).
+    escalated: int = 0
 
 
 class RideRequestService:
@@ -133,7 +135,10 @@ class RideRequestService:
                 RequestChannel.app if actor_role is Role.employee else RequestChannel.supervisor
             ),
             created_by_user_id=actor_user_id,
-            # From the Clock, not the database: the simulator must be able to age this.
+            # Both from the Clock, not the database: the simulator must be able to age
+            # a request, and a wait measured against `created_at` would be measured
+            # against wall time (hard rule 2).
+            queued_at=self.clock.now(),
             expires_at=self.clock.now() + timedelta(minutes=int(expiry_minutes)),
         )
         self.session.add(request)
@@ -444,9 +449,16 @@ class RideRequestService:
         now = self.clock.now()
         expired = await self._expire_due(now, operator_id)
         warned = await self._warn_near_expiry(now, operator_id)
-        if expired or warned:
-            logger.info("expiry_sweep", expired=expired, warned=warned, at=now.isoformat())
-        return ExpirySweep(expired=expired, warned=warned)
+        escalated = await self._escalate_unassigned(now, operator_id)
+        if expired or warned or escalated:
+            logger.info(
+                "expiry_sweep",
+                expired=expired,
+                warned=warned,
+                escalated=escalated,
+                at=now.isoformat(),
+            )
+        return ExpirySweep(expired=expired, warned=warned, escalated=escalated)
 
     async def _expire_due(self, now: datetime, operator_id: uuid.UUID | None) -> int:
         query = (
@@ -510,6 +522,78 @@ class RideRequestService:
                 },
             )
             request.near_expiry_alerted_at = now
+            count += 1
+
+        if count:
+            await self.session.flush()
+        return count
+
+    async def _escalate_unassigned(self, now: datetime, operator_id: uuid.UUID | None) -> int:
+        """Escalate a request nobody has served yet (`allocation-rules.md` section 3.1).
+
+        Waiting is not a plan. After `retry_after_minutes`, and once the cab is actually
+        due, the search for a cab widens (derived from the wait in
+        `widened_candidate_eta_minutes`, so there is nothing to store), the request is
+        marked `high` urgency so it reads as what it is on the board, and the supervisor
+        is told - once.
+
+        `forced_priority` is set too, which in Phase 1 is a flag and nothing more: the
+        pooling hold window it is meant to short-circuit (`allocation-rules.md` section 2
+        rule 10) is not implemented yet, and Phase 2's cost function is what will weigh
+        it. The effects that bite **today** are the alert, the wider search and the
+        urgency a supervisor can see.
+
+        It stays **one request with one waiting clock**. Cancelling and re-creating it
+        would be the obvious reading of "retry" and would report a rider who waited fifty
+        minutes as having waited ten, which is the one number the pilot is judged on.
+        """
+        query = (
+            select(RideRequest)
+            .where(RideRequest.status == RequestStatus.queued)
+            .where(RideRequest.escalated_at.is_(None))
+        )
+        if operator_id is not None:
+            query = query.where(RideRequest.operator_id == operator_id)
+
+        count = 0
+        # One config read per operator, not per request: this sweep runs on every
+        # simulated clock jump, and a per-row read is how OQ-26 cost ten seconds a jump.
+        settings: dict[uuid.UUID, tuple[int, int]] = {}
+        for request in (await self.session.execute(query)).scalars().all():
+            if request.operator_id not in settings:
+                values = await self.config.all_values(request.operator_id)
+                settings[request.operator_id] = (
+                    int(values["retry_after_minutes"]),
+                    int(values["pickup_window_minutes"]),
+                )
+            after, window = settings[request.operator_id]
+
+            if request.queued_at > now - timedelta(minutes=after):
+                continue
+            # ...and the cab has to actually be due. A rider who asks at 06:00 for a
+            # 09:30 pickup is not being failed at 06:10, and escalating them would force
+            # priority on the whole morning and mean nothing when it mattered.
+            if now < request.requested_time - timedelta(minutes=window):
+                continue
+
+            waited = (now - request.queued_at).total_seconds() / 60.0
+            request.forced_priority = True
+            request.urgency = str(Urgency.high)
+            request.escalated_at = now
+            self.session.add(
+                Alert(
+                    operator_id=request.operator_id,
+                    type=AlertType.request_unassigned,
+                    severity=AlertSeverity.warning,
+                    request_id=request.id,
+                    status=AlertStatus.open,
+                    data={
+                        "waited_minutes": round(waited, 1),
+                        "employee_id": str(request.employee_id),
+                        "urgency": request.urgency,
+                    },
+                )
+            )
             count += 1
 
         if count:

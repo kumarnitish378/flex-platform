@@ -157,7 +157,7 @@ async def world(db_session: AsyncSession) -> dict[str, Any]:
             status=RequestStatus.dropped,
             trip_id=trip.id,
             expires_at=asked_at + timedelta(hours=2),
-            created_at=asked_at,
+            queued_at=asked_at,
         )
         db_session.add(request)
         await db_session.flush()
@@ -205,7 +205,7 @@ async def world(db_session: AsyncSession) -> dict[str, Any]:
                 if status == RequestStatus.cancelled
                 else None,
                 expires_at=NOW + timedelta(hours=2),
-                created_at=NOW - timedelta(hours=1),
+                queued_at=NOW - timedelta(hours=1),
             )
         )
 
@@ -222,7 +222,7 @@ async def world(db_session: AsyncSession) -> dict[str, Any]:
             urgency=Urgency.medium,
             status=RequestStatus.queued,
             expires_at=NOW + timedelta(hours=2),
-            created_at=NOW - timedelta(hours=1),
+            queued_at=NOW - timedelta(hours=1),
         )
     )
     await db_session.flush()
@@ -519,6 +519,7 @@ async def test_an_unfinished_ride_cannot_be_rated(
         requested_time=NOW,
         urgency=Urgency.medium,
         status=RequestStatus.assigned,
+        queued_at=NOW,
         expires_at=NOW + timedelta(hours=2),
     )
     db_session.add(pending)
@@ -615,7 +616,7 @@ async def test_the_history_stops_at_ninety_days(
             urgency=Urgency.medium,
             status=RequestStatus.dropped,
             expires_at=NOW - timedelta(days=200),
-            created_at=NOW - timedelta(days=200),
+            queued_at=NOW - timedelta(days=200),
         )
     )
     await db_session.flush()

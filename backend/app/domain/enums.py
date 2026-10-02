@@ -100,6 +100,7 @@ class AlertType(StrEnum):
 
     sos = "sos"
     driver_issue = "driver_issue"
+    request_unassigned = "request_unassigned"
     request_near_expiry = "request_near_expiry"
     vip_no_vehicle = "vip_no_vehicle"
     failsafe = "failsafe"

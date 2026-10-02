@@ -144,6 +144,27 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             15,
             description="An en-route vehicle may take a new same-direction rider within this.",
         ),
+        ConfigKey(
+            "retry_after_minutes",
+            10,
+            5,
+            60,
+            description="An unassigned request is escalated after waiting this long.",
+        ),
+        ConfigKey(
+            "retry_eta_widen_minutes",
+            10,
+            0,
+            30,
+            description="Each escalation widens that request's candidate ETA ceiling by this.",
+        ),
+        ConfigKey(
+            "retry_eta_max_minutes",
+            45,
+            5,
+            120,
+            description="The widest the candidate ETA ceiling may ever get.",
+        ),
         ConfigKey("batch_window_seconds", 45, 10, 120, description="Micro-batch window."),
         ConfigKey(
             "failsafe_timeout_seconds",

@@ -77,11 +77,20 @@ class RideRequest(TenantEntity):
     hold_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     override_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    #: When the rider asked, from the Clock. `created_at` is the row's own bookkeeping
+    #: and comes from the database's `now()`, which is the *system* clock - so under the
+    #: simulator it is real wall time while everything else is simulated. Anything that
+    #: measures waiting has to use this (hard rule 2).
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: Set from the Clock at creation, never from the database default: the simulator
     #: has to be able to make a request expire.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: Set once when the near-expiry alert fires, so it cannot fire twice.
     near_expiry_alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Set once when an unassigned request is first escalated (ADR-0019), so the
+    #: supervisor is told once however many times the sweep runs. The *widening* of the
+    #: candidate search is derived from the wait and needs no column.
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def is_locked(self) -> bool:

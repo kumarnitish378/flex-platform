@@ -223,9 +223,9 @@ class ReportService:
         query = (
             select(RideRequest)
             .where(RideRequest.operator_id == operator_id)
-            .where(RideRequest.created_at >= window_start)
-            .where(RideRequest.created_at <= window_end)
-            .order_by(RideRequest.created_at)
+            .where(RideRequest.queued_at >= window_start)
+            .where(RideRequest.queued_at <= window_end)
+            .order_by(RideRequest.queued_at)
         )
         if client_id is not None:
             query = query.where(RideRequest.client_id == client_id)
@@ -252,10 +252,10 @@ class ReportService:
                     direction=request.direction,
                     status=request.status,
                     requested_time=request.requested_time,
-                    created_at=request.created_at,
+                    created_at=request.queued_at,
                     picked_up_at=picked_up,
                     dropped_at=dropped,
-                    wait_minutes=_wait_minutes(request.created_at, picked_up),
+                    wait_minutes=_wait_minutes(request.queued_at, picked_up),
                 )
             )
         return rows

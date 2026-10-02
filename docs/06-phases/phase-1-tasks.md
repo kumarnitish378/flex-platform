@@ -111,6 +111,12 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Docs: EMP-02, EMP-06, api-spec /ride-requests*
   Do: create (self and on behalf), validation (duplicate window, time range), list mine, get, cancel with rules, expiry job via Clock-driven scheduler, near-expiry alert.
   Done when: integration tests for all acceptance criteria; expiry fires with FakeClock advance.
+  The same Clock-driven sweep now also **escalates** a request nobody has served once the
+  cab is due (ADR-0019): forced priority, a widened candidate search, one
+  `request_unassigned` alert. Writing it found that `waiting_since` and the operator
+  report measured waiting from `created_at` - a database `now()` default - so every wait
+  the platform itself reported during a simulated run was wall-clock nonsense. There is a
+  Clock-set `queued_at` now, and everything that measures waiting reads it.
 
 - [x] **B10 · Routing module** · deps B01, I02
   Docs: architecture.md §3.2 and §3.4, ADR-0010
@@ -142,6 +148,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Docs: SUP-02, SUP-03, allocation-rules.md §2–3 (hard-rule checks reported as `violations` only in Phase 1)
   Do: `/dispatch/requests`, `/dispatch/vehicles`, `/dispatch/requests/{id}/candidates` (ETA, seats, added minutes), `/dispatch/assign` (new trip or add to existing trip, stop sequencing by insertion at least-added-time position), `/dispatch/automation` pause switch.
   Done when: assigning notifies employee and driver (events emitted); adding to a full vehicle is rejected; worked scenarios in tests.
+  Two gaps closed later: `enroute_reuse_max_eta_minutes` was a declared config key
+  nothing read, so a cab 25 minutes off its route looked exactly like one passing the
+  rider's door - each candidate kind is judged on its own ceiling now; and a request
+  nobody has served widens its own ceiling as it waits (ADR-0019).
 
 - [x] **B15 · Trips + driver actions** · deps B14
   Docs: DRV-03..05, trip-lifecycle.md

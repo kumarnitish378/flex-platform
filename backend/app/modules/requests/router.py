@@ -58,8 +58,10 @@ def _out(request: Any, employee_name: str | None = None) -> RideRequestOut:
         no_sharing=request.no_sharing,
         status=request.status,
         # Waiting starts when the request was made, which is what the supervisor's
-        # timer counts from.
-        waiting_since=request.created_at,
+        # timer counts from. `queued_at`, not `created_at`: the latter is the database's
+        # `now()` and so wall time even when the platform is running on a simulated
+        # clock (hard rule 2).
+        waiting_since=request.queued_at,
         trip_id=request.trip_id,
         locked=request.is_locked,
         cancel_reason=request.cancel_reason,

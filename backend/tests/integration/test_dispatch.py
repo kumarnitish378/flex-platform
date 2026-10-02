@@ -184,6 +184,7 @@ async def make_request(
         requested_time=NOW + timedelta(minutes=5),
         urgency=Urgency.medium,
         status=status,
+        queued_at=NOW,
         expires_at=NOW + timedelta(hours=2),
         **extra,
     )
@@ -310,6 +311,7 @@ async def test_the_queue_is_scoped_to_the_operator(
             location=other_employee.home_location,
             requested_time=NOW,
             status=RequestStatus.queued,
+            queued_at=NOW,
             expires_at=NOW + timedelta(hours=2),
         )
     )

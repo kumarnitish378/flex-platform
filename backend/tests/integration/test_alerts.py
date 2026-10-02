@@ -576,6 +576,7 @@ async def test_a_vip_with_no_vehicle_is_informational(
         requested_time=NOW + timedelta(minutes=20),
         urgency=Urgency.high,
         status=RequestStatus.queued,
+        queued_at=NOW,
         expires_at=NOW + timedelta(hours=2),
     )
     db_session.add(request)
@@ -606,6 +607,7 @@ async def test_the_same_vip_request_is_not_alerted_twice(
         requested_time=NOW + timedelta(minutes=20),
         urgency=Urgency.high,
         status=RequestStatus.queued,
+        queued_at=NOW,
         expires_at=NOW + timedelta(hours=2),
     )
     db_session.add(request)

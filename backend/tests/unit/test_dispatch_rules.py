@@ -22,6 +22,7 @@ from app.domain.dispatch import (
     check_hard_rules,
     pickup_time,
     stricter,
+    widened_candidate_eta_minutes,
 )
 from app.domain.enums import Direction
 from app.domain.state_machines import StopKind
@@ -380,6 +381,128 @@ def test_an_early_pickup_outside_the_window_is_also_flagged() -> None:
     """The window is symmetric: a cab 20 minutes early is a rider standing outside."""
     early = facts(pickup_at=NOW, requested_time=NOW + timedelta(minutes=20))
     assert Violation.pickup_window_missed in check_hard_rules(early)
+
+
+def on_a_trip(**overrides: object) -> AssignmentFacts:
+    """A cab that already has a trip of the rider's own direction and office."""
+    office = uuid.uuid4()
+    base: dict[str, object] = {
+        "vehicle_status": "on_trip",
+        "office_id": office,
+        "trip_office_id": office,
+        "trip_direction": Direction.to_office,
+        "enroute_reuse_max_eta_minutes": 5,
+    }
+    base.update(overrides)
+    return facts(**base)
+
+
+def test_an_en_route_cab_is_judged_on_whether_it_is_passing_by() -> None:
+    """`allocation-rules.md` section 3: a cab that already has a trip gets its own, much
+    tighter ceiling. Until this was wired up, `enroute_reuse_max_eta_minutes` was a
+    config key nothing read, so a cab 25 minutes off its route looked as good as one
+    passing the rider's door."""
+    violations = check_hard_rules(on_a_trip(eta_to_pickup_seconds=12 * 60))
+
+    assert Violation.enroute_reuse_eta_exceeded in violations
+
+
+def test_an_en_route_cab_that_is_passing_by_is_clean() -> None:
+    violations = check_hard_rules(on_a_trip(eta_to_pickup_seconds=3 * 60))
+
+    assert violations == []
+
+
+def test_the_two_ceilings_do_not_both_fire() -> None:
+    """One limit per candidate kind. Saying it twice tells the supervisor nothing extra."""
+    violations = check_hard_rules(
+        on_a_trip(eta_to_pickup_seconds=40 * 60, candidate_max_eta_minutes=20)
+    )
+
+    assert violations == [Violation.enroute_reuse_eta_exceeded]
+
+
+def test_an_idle_cab_is_still_judged_on_the_candidate_limit() -> None:
+    violations = check_hard_rules(
+        facts(eta_to_pickup_seconds=40 * 60, candidate_max_eta_minutes=20)
+    )
+
+    assert violations == [Violation.eta_over_candidate_limit]
+
+
+# --- widening the search for a rider nobody has served (ADR-0019) -------------------
+
+
+def test_a_fresh_request_looks_exactly_as_far_as_the_rule_says() -> None:
+    assert (
+        widened_candidate_eta_minutes(
+            base_minutes=20,
+            waited_minutes=4.0,
+            retry_after_minutes=10,
+            widen_minutes=10,
+            ceiling_minutes=45,
+        )
+        == 20
+    )
+
+
+def test_the_search_widens_once_per_retry_interval() -> None:
+    """A rider who has waited half an hour is better served by a cab twenty-five minutes
+    away than by the rule that says twenty."""
+    widths = [
+        widened_candidate_eta_minutes(
+            base_minutes=20,
+            waited_minutes=waited,
+            retry_after_minutes=10,
+            widen_minutes=10,
+            ceiling_minutes=45,
+        )
+        for waited in (10.0, 20.0, 30.0)
+    ]
+
+    assert widths == [30, 40, 45]
+
+
+def test_the_widening_stops_at_the_ceiling() -> None:
+    """Otherwise a long enough wait would send a cab from the other end of the city."""
+    assert (
+        widened_candidate_eta_minutes(
+            base_minutes=20,
+            waited_minutes=600.0,
+            retry_after_minutes=10,
+            widen_minutes=10,
+            ceiling_minutes=45,
+        )
+        == 45
+    )
+
+
+def test_a_ceiling_below_the_base_does_not_narrow_the_search() -> None:
+    """A misconfiguration must not quietly make dispatch pickier than the rule."""
+    assert (
+        widened_candidate_eta_minutes(
+            base_minutes=20,
+            waited_minutes=600.0,
+            retry_after_minutes=10,
+            widen_minutes=10,
+            ceiling_minutes=5,
+        )
+        == 20
+    )
+
+
+@pytest.mark.parametrize(("retry_after", "widen"), [(0, 10), (10, 0)])
+def test_the_widening_can_be_switched_off(retry_after: int, widen: int) -> None:
+    assert (
+        widened_candidate_eta_minutes(
+            base_minutes=20,
+            waited_minutes=600.0,
+            retry_after_minutes=retry_after,
+            widen_minutes=widen,
+            ceiling_minutes=45,
+        )
+        == 20
+    )
 
 
 def test_an_eta_over_the_candidate_limit_is_flagged() -> None:

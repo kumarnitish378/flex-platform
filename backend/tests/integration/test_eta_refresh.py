@@ -156,6 +156,7 @@ async def world(db_session: AsyncSession) -> dict[str, Any]:
         urgency=Urgency.medium,
         status=RequestStatus.assigned,
         trip_id=trip.id,
+        queued_at=NOW,
         expires_at=NOW + timedelta(hours=2),
     )
     db_session.add(request)

@@ -59,6 +59,9 @@ ISSUE_TAKES_VEHICLE_OFF_ROAD = frozenset({"breakdown", "accident"})
 SEVERITY: dict[AlertType, AlertSeverity] = {
     AlertType.sos: AlertSeverity.critical,
     AlertType.driver_issue: AlertSeverity.warning,
+    # Nobody has sent this rider a cab. A supervisor can still fix it, which is what
+    # makes it a warning rather than information (ADR-0019).
+    AlertType.request_unassigned: AlertSeverity.warning,
     AlertType.request_near_expiry: AlertSeverity.warning,
     # Manual phase: informational. The supervisor decides, so this is a prompt, not a
     # failure (`allocation-rules.md` section 2 rule 4, OQ-12).

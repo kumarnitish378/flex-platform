@@ -54,6 +54,7 @@ class Violation(StrEnum):
     detour_minutes_exceeded = "detour_minutes_exceeded"
     pickup_window_missed = "pickup_window_missed"
     eta_over_candidate_limit = "eta_over_candidate_limit"
+    enroute_reuse_eta_exceeded = "enroute_reuse_eta_exceeded"
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +237,8 @@ class AssignmentFacts:
     gps_age_seconds: float | None
     stale_gps_seconds: int
     eta_to_pickup_seconds: float
+    #: `allocation-rules.md` section 3, idle candidates. The dispatch service passes the
+    #: *effective* ceiling, which widens for a request nobody has served (ADR-0019).
     candidate_max_eta_minutes: int
     pickup_window_minutes: int
     requested_time: datetime
@@ -245,6 +248,11 @@ class AssignmentFacts:
     employee_is_vip: bool
     request_no_sharing: bool
     lock_vehicle_id: uuid.UUID | None
+    #: Section 3, en-route candidates: a cab that already has a trip may pick someone up
+    #: on the way, but only if it is practically passing them. Its own ceiling, because a
+    #: 20-minute diversion with riders aboard is a different proposition from a
+    #: 20-minute approach by an empty cab.
+    enroute_reuse_max_eta_minutes: int = 5
     #: None for a brand-new trip.
     trip_direction: Direction | None = None
     trip_office_id: uuid.UUID | None = None
@@ -312,11 +320,43 @@ def check_hard_rules(
     ):
         violations.append(Violation.no_sharing)
 
-    # Section 3: the candidate ETA ceiling.
-    if facts.eta_to_pickup_seconds > facts.candidate_max_eta_minutes * 60:
-        violations.append(Violation.eta_over_candidate_limit)
+    # Section 3: the candidate ETA ceiling. One limit per candidate *kind*, as section 3
+    # describes them: an idle cab is judged on how long it takes to arrive, an en-route
+    # one on whether it is really passing by. Flagging both at once would say the same
+    # thing twice and tell the supervisor nothing extra.
+    if facts.trip_direction is None:
+        if facts.eta_to_pickup_seconds > facts.candidate_max_eta_minutes * 60:
+            violations.append(Violation.eta_over_candidate_limit)
+    elif facts.eta_to_pickup_seconds > facts.enroute_reuse_max_eta_minutes * 60:
+        violations.append(Violation.enroute_reuse_eta_exceeded)
 
     return violations
+
+
+def widened_candidate_eta_minutes(
+    base_minutes: int,
+    waited_minutes: float,
+    retry_after_minutes: int,
+    widen_minutes: int,
+    ceiling_minutes: int,
+) -> int:
+    """How far to look for a cab for a request nobody has served yet (ADR-0019).
+
+    `allocation-rules.md` section 3.1. A rider who has waited half an hour is better served
+    by a cab twenty-five minutes away than by the rule that says twenty, so the ceiling
+    widens once per `retry_after_minutes` of waiting - and stops at `ceiling_minutes`, or
+    the reasoning would run to the other end of the city.
+
+    Derived from the wait rather than stored, so it cannot drift from what the board shows
+    and re-running the sweep changes nothing.
+    """
+    if retry_after_minutes <= 0 or widen_minutes <= 0:
+        return base_minutes
+    rounds = int(waited_minutes // retry_after_minutes)
+    if rounds <= 0:
+        return base_minutes
+    # A ceiling below the base is a misconfiguration, not an instruction to narrow.
+    return min(base_minutes + rounds * widen_minutes, max(ceiling_minutes, base_minutes))
 
 
 def _detour_violations(

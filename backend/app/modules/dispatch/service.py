@@ -53,6 +53,7 @@ from app.domain.dispatch import (
     check_hard_rules,
     pickup_time,
     stricter,
+    widened_candidate_eta_minutes,
 )
 from app.domain.enums import Direction
 from app.domain.errors import Conflict, NotFound
@@ -745,7 +746,16 @@ class DispatchService:
             ),
             stale_gps_seconds=int(settings["stale_gps_seconds"]),
             eta_to_pickup_seconds=eta_seconds,
-            candidate_max_eta_minutes=int(settings["candidate_max_eta_minutes"]),
+            # Widened for a request nobody has served yet, so a long wait stops being
+            # offered only cabs that were never going to arrive (ADR-0019).
+            candidate_max_eta_minutes=widened_candidate_eta_minutes(
+                base_minutes=int(settings["candidate_max_eta_minutes"]),
+                waited_minutes=(now - request.queued_at).total_seconds() / 60.0,
+                retry_after_minutes=int(settings["retry_after_minutes"]),
+                widen_minutes=int(settings["retry_eta_widen_minutes"]),
+                ceiling_minutes=int(settings["retry_eta_max_minutes"]),
+            ),
+            enroute_reuse_max_eta_minutes=int(settings["enroute_reuse_max_eta_minutes"]),
             pickup_window_minutes=int(settings["pickup_window_minutes"]),
             requested_time=request.requested_time,
             pickup_at=pickup_time(now, eta_seconds),

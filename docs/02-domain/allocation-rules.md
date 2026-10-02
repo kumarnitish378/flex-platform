@@ -15,6 +15,9 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `max_detour_factor` | 1.5 | 1.0–3.0 | yes (stricter only) | Rider ride time ≤ factor × direct time. |
 | `max_detour_minutes` | 15 | 0–60 | yes (stricter only) | Rider ride time ≤ direct time + this. |
 | `enroute_reuse_max_eta_minutes` | 5 | 0–15 | no | An assigned/en-route vehicle may take a new same-direction rider if it reaches them within this. |
+| `retry_after_minutes` | 10 | 5–60 | no | An unassigned request is escalated after waiting this long, and again every interval after. |
+| `retry_eta_widen_minutes` | 10 | 0–30 | no | Each escalation widens `candidate_max_eta_minutes` for that request by this. |
+| `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
 | `failsafe_timeout_seconds` | 180 | 30–900 | no | Semi-auto suggestion timeout. |
 | `failsafe_action` | `auto_assign` | `auto_assign` / `escalate` | no | What happens on timeout. |
@@ -51,6 +54,32 @@ Applied in this order. A candidate that fails any rule is removed. If no candida
 - En-route reuse: vehicles on a trip of the same direction whose route passes within `enroute_reuse_max_eta_minutes` of the pickup and satisfy all hard rules after insertion.
 - Return-trip reuse: vehicles that just completed a drop (become `available`) are ordinary idle candidates; no special rule needed.
 - "Nearby" is always **time-based (ETA)**, never straight-line distance.
+- Each candidate kind is judged against its own ceiling, and only its own: an idle cab on
+  `candidate_max_eta_minutes`, an en-route one on `enroute_reuse_max_eta_minutes`. A twenty-minute
+  diversion by a cab with riders aboard is a different proposition from a twenty-minute approach by an
+  empty one.
+
+### 3.1 When nobody has been served
+A request that is still `queued` after `retry_after_minutes` is **escalated**, and again at every
+interval after that (ADR-0019). It stays one request with one waiting clock — the number the pilot is
+judged on must keep counting from the original ask, so nothing here cancels and re-creates it.
+
+Each escalation:
+- widens that request's candidate ETA ceiling by `retry_eta_widen_minutes`, up to `retry_eta_max_minutes`.
+  A rider who has waited half an hour is better served by a cab twenty-five minutes away than by the
+  rule that says twenty;
+- raises `urgency` to `high`, so the request reads on the board as what it has become;
+- raises one `request_unassigned` alert for the supervisor, the first time only;
+- sets `forced_priority`, which in Phase 1 is **only a flag**: the hold window it short-circuits
+  (section 2 rule 10) is not implemented yet, and the Phase 2 cost function is what will weigh it.
+
+Escalation only ever changes how hard the platform looks and who it tells. It never assigns, and it
+never cancels and re-creates the request - that would reset the waiting clock.
+
+The widening is derived from how long the request has waited, so it needs no stored state and cannot
+drift from what the board shows. In Phase 1 the ceilings are **reported, not enforced** (ADR-0011), so
+widening removes a flag from a cab a supervisor could already have chosen; it becomes a real filter when
+the Phase 2 optimizer uses the same numbers.
 
 ## 4. Cost function (minutes-equivalent)
 For assigning request *r* to vehicle *v* (single insertion, Phase 2):

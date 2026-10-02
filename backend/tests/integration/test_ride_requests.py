@@ -626,9 +626,16 @@ async def test_near_expiry_raises_one_alert(
     clock.advance(timedelta(minutes=110))  # 10 minutes left of the 120
     assert (await service.run_due_expiries()).warned == 1
 
-    alerts = (await db_session.execute(select(Alert))).scalars().all()
+    alerts = (
+        (
+            await db_session.execute(
+                select(Alert).where(Alert.type == str(AlertType.request_near_expiry))
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(alerts) == 1
-    assert alerts[0].type == AlertType.request_near_expiry
     assert alerts[0].status == "open"
 
 
@@ -644,8 +651,124 @@ async def test_the_near_expiry_alert_does_not_repeat(
     clock.advance(timedelta(minutes=2))
     await service.run_due_expiries()
 
-    count = await db_session.scalar(select(func.count()).select_from(Alert))
+    count = await db_session.scalar(
+        select(func.count())
+        .select_from(Alert)
+        .where(Alert.type == str(AlertType.request_near_expiry))
+    )
     assert count == 1
+
+
+# --- escalation: nobody has sent this rider a cab (ADR-0019) -------------------------
+
+
+def soon(**overrides: object) -> dict[str, object]:
+    """A rider who wants a cab now, which is when "nobody came" starts to mean anything."""
+    return payload(requested_time=(NOW + timedelta(minutes=2)).isoformat(), **overrides)
+
+
+async def test_a_request_for_a_pickup_hours_away_is_not_escalated(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """`payload()` asks for a cab in two hours. Nobody is being failed ten minutes in,
+    and escalating them would force priority across the whole morning and so mean
+    nothing at the moment it mattered."""
+    await client.post("/ride-requests", json=payload(), headers=rider)
+
+    clock.advance(timedelta(minutes=30))
+
+    assert (await RideRequestService(db_session, clock).run_due_expiries()).escalated == 0
+
+
+async def test_a_request_is_escalated_once_the_cab_is_due(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """Same request, now overdue: `pickup_window_minutes` before the pickup they asked
+    for, a cab that has not been sent is a cab that is late."""
+    await client.post("/ride-requests", json=payload(), headers=rider)
+
+    clock.advance(timedelta(hours=1, minutes=55))
+
+    assert (await RideRequestService(db_session, clock).run_due_expiries()).escalated == 1
+
+
+async def test_an_unassigned_request_is_escalated_after_the_retry_interval(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """`allocation-rules.md` section 3.1. Waiting is not a plan: after
+    `retry_after_minutes` the request stops waiting for a pool that is not forming."""
+    request_id = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
+    service = RideRequestService(db_session, clock)
+
+    assert (await service.run_due_expiries()).escalated == 0, "nothing is due yet"
+    clock.advance(timedelta(minutes=11))  # retry_after_minutes defaults to 10
+    assert (await service.run_due_expiries()).escalated == 1
+
+    request = await db_session.get(RideRequest, uuid.UUID(request_id))
+    assert request is not None
+    await db_session.refresh(request)
+    assert request.forced_priority is True
+    assert request.escalated_at is not None
+    # The effect a supervisor can actually see in Phase 1.
+    assert request.urgency == str(Urgency.high)
+    assert request.status == str(RequestStatus.queued), "escalating is not assigning"
+
+
+async def test_escalation_tells_the_supervisor_once(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """The sweep runs every minute; one alert per abandoned rider, not one per minute."""
+    await client.post("/ride-requests", json=soon(), headers=rider)
+    service = RideRequestService(db_session, clock)
+
+    clock.advance(timedelta(minutes=11))
+    await service.run_due_expiries()
+    clock.advance(timedelta(minutes=11))
+    assert (await service.run_due_expiries()).escalated == 0
+
+    alerts = (
+        (
+            await db_session.execute(
+                select(Alert).where(Alert.type == str(AlertType.request_unassigned))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(alerts) == 1
+    assert alerts[0].data is not None
+    assert alerts[0].data["waited_minutes"] >= 10
+
+
+async def test_the_waiting_clock_is_not_reset_by_escalation(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """The one thing "retry" must not mean. Re-creating the request would report a rider
+    who waited fifty minutes as having waited ten - the number the pilot is judged on."""
+    created = (await client.post("/ride-requests", json=soon(), headers=rider)).json()
+    service = RideRequestService(db_session, clock)
+
+    clock.advance(timedelta(minutes=11))
+    await service.run_due_expiries()
+
+    still_there = (await client.get(f"/ride-requests/{created['id']}", headers=rider)).json()
+    assert still_there["waiting_since"] == created["waiting_since"]
+    assert still_there["expires_at"] == created["expires_at"]
+
+
+async def test_an_assigned_request_is_not_escalated(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """Somebody is already on their way; shouting about it would be noise."""
+    request_id = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
+    request = await db_session.get(RideRequest, uuid.UUID(request_id))
+    assert request is not None
+    request.status = str(RequestStatus.assigned)
+    await db_session.flush()
+
+    clock.advance(timedelta(minutes=30))
+
+    assert (await RideRequestService(db_session, clock).run_due_expiries()).escalated == 0
 
 
 async def test_a_sweep_is_scoped_to_one_operator_when_asked(
