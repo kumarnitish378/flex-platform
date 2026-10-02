@@ -263,8 +263,11 @@ class EmployeeAgent:
                     return
 
                 if now >= deadline:
-                    self._give_up(request_id, started, now)
-                    return
+                    if self._give_up(request_id, started, now):
+                        return
+                    # Refused because the cab got there first. The next poll reads the
+                    # truth off the board and rides or finishes accordingly.
+                    continue
         finally:
             self.waiting = False
 
@@ -284,6 +287,16 @@ class EmployeeAgent:
                 self.record.outcome = _outcome_for(status)
                 return
 
+    def _live_status_of(self, request_id: uuid.UUID) -> str | None:
+        """This rider's own request, read straight from the platform."""
+        platform = self.engine.platform
+        if platform is None:
+            return None
+        try:
+            return platform.request_status(self.profile.token, request_id)
+        except Exception:  # noqa: BLE001 - the caller is already handling a failure
+            return None
+
     def _status_of(self, request_id: uuid.UUID) -> str | None:
         """What the platform last said. `None` means the board has not seen it yet."""
         board = self.engine.board
@@ -294,8 +307,16 @@ class EmployeeAgent:
             return None
         return platform.request_status(self.profile.token, request_id)
 
-    def _give_up(self, request_id: uuid.UUID, started: datetime, now: datetime) -> None:
-        """Cancel after waiting past patience. This is the number the pilot is judged on."""
+    def _give_up(self, request_id: uuid.UUID, started: datetime, now: datetime) -> bool:
+        """Cancel after waiting past patience. This is the number the pilot is judged on.
+
+        `False` means "not settled, keep going": the cancellation was refused and the
+        rider turns out to have been collected while their patience was running out. The
+        status board is a minute stale, so this is a real race and the platform is right
+        to refuse - `trip-lifecycle.md` section 1 allows an employee to cancel only until
+        `picked_up`. Recording it as a failed API call reported three riders who were
+        sitting in a moving cab as a platform error, and failed the run for it.
+        """
         platform = self.engine.platform
         assert platform is not None
 
@@ -303,9 +324,17 @@ class EmployeeAgent:
         try:
             platform.cancel_request(self.profile.token, request_id, reason="Waited too long")
         except Exception as exc:  # noqa: BLE001
+            # Asked of the platform, not the shared board: the board is a minute stale
+            # and that staleness is the whole reason the cancellation was refused, so
+            # reading it here would miss the very case this is for. One extra call, only
+            # on the rare refusal path.
+            live = self._live_status_of(request_id)
+            if live == "picked_up" or live in TERMINAL_STATUSES:
+                self.record.waited_minutes = None
+                return False
             self.record.outcome = Outcome.failed
-            self.record.detail = f"cancel failed: {exc}"
-            return
+            self.record.detail = f"cancel failed: {exc} (status {live})"
+            return True
 
         self.record.outcome = Outcome.gave_up
         if self.engine.board is not None:
@@ -315,6 +344,7 @@ class EmployeeAgent:
             f"employee {self.profile.employee_id} gave up after "
             f"{self.record.waited_minutes:.0f} min"
         )
+        return True
 
     # --- readiness at the pickup point -----------------------------------------------
 

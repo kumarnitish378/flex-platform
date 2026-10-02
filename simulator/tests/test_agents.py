@@ -375,6 +375,80 @@ def test_a_run_nobody_is_riding_through_does_not_wait(engine: Engine) -> None:
     assert summary.drain_capped is False
 
 
+class CollectedAtTheLastMoment(FakePlatform):
+    """The cab arrives exactly as patience runs out, so the cancellation is refused."""
+
+    def __init__(self) -> None:
+        super().__init__(["queued"])
+        self.collected = False
+
+    def cancel_request(self, token: str, request_id: uuid.UUID, reason: str) -> str:
+        # `trip-lifecycle.md` section 1: an employee may cancel only until `picked_up`.
+        self.collected = True
+        raise RuntimeError("409: already picked up")
+
+    def request_status(self, token: str, request_id: uuid.UUID) -> str:
+        return "dropped" if self.collected else "queued"
+
+
+def test_a_rider_collected_as_patience_ran_out_is_not_a_failure(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The status board is a minute stale, so this is a real race and the platform is
+    right to refuse. Recording it as a failed API call reported three riders who were
+    sitting in a moving cab as a platform error - and failed `evening_surge` for it."""
+    # Patience short enough to run out inside the scenario's hour.
+    monkeypatch.setattr("sim.agents.employee.PATIENCE_MEAN_MINUTES", 10.0)
+    monkeypatch.setattr("sim.agents.employee.PATIENCE_SIGMA_MINUTES", 0.0)
+    platform = CollectedAtTheLastMoment()
+    with_platform(engine, platform)
+    rider = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    engine.run()
+
+    assert platform.collected is True, "the rider did try to give up"
+    assert rider.record.outcome is Outcome.completed
+    assert rider.record.detail is None
+
+
+def test_the_refusal_is_checked_against_the_platform_not_the_stale_board(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The board is a minute behind, and that staleness is *why* the cancellation was
+    refused - so checking it there misses the very case this exists for. It cost a whole
+    `evening_surge` run to find that out."""
+    monkeypatch.setattr("sim.agents.employee.PATIENCE_MEAN_MINUTES", 10.0)
+    monkeypatch.setattr("sim.agents.employee.PATIENCE_SIGMA_MINUTES", 0.0)
+    platform = CollectedAtTheLastMoment()
+    with_platform(engine, platform)
+    rider = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(rider)
+
+    class LaggingBoard:
+        """A minute behind the platform, like the real one."""
+
+        def __init__(self) -> None:
+            self.reads_since_pickup = 0
+
+        def status_of(self, request_id: uuid.UUID) -> str:
+            if not platform.collected:
+                return "queued"
+            self.reads_since_pickup += 1
+            return "queued" if self.reads_since_pickup <= 1 else "dropped"
+
+        def note(self, request_id: uuid.UUID, status: str) -> None:
+            pass
+
+    engine.board = LaggingBoard()  # type: ignore[assignment]
+    engine.spawn(rider.day)
+
+    engine.run()
+
+    assert rider.record.outcome is Outcome.completed
+
+
 def test_a_refused_request_is_recorded_not_raised(engine: Engine) -> None:
     """One rider's bad day must not end the run."""
     platform = with_platform(engine, FakePlatform())
