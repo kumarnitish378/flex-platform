@@ -71,6 +71,8 @@ class RunSummary:
     #: True when the cap ran out with someone still in a cab. The run is then reporting
     #: a genuinely stuck ride, not an artefact of where the clock stopped.
     drain_capped: bool = False
+    #: Riders who asked for a cab and were never served (OQ-29).
+    abandoned: int = 0
 
 
 class Engine:
@@ -109,6 +111,9 @@ class Engine:
         self._events_scheduled = 0
         #: `no_show_wait_minutes` as the backend has it; the driver must not guess.
         self.no_show_wait_minutes = DEFAULT_NO_SHOW_WAIT_MINUTES
+        #: True once the demand window has closed: nothing new is asked for, nothing new
+        #: is assigned, and a rider still waiting has their answer (OQ-29).
+        self.window_closed = False
         #: Cabs, by the order the scenario's fleet declares them.
         self.vehicles: list[Any] = []
         #: MQTT credentials per vehicle id, from going on duty.
@@ -198,6 +203,10 @@ class Engine:
         started = self.clock.start
         self.env.run(until=self.duration_seconds)
         ended = self.clock.advance_to(self.duration_seconds)
+        # The window has closed. Riders still waiting are measured here, before the
+        # drain, because the drain is for finishing rides and not for serving anybody.
+        self.window_closed = True
+        abandoned = self._record_riders_nobody_came_for()
         drained = self._drain()
         stuck = self._record_rides_that_never_ended()
 
@@ -213,6 +222,7 @@ class Engine:
             events=list(self._log),
             drain_minutes=drained / 60.0,
             drain_capped=stuck > 0,
+            abandoned=abandoned,
         )
 
     def _drain(self) -> float:
@@ -246,6 +256,26 @@ class Engine:
             )
         return float(drained)
 
+    def _record_riders_nobody_came_for(self) -> int:
+        """Record every rider who asked for a cab and never got an answer (OQ-29).
+
+        Their process is suspended inside a poll, so until now the default outcome stood
+        and a rider the platform abandoned was counted as one who stayed at home - which
+        let `all_requests_terminal` pass over exactly the failure it exists to catch.
+        They are `unresolved`, which is what the assertion has always meant.
+        """
+        abandoned = 0
+        for rider in self.riders:
+            if not rider.waiting:
+                continue
+            rider.record.outcome = Outcome.unresolved
+            rider.record.detail = "still waiting when the demand window closed"
+            rider.record.left_waiting = True
+            abandoned += 1
+        if abandoned:
+            self.record(f"{abandoned} rider(s) were still waiting when the window closed")
+        return abandoned
+
     def _record_rides_that_never_ended(self) -> int:
         """Write the outcome of anyone still in a cab when the clock stopped.
 
@@ -261,6 +291,7 @@ class Engine:
                 continue
             rider.record.outcome = Outcome.unresolved
             rider.record.detail = "still riding when the run stopped"
+            rider.record.left_riding = True
             stuck += 1
         if stuck:
             self.record(f"{stuck} rider(s) were still in a cab when the run stopped")
@@ -323,6 +354,7 @@ class Engine:
             unresolved=summary.unresolved + summary.failed,
             not_travelling=summary.not_travelling,
             still_waiting=summary.still_waiting,
+            still_riding=summary.still_riding,
             wait_minutes_median=_percentile(waits, 0.5),
             wait_minutes_p90=_percentile(waits, 0.9),
             vip_requests=self._vip_requests(),

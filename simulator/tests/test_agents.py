@@ -290,19 +290,56 @@ def test_a_scenario_can_refuse_to_wait(engine: Engine) -> None:
     assert summary.drain_capped is True
 
 
-def test_a_rider_left_waiting_when_the_window_closed_is_counted(engine: Engine) -> None:
-    """OQ-29. They asked for a cab and never got an answer; without this they are
-    indistinguishable from someone who stayed at home."""
+def test_a_rider_nobody_came_for_is_unresolved(engine: Engine) -> None:
+    """OQ-29. They asked for a cab and never got an answer. Counted as `not_travelling`
+    this was the platform's worst failure recorded as no demand at all, and
+    `all_requests_terminal` passed straight over it."""
     with_platform(engine, FakePlatform(["queued"]))
     rider = EmployeeAgent(engine, profile(engine, participation=1.0))
     engine.riders.append(rider)
     engine.spawn(rider.day)
 
-    engine.run()
-    summary = summarise_demand([rider.record])
+    summary = engine.run()
+    demand = summarise_demand([rider.record])
 
-    assert summary.requested == 1
-    assert summary.still_waiting == 1
+    assert rider.record.outcome is Outcome.unresolved
+    assert rider.record.detail == "still waiting when the demand window closed"
+    assert demand.requested == 1
+    assert demand.still_waiting == 1
+    assert demand.all_terminal is False
+    assert summary.abandoned == 1
+
+
+def test_a_rider_left_waiting_does_not_cancel_after_the_window(engine: Engine) -> None:
+    """Their patience runs out during the drain, which is not a moment the day contained.
+    Giving up there would report a cancellation that never happened and hide the
+    abandonment behind a `gave_up`."""
+    platform = with_platform(engine, FakePlatform(["queued"]))
+    rider = EmployeeAgent(engine, profile(engine, participation=1.0))
+    engine.riders.append(rider)
+    engine.spawn(rider.day)
+
+    engine.run()
+
+    assert rider.record.patience_minutes is not None
+    assert platform.cancelled == []
+    assert rider.record.outcome is Outcome.unresolved
+
+
+def test_the_two_halves_of_unresolved_are_told_apart(engine: Engine) -> None:
+    """Nobody came, and the ride never ended, are different failures - and only the
+    first is the platform losing a rider."""
+    with_platform(engine, StillRiding(engine, drop_after=None))
+    riding = EmployeeAgent(engine, profile(engine))
+    engine.riders.append(riding)
+    engine.spawn(riding.day)
+
+    engine.run()
+    demand = summarise_demand([riding.record])
+
+    assert demand.still_riding == 1
+    assert demand.still_waiting == 0
+    assert demand.unresolved == 1
 
 
 def test_a_rider_who_stayed_home_is_not_counted_as_waiting(engine: Engine) -> None:

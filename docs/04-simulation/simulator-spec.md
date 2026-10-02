@@ -166,9 +166,11 @@ running out with someone still aboard is a genuinely stuck ride and still fails 
 ## 9. Metrics recorded
 Per run (JSON + CSV): requests, assigned, dropped, cancelled, gave up, no-shows, expired; wait (median, p90, max) overall and by direction/client/priority; ETA error (median, p90); vehicles used; trips; riders per trip; km total and empty km share; supervisor actions count and time; suggestion acceptance; failsafe triggers; override count; hard-rule violations (must be 0); invalid state transitions (must be 0); API errors; backend latency percentiles.
 
-Also `drain_minutes` and `drain_capped` (see the drain, above), and `still_waiting` —
-riders who asked for a cab and were still waiting when the window closed. They are
-reported rather than counted as a failure; see OQ-29.
+Also `drain_minutes` and `drain_capped` (see the drain, above), and the two halves of
+`unresolved` (ADR-0018): `still_waiting`, riders who asked for a cab and were never served
+— the platform losing a rider — and `still_riding`, riders being carried when the clock
+stopped after the drain. Both fail `all_requests_terminal`; reporting them separately is
+what lets a red run name its own cause.
 
 ## 10. Outputs and visualization
 - `runs/<timestamp>_<scenario>/metrics.json`, `requests.csv`, `trips.csv`, `pings.csv`, `summary.md`, plots (wait histogram, vehicles in use over time).

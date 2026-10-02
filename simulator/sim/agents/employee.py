@@ -90,6 +90,11 @@ class RiderRecord:
     waited_minutes: float | None = None
     patience_minutes: float | None = None
     detail: str | None = None
+    #: Both set by the run, not by the rider, and both a kind of `unresolved` (OQ-29).
+    #: Kept apart because they are different failures: nobody ever came for the first,
+    #: while the second was being carried and the clock ran out.
+    left_waiting: bool = False
+    left_riding: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +132,9 @@ class EmployeeAgent:
         self.record = RiderRecord(employee_id=profile.employee_id)
         #: In a moving cab right now. The run's drain waits on this (OQ-28).
         self.on_board = False
+        #: Waiting for a cab right now, with no answer yet. The run reads this when the
+        #: demand window closes (OQ-29).
+        self.waiting = False
         self._rng: np.random.Generator = engine.rng.for_agent(f"employee:{profile.employee_id}")
 
     # --- the day ----------------------------------------------------------------
@@ -226,33 +234,39 @@ class EmployeeAgent:
         started = self.engine.now()
         deadline = started + timedelta(minutes=patience)
 
-        while True:
-            yield self.engine.env.timeout(POLL_INTERVAL_SECONDS)
-            now = self.engine.now()
+        self.waiting = True
+        try:
+            while True:
+                yield self.engine.env.timeout(POLL_INTERVAL_SECONDS)
+                now = self.engine.now()
 
-            status = self._status_of(request_id)
-            if status in TERMINAL_STATUSES:
-                self.record.waited_minutes = (now - started).total_seconds() / 60.0
-                self.record.outcome = _outcome_for(str(status))
-                return
+                if self.engine.window_closed:
+                    # The demand window has closed and nobody is coming. The run records
+                    # this rider (OQ-29); giving up *now* would be an action taken after
+                    # the window, and would report a cancellation the day never saw.
+                    return
 
-            if status == "picked_up":
-                # On board: patience no longer applies, the ride is happening.
-                self.on_board = True
-                try:
-                    yield from self._ride_home(request_id, started)
-                finally:
-                    self.on_board = False
-                return
+                status = self._status_of(request_id)
+                if status in TERMINAL_STATUSES:
+                    self.record.waited_minutes = (now - started).total_seconds() / 60.0
+                    self.record.outcome = _outcome_for(str(status))
+                    return
 
-            if now >= deadline:
-                self._give_up(request_id, started, now)
-                return
+                if status == "picked_up":
+                    # On board: patience no longer applies, the ride is happening.
+                    self.waiting = False
+                    self.on_board = True
+                    try:
+                        yield from self._ride_home(request_id, started)
+                    finally:
+                        self.on_board = False
+                    return
 
-            if now >= self.engine.scenario.end:
-                self.record.outcome = Outcome.unresolved
-                self.record.detail = f"still {status} when the scenario ended"
-                return
+                if now >= deadline:
+                    self._give_up(request_id, started, now)
+                    return
+        finally:
+            self.waiting = False
 
     def _ride_home(self, request_id: uuid.UUID, started: datetime) -> Process:
         """Ride until the platform says the journey ended.
@@ -344,11 +358,11 @@ class DemandSummary:
     unresolved: int = 0
     failed: int = 0
     not_travelling: int = 0
-    #: Riders who asked for a cab and were still waiting when the window closed. Counted
-    #: separately because their process was suspended mid-wait and never wrote an
-    #: outcome, so they are indistinguishable from someone who stayed home without this
-    #: (OQ-29). Not part of `all_terminal` yet - that is the open question.
+    #: The two halves of `unresolved`, so a failing run says which it is (OQ-29).
+    #: `still_waiting`: asked for a cab and nobody ever came. `still_riding`: was being
+    #: carried when the clock finally stopped, after the drain.
     still_waiting: int = 0
+    still_riding: int = 0
     waits_minutes: list[float] = field(default_factory=list)
 
     @property
@@ -372,8 +386,10 @@ def summarise(records: list[RiderRecord]) -> DemandSummary:
     for record in records:
         if record.request_id is not None:
             summary.requested += 1
-            if record.outcome is Outcome.not_travelling:
-                summary.still_waiting += 1
+        if record.left_waiting:
+            summary.still_waiting += 1
+        if record.left_riding:
+            summary.still_riding += 1
         setattr(summary, counters[record.outcome], getattr(summary, counters[record.outcome]) + 1)
         if record.waited_minutes is not None:
             summary.waits_minutes.append(record.waited_minutes)

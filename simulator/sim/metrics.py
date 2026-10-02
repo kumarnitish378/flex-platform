@@ -61,10 +61,12 @@ class DemandMetrics:
     expired: int | None = None
     unresolved: int | None = None
     not_travelling: int | None = None
-    #: Asked for a cab, still waiting when the demand window closed, and never recorded
-    #: an outcome. Reported so the gap is visible rather than hidden inside
-    #: `not_travelling`; whether it should fail a run is OQ-29.
+    #: The two halves of `unresolved`, so a failing run says which it is (OQ-29).
+    #: `still_waiting`: asked for a cab and nobody ever came, which is the platform
+    #: failing. `still_riding`: was being carried when the clock stopped after the drain,
+    #: which is a ride that never ended.
     still_waiting: int | None = None
+    still_riding: int | None = None
     wait_minutes_median: float | None = None
     wait_minutes_p90: float | None = None
     eta_error_minutes_p90: float | None = None
