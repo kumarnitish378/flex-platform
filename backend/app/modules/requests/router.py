@@ -64,6 +64,7 @@ def _out(request: Any, employee_name: str | None = None) -> RideRequestOut:
         waiting_since=request.queued_at,
         trip_id=request.trip_id,
         locked=request.is_locked,
+        escalated_at=request.escalated_at,
         cancel_reason=request.cancel_reason,
         expires_at=request.expires_at,
     )

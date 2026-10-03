@@ -26,12 +26,13 @@ from app.core.clock import Clock
 from app.core.events import Event, EventPublisher, NullEventPublisher, operator_channel
 from app.core.geo import to_point
 from app.core.logging import get_logger
-from app.domain.enums import AlertSeverity, AlertStatus, AlertType, Urgency
+from app.domain.enums import AlertSeverity, AlertStatus, AlertType
 from app.domain.errors import Conflict, NotFound, ValidationFailed
 from app.domain.notifications import NotificationType
 from app.domain.state_machines import (
     TERMINAL_TRIP_STATUSES,
     Actor,
+    Recipient,
     RequestContext,
     RequestStatus,
     StopStatus,
@@ -332,6 +333,10 @@ class AlertService:
         breakdown_at = await self._where_the_cab_stopped(vehicle_id, lat, lng)
         requeued = 0
         aboard = 0
+        #: Employees to tell, kept apart because they are told different things: one
+        #: group is standing at a roadside, the other is still at home (ADR-0020).
+        stranded_riders: list[uuid.UUID] = []
+        waiting_riders: list[uuid.UUID] = []
         for request_id in set(stranded):
             request = await self.session.scalar(
                 select(RideRequest).where(RideRequest.id == request_id)
@@ -347,12 +352,16 @@ class AlertService:
                 # override is the field that moves (ADR-0016).
                 if breakdown_at is not None:
                     request.pickup_location = breakdown_at
-                # They have already waited once and been let down. Ahead of someone who
-                # has not been collected yet is the only defensible order.
-                request.urgency = str(Urgency.high)
+                # They have already waited once and been let down, so they go ahead of
+                # someone still at home - but through `forced_priority`, never by
+                # rewriting `urgency`, which is what the *rider* asked for (ADR-0021).
+                request.forced_priority = True
+                stranded_riders.append(request.employee_id)
                 aboard += 1
             elif rider_status is not RequestStatus.assigned:
                 continue
+            else:
+                waiting_riders.append(request.employee_id)
 
             request.status = transition_request(
                 rider_status,
@@ -383,6 +392,10 @@ class AlertService:
                 vehicle_id=vehicle_id,
             )
 
+        await self._tell_everyone_the_trip_stopped(
+            operator_id, trip, ending, stranded_riders, waiting_riders
+        )
+
         logger.info(
             "trip_ended_by_driver_issue",
             trip_id=str(trip.id),
@@ -392,6 +405,61 @@ class AlertService:
             requeued=requeued,
             stranded_aboard=aboard,
         )
+
+    async def _tell_everyone_the_trip_stopped(
+        self,
+        operator_id: uuid.UUID,
+        trip: Any,
+        ending: TripStatus,
+        stranded: list[uuid.UUID],
+        waiting: list[uuid.UUID],
+    ) -> None:
+        """`trip-lifecycle.md` section 6, plus the row it was missing (ADR-0020).
+
+        Section 6 says an aborted trip notifies the supervisor and operator admin at high
+        priority. The template for that existed from B16 and **nothing ever sent it**:
+        ADR-0012 decided a breakdown needed no push because it was "urgent for whoever is
+        watching the board", which quietly contradicted the table. It is sent now.
+
+        Section 6 had no row for the rider at all, which since ADR-0016 means a rider
+        whose cab broke down under them sees their request reappear in the queue with no
+        explanation. They are told too, and told the right one of two things.
+        """
+        context = {"trip_id": str(trip.id), "ended_as": str(ending)}
+
+        for employee_ids, stranded_flag in ((stranded, True), (waiting, False)):
+            if not employee_ids:
+                continue
+            users = await self._users_of_employees(employee_ids)
+            if not users:
+                continue
+            await self.notifications.notify(
+                NotificationType.ride_interrupted,
+                Audience(extra={Recipient.employee: users}),
+                {**context, "stranded": stranded_flag},
+            )
+
+        if ending is TripStatus.aborted:
+            await self.notifications.notify(
+                NotificationType.trip_aborted,
+                Audience(operator_id=operator_id),
+                context,
+            )
+
+    async def _users_of_employees(self, employee_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        """App users behind these employees, in one query.
+
+        An employee with no `user_id` has never logged in; there is nobody to notify and
+        that is not an error - the supervisor's alert is their safety net.
+        """
+        from app.modules.people.models import Employee
+
+        rows = await self.session.execute(
+            select(Employee.user_id)
+            .where(Employee.id.in_(employee_ids))
+            .where(Employee.user_id.is_not(None))
+        )
+        return [user_id for user_id in rows.scalars().all() if user_id is not None]
 
     async def vip_without_vehicle(
         self, operator_id: uuid.UUID, request_id: uuid.UUID

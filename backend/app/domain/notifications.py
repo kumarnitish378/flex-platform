@@ -29,13 +29,20 @@ class NotificationType(StrEnum):
     request_cancelled = "request_cancelled"
     request_near_expiry = "request_near_expiry"
     trip_aborted = "trip_aborted"
+    #: The rider's own version of `trip_aborted` (ADR-0020). A separate key because it
+    #: is a different message to a different person: the supervisor is told to
+    #: re-dispatch, the rider is told what happened to the cab they were waiting for.
+    ride_interrupted = "ride_interrupted"
     sos = "sos"
     driver_new_trip = "driver_new_trip"
     driver_trip_changed = "driver_trip_changed"
 
 
-#: Notifications a supervisor must not be able to sleep through.
-HIGH_PRIORITY = frozenset({NotificationType.sos, NotificationType.trip_aborted})
+#: Notifications a supervisor must not be able to sleep through - and, for
+#: `ride_interrupted`, a rider standing at a roadside who must not be left wondering.
+HIGH_PRIORITY = frozenset(
+    {NotificationType.sos, NotificationType.trip_aborted, NotificationType.ride_interrupted}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +226,41 @@ def trip_aborted(context: dict[str, Any]) -> list[Notification]:
     ]
 
 
+def ride_interrupted(context: dict[str, Any]) -> list[Notification]:
+    """What the rider is told when the cab they were waiting for stopped (ADR-0020).
+
+    Two situations, two messages, because the thing the rider needs to do differs. A
+    rider who was already **on board** is standing at a roadside and has to stay put to
+    be found. A rider never collected is still at home and needs to do nothing except
+    know their cab is not coming.
+
+    `trip-lifecycle.md` section 6 had no row for the rider at all. The product exists to
+    replace uncertainty - a request that silently reappears in the queue after the rider
+    was picked up is the most uncertainty this platform can generate.
+    """
+    if context.get("stranded"):
+        return [
+            Notification(
+                NotificationType.ride_interrupted,
+                Recipient.employee,
+                "Your ride was interrupted",
+                "Your cab had a problem and could not finish the trip. Please stay where "
+                "you are - another cab is being arranged to collect you from there.",
+                context,
+            )
+        ]
+    return [
+        Notification(
+            NotificationType.ride_interrupted,
+            Recipient.employee,
+            "Your cab is not coming",
+            "Your cab had a problem before it reached you. Your request is back in the "
+            "queue for another cab - you do not need to book again.",
+            context,
+        )
+    ]
+
+
 def sos(context: dict[str, Any]) -> list[Notification]:
     """`trip aborted, SOS | Supervisor, operator admin (high priority)`."""
     return [
@@ -256,6 +298,7 @@ TEMPLATES = {
     NotificationType.request_cancelled: request_cancelled,
     NotificationType.request_near_expiry: request_near_expiry,
     NotificationType.trip_aborted: trip_aborted,
+    NotificationType.ride_interrupted: ride_interrupted,
     NotificationType.sos: sos,
 }
 

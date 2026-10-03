@@ -68,8 +68,11 @@ Each escalation:
 - widens that request's candidate ETA ceiling by `retry_eta_widen_minutes`, up to `retry_eta_max_minutes`.
   A rider who has waited half an hour is better served by a cab twenty-five minutes away than by the
   rule that says twenty;
-- raises `urgency` to `high`, so the request reads on the board as what it has become;
-- raises one `request_unassigned` alert for the supervisor, the first time only;
+- stamps `escalated_at`, which is what a board renders as "late". **`urgency` is not touched** - that is
+  the rider's own answer and the platform never rewrites it (ADR-0021);
+- refreshes **one rolling `request_unassigned` alert per operator**, carrying how many riders are unserved
+  and the longest wait, which resolves itself once nobody is (ADR-0022). One alert per request put 142 rows
+  on the board in a single surge run;
 - sets `forced_priority`, which in Phase 1 is **only a flag**: the hold window it short-circuits
   (section 2 rule 10) is not implemented yet, and the Phase 2 cost function is what will weigh it.
 

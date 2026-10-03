@@ -157,6 +157,40 @@ def test_no_message_is_empty() -> None:
             assert message.body.strip()
 
 
+def test_a_stranded_rider_is_told_to_stay_put() -> None:
+    """ADR-0020. They are on a roadside and the one useful instruction is "do not move",
+    because another cab is being sent to where they are."""
+    messages = build(NotificationType.ride_interrupted, {"stranded": True})
+
+    assert len(messages) == 1
+    assert messages[0].recipient is Recipient.employee
+    assert "stay where you are" in messages[0].body.lower()
+
+
+def test_a_rider_never_collected_is_told_not_to_rebook() -> None:
+    """A different situation, a different instruction. Telling someone still at home to
+    stay put would be nonsense, and leaving them to guess makes them book a second cab -
+    which is a second request for the supervisor to serve."""
+    messages = build(NotificationType.ride_interrupted, {"stranded": False})
+
+    assert len(messages) == 1
+    assert "book again" in messages[0].body.lower()
+    assert "stay where you are" not in messages[0].body.lower()
+
+
+def test_an_interrupted_ride_is_high_priority() -> None:
+    """A rider on a roadside must not have to notice a silent notification."""
+    assert build(NotificationType.ride_interrupted, {"stranded": True})[0].high_priority
+
+
+def test_the_rider_is_never_told_to_rebook_when_stranded() -> None:
+    """The failure mode worth guarding: a stranded rider who rebooks is a rider who has
+    two open requests and is standing somewhere the second one knows nothing about."""
+    for stranded in (True, False):
+        for message in build(NotificationType.ride_interrupted, {"stranded": stranded}):
+            assert "cancel" not in message.body.lower()
+
+
 def test_an_unknown_event_produces_nothing_rather_than_raising() -> None:
     """A caller naming an event with no template must not take down the request."""
     assert build(NotificationType.driver_new_trip) == []

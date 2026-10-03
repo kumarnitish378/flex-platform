@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
@@ -450,6 +450,7 @@ class RideRequestService:
         expired = await self._expire_due(now, operator_id)
         warned = await self._warn_near_expiry(now, operator_id)
         escalated = await self._escalate_unassigned(now, operator_id)
+        await self._close_unassigned_alert(now, operator_id)
         if expired or warned or escalated:
             logger.info(
                 "expiry_sweep",
@@ -533,19 +534,16 @@ class RideRequestService:
 
         Waiting is not a plan. After `retry_after_minutes`, and once the cab is actually
         due, the search for a cab widens (derived from the wait in
-        `widened_candidate_eta_minutes`, so there is nothing to store), the request is
-        marked `high` urgency so it reads as what it is on the board, and the supervisor
-        is told - once.
-
-        `forced_priority` is set too, which in Phase 1 is a flag and nothing more: the
-        pooling hold window it is meant to short-circuit (`allocation-rules.md` section 2
-        rule 10) is not implemented yet, and Phase 2's cost function is what will weigh
-        it. The effects that bite **today** are the alert, the wider search and the
-        urgency a supervisor can see.
+        `widened_candidate_eta_minutes`, so there is nothing to store), `forced_priority`
+        and `escalated_at` are set, and the supervisor's board alert is refreshed.
 
         It stays **one request with one waiting clock**. Cancelling and re-creating it
         would be the obvious reading of "retry" and would report a rider who waited fifty
         minutes as having waited ten, which is the one number the pilot is judged on.
+
+        It also leaves `urgency` alone. Urgency is what the *rider* declared, and a first
+        cut overwrote it with `high` - which in a surge made 142 of 150 requests "high",
+        destroying both the rider's own answer and the field's meaning (ADR-0021).
         """
         query = (
             select(RideRequest)
@@ -556,6 +554,7 @@ class RideRequestService:
             query = query.where(RideRequest.operator_id == operator_id)
 
         count = 0
+        escalated_by_operator: dict[uuid.UUID, list[RideRequest]] = {}
         # One config read per operator, not per request: this sweep runs on every
         # simulated clock jump, and a per-row read is how OQ-26 cost ten seconds a jump.
         settings: dict[uuid.UUID, tuple[int, int]] = {}
@@ -576,29 +575,95 @@ class RideRequestService:
             if now < request.requested_time - timedelta(minutes=window):
                 continue
 
-            waited = (now - request.queued_at).total_seconds() / 60.0
             request.forced_priority = True
-            request.urgency = str(Urgency.high)
             request.escalated_at = now
-            self.session.add(
-                Alert(
-                    operator_id=request.operator_id,
-                    type=AlertType.request_unassigned,
-                    severity=AlertSeverity.warning,
-                    request_id=request.id,
-                    status=AlertStatus.open,
-                    data={
-                        "waited_minutes": round(waited, 1),
-                        "employee_id": str(request.employee_id),
-                        "urgency": request.urgency,
-                    },
-                )
-            )
+            escalated_by_operator.setdefault(request.operator_id, []).append(request)
             count += 1
+
+        for each_operator, requests in escalated_by_operator.items():
+            await self._refresh_unassigned_alert(each_operator, requests, now)
 
         if count:
             await self.session.flush()
         return count
+
+    async def _refresh_unassigned_alert(
+        self, operator_id: uuid.UUID, escalated: list[RideRequest], now: datetime
+    ) -> None:
+        """One rolling alert per operator, not one per abandoned rider (ADR-0022).
+
+        One alert per request is right for a quiet morning and unusable in a bad one: a
+        live `evening_surge` run escalated 142 of 150 requests and would have raised 142
+        alerts. The count is honest and the board is useless - and the one alert that
+        matters next is lost among them.
+
+        So the alert carries the count and the longest wait, and is updated in place as
+        more riders join it. The per-request detail stays on the request, which is where
+        the supervisor is already looking.
+        """
+        longest = max((now - request.queued_at).total_seconds() / 60.0 for request in escalated)
+        alert = await self.session.scalar(
+            select(Alert)
+            .where(Alert.operator_id == operator_id)
+            .where(Alert.type == str(AlertType.request_unassigned))
+            .where(Alert.status.in_([str(AlertStatus.open), str(AlertStatus.acknowledged)]))
+        )
+        if alert is None:
+            self.session.add(
+                Alert(
+                    operator_id=operator_id,
+                    type=AlertType.request_unassigned,
+                    severity=AlertSeverity.warning,
+                    status=AlertStatus.open,
+                    data={
+                        "riders": len(escalated),
+                        "longest_wait_minutes": round(longest, 1),
+                    },
+                )
+            )
+            return
+
+        previous = alert.data or {}
+        alert.data = {
+            "riders": int(previous.get("riders", 0)) + len(escalated),
+            "longest_wait_minutes": round(
+                max(longest, float(previous.get("longest_wait_minutes", 0.0))), 1
+            ),
+        }
+
+    async def _close_unassigned_alert(self, now: datetime, operator_id: uuid.UUID | None) -> int:
+        """Resolve the rolling alert once nobody is left unserved (ADR-0022).
+
+        A condition alert that outlives its condition is worse than no alert: it says
+        riders are stranded when they are not, and the next real one then looks like the
+        same stale row. The alert survives with `resolved_at`, so the history is kept.
+        """
+        query = (
+            select(Alert)
+            .where(Alert.type == str(AlertType.request_unassigned))
+            .where(Alert.status.in_([str(AlertStatus.open), str(AlertStatus.acknowledged)]))
+        )
+        if operator_id is not None:
+            query = query.where(Alert.operator_id == operator_id)
+
+        closed = 0
+        for alert in (await self.session.execute(query)).scalars().all():
+            still_unserved = await self.session.scalar(
+                select(func.count())
+                .select_from(RideRequest)
+                .where(RideRequest.operator_id == alert.operator_id)
+                .where(RideRequest.status == RequestStatus.queued)
+                .where(RideRequest.escalated_at.is_not(None))
+            )
+            if still_unserved:
+                continue
+            alert.status = AlertStatus.resolved
+            alert.resolved_at = now
+            closed += 1
+
+        if closed:
+            await self.session.flush()
+        return closed
 
     # --- internals ----------------------------------------------------------
 

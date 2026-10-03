@@ -60,5 +60,8 @@ class RideRequestOut(Strict):
         description="populated once dispatch assigns a vehicle (B14)",
     )
     locked: bool = False
+    #: Set when nobody served this request in time (ADR-0019). The board renders it as
+    #: late; `urgency` keeps whatever the rider asked for (ADR-0021).
+    escalated_at: datetime | None = None
     cancel_reason: str | None = None
     expires_at: datetime

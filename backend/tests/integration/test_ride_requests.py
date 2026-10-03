@@ -20,7 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.clock import FakeClock
 from app.core.security import create_access_token
 from app.core.settings import Settings
-from app.domain.enums import CLIENT_SCOPED_ROLES, AlertType, Direction, Role, Urgency
+from app.domain.enums import (
+    CLIENT_SCOPED_ROLES,
+    AlertStatus,
+    AlertType,
+    Direction,
+    Role,
+    Urgency,
+)
 from app.domain.state_machines import RequestStatus
 from app.main import create_app
 from app.modules.alerts.models import Alert
@@ -709,9 +716,40 @@ async def test_an_unassigned_request_is_escalated_after_the_retry_interval(
     await db_session.refresh(request)
     assert request.forced_priority is True
     assert request.escalated_at is not None
-    # The effect a supervisor can actually see in Phase 1.
-    assert request.urgency == str(Urgency.high)
     assert request.status == str(RequestStatus.queued), "escalating is not assigning"
+
+
+async def test_escalation_does_not_rewrite_what_the_rider_asked_for(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """ADR-0021. `urgency` is the rider's own answer. A first cut set it to `high` on
+    escalation, which in a surge made 142 of 150 requests "high" - destroying the
+    rider's answer and the field's meaning at once. Lateness lives in `escalated_at`."""
+    request_id = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
+
+    clock.advance(timedelta(minutes=11))
+    await RideRequestService(db_session, clock).run_due_expiries()
+
+    request = await db_session.get(RideRequest, uuid.UUID(request_id))
+    assert request is not None
+    await db_session.refresh(request)
+    assert request.urgency == str(Urgency.medium), "the rider never said this was urgent"
+
+    shown = (await client.get(f"/ride-requests/{request_id}", headers=rider)).json()
+    assert shown["escalated_at"] is not None, "the board still needs to see it is late"
+    assert shown["urgency"] == str(Urgency.medium)
+
+
+async def unassigned_alerts(db_session: AsyncSession) -> list[Alert]:
+    return list(
+        (
+            await db_session.execute(
+                select(Alert).where(Alert.type == str(AlertType.request_unassigned))
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 async def test_escalation_tells_the_supervisor_once(
@@ -726,18 +764,89 @@ async def test_escalation_tells_the_supervisor_once(
     clock.advance(timedelta(minutes=11))
     assert (await service.run_due_expiries()).escalated == 0
 
-    alerts = (
-        (
-            await db_session.execute(
-                select(Alert).where(Alert.type == str(AlertType.request_unassigned))
-            )
-        )
-        .scalars()
-        .all()
-    )
+    alerts = await unassigned_alerts(db_session)
     assert len(alerts) == 1
     assert alerts[0].data is not None
-    assert alerts[0].data["waited_minutes"] >= 10
+    assert alerts[0].data["riders"] == 1
+    assert alerts[0].data["longest_wait_minutes"] >= 10
+
+
+async def test_many_abandoned_riders_are_one_alert_carrying_the_count(
+    client: AsyncClient,
+    rider: dict[str, str],
+    supervisor: dict[str, str],
+    clock: FakeClock,
+    db_session: AsyncSession,
+    world: dict[str, uuid.UUID],
+) -> None:
+    """ADR-0022. A live `evening_surge` escalated 142 of 150 requests; 142 alerts is an
+    honest count and a board nobody can read."""
+    for _ in range(3):
+        other = make_employee(world["operator_id"], world["client_id"], world["office_id"])
+        db_session.add(other)
+        await db_session.flush()
+        response = await client.post(
+            "/ride-requests", json=soon(employee_id=str(other.id)), headers=supervisor
+        )
+        assert response.status_code == 201
+
+    clock.advance(timedelta(minutes=11))
+    assert (await RideRequestService(db_session, clock).run_due_expiries()).escalated == 3
+
+    alerts = await unassigned_alerts(db_session)
+    assert len(alerts) == 1, "one board alert, however many riders are behind it"
+    assert alerts[0].data is not None
+    assert alerts[0].data["riders"] == 3
+
+
+async def test_the_alert_clears_itself_once_everyone_is_served(
+    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+) -> None:
+    """A condition alert that outlives its condition says riders are stranded when they
+    are not, and makes the next real one look like the same stale row."""
+    request_id = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
+    service = RideRequestService(db_session, clock)
+    clock.advance(timedelta(minutes=11))
+    await service.run_due_expiries()
+    assert (await unassigned_alerts(db_session))[0].status == str(AlertStatus.open)
+
+    request = await db_session.get(RideRequest, uuid.UUID(request_id))
+    assert request is not None
+    request.status = str(RequestStatus.assigned)
+    await db_session.flush()
+    await service.run_due_expiries()
+
+    alerts = await unassigned_alerts(db_session)
+    assert alerts[0].status == str(AlertStatus.resolved)
+    assert alerts[0].resolved_at is not None
+
+
+async def test_the_alert_stays_open_while_anyone_is_still_unserved(
+    client: AsyncClient,
+    rider: dict[str, str],
+    supervisor: dict[str, str],
+    clock: FakeClock,
+    db_session: AsyncSession,
+    world: dict[str, uuid.UUID],
+) -> None:
+    """Serving one of two is not the condition clearing."""
+    other = make_employee(world["operator_id"], world["client_id"], world["office_id"])
+    db_session.add(other)
+    await db_session.flush()
+    first = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
+    await client.post("/ride-requests", json=soon(employee_id=str(other.id)), headers=supervisor)
+
+    service = RideRequestService(db_session, clock)
+    clock.advance(timedelta(minutes=11))
+    assert (await service.run_due_expiries()).escalated == 2
+
+    served = await db_session.get(RideRequest, uuid.UUID(first))
+    assert served is not None
+    served.status = str(RequestStatus.assigned)
+    await db_session.flush()
+    await service.run_due_expiries()
+
+    assert (await unassigned_alerts(db_session))[0].status == str(AlertStatus.open)
 
 
 async def test_the_waiting_clock_is_not_reset_by_escalation(

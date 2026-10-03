@@ -1043,6 +1043,14 @@ components:
                   default: false
                   description: true when the ETA is approximate (ADR-0010)
         locked: {type: boolean}
+        escalated_at:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            Set when nobody had served this request by `retry_after_minutes` after the
+            cab was due (ADR-0019). The board shows such a request as late. `urgency`
+            stays whatever the rider asked for - it is never rewritten by the platform
+            (ADR-0021), so this is the field that says "we are failing this one".
         cancel_reason: {type: [string, 'null']}
     TripStop:
       type: object

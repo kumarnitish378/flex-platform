@@ -106,3 +106,4 @@ All timestamps stored in UTC (`timestamptz`). Displayed in Asia/Kolkata. "Now" a
 | request cancelled by operator | Employee (with reason) |
 | request near expiry (15 min before) | Supervisor |
 | trip aborted, SOS | Supervisor, operator admin (high priority) |
+| trip aborted or cancelled under a rider | **The rider** (high priority): stranded riders are told to stay where they are, riders never collected are told not to book again (ADR-0020) |

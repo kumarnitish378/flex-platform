@@ -28,6 +28,7 @@ from app.core.geo import coords, to_point
 from app.core.security import create_access_token
 from app.core.settings import Settings
 from app.domain.enums import AlertType, Direction, Role, Urgency, VehicleType
+from app.domain.notifications import NotificationType
 from app.domain.state_machines import RequestStatus, StopKind, StopStatus, TripStatus, VehicleStatus
 from app.main import create_app
 from app.modules.alerts.models import Alert
@@ -917,10 +918,93 @@ async def test_a_stranded_rider_keeps_the_destination_they_asked_for(
 async def test_a_stranded_rider_goes_ahead_of_people_still_at_home(
     client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
 ) -> None:
-    """They have already been let down once, and they are standing outdoors."""
+    """They have already been let down once, and they are standing outdoors.
+
+    Through `forced_priority`, never by rewriting `urgency`: that is the rider's own
+    declared answer, and the platform does not get to change what they said (ADR-0021).
+    """
     request = await strand(client, world, driver, db_session)
 
-    assert request.urgency == str(Urgency.high)
+    assert request.forced_priority is True
+    assert request.urgency == str(Urgency.medium), "the rider's own answer is untouched"
+
+
+async def rider_notifications(db_session: AsyncSession, world: dict[str, Any]) -> list[Any]:
+    """What was actually sent to the two riders on the broken-down trip."""
+    from app.modules.notifications.models import Notification
+
+    user_ids = [world["users"][label].id for label in ("first", "second")]
+    return list(
+        (
+            await db_session.execute(
+                select(Notification)
+                .where(Notification.user_id.in_(user_ids))
+                .where(Notification.type == str(NotificationType.ride_interrupted))
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def test_a_stranded_rider_is_told_to_stay_where_they_are(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """OQ-30. `trip-lifecycle.md` section 6 had no row for the rider at all, so since
+    ADR-0016 their request simply reappeared in the queue with no explanation - after
+    they had been collected. This product exists to replace uncertainty."""
+    await strand(client, world, driver, db_session)
+
+    sent = await rider_notifications(db_session, world)
+    to_stranded = [item for item in sent if item.user_id == world["users"]["first"].id]
+    assert len(to_stranded) == 1
+    assert "stay where you are" in to_stranded[0].body.lower()
+
+
+async def test_a_rider_never_collected_is_told_not_to_book_again(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A different situation needs a different message: they are at home, and the thing
+    they must not do is book a second cab."""
+    await strand(client, world, driver, db_session)
+
+    sent = await rider_notifications(db_session, world)
+    to_waiting = [item for item in sent if item.user_id == world["users"]["second"].id]
+    assert len(to_waiting) == 1
+    assert "not coming" in to_waiting[0].title.lower()
+    assert "book again" in to_waiting[0].body.lower()
+
+
+async def test_the_supervisor_is_notified_that_a_trip_was_aborted(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """`trip-lifecycle.md` section 6: "trip aborted | Supervisor, operator admin (high
+    priority)". The template existed from B16 and nothing ever sent it - ADR-0012 decided
+    a breakdown needed no push, quietly contradicting the table."""
+    from app.modules.notifications.models import Notification
+
+    # This world is a driver's world and holds no supervisor; section 6 is about who
+    # hears, so somebody has to be there to hear.
+    watcher = make_user(name="Sunil", phone=unique_phone())
+    db_session.add(watcher)
+    await db_session.flush()
+    db_session.add(make_user_role(watcher.id, Role.supervisor, operator_id=world["operator_id"]))
+    await db_session.flush()
+
+    await strand(client, world, driver, db_session)
+
+    sent = (
+        (
+            await db_session.execute(
+                select(Notification)
+                .where(Notification.user_id == watcher.id)
+                .where(Notification.type == str(NotificationType.trip_aborted))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(sent) == 1, "section 6 says the supervisor is told"
 
 
 async def test_the_cabs_last_ping_locates_a_rider_the_driver_did_not_locate(
