@@ -539,6 +539,80 @@ async def test_a_resolved_stale_alert_can_be_raised_again(
     assert (await sweeper.sweep_stale_vehicles()).raised == 1
 
 
+async def ping_now(db_session: AsyncSession, world: dict[str, Any], at: datetime) -> None:
+    """The cab reports its position, which is how a stale alert stops being true."""
+    db_session.add(
+        LocationPing(
+            operator_id=world["operator_id"],
+            vehicle_id=world["vehicle"].id,
+            recorded_at=at,
+            received_at=at,
+            location=to_point(*HOME),
+            source="sim",
+        )
+    )
+    await db_session.flush()
+
+
+async def test_a_recovered_vehicle_closes_its_own_alert(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+) -> None:
+    """ADR-0022, applied to the other condition alert. "This cab has gone quiet" stops
+    being true the moment it pings, and an alert that outlives its condition shows cabs
+    as lost while they are driving - so a supervisor learns to scroll past the row, and
+    misses the one that matters."""
+    sweeper = service(db_session, clock, events)
+    assert (await sweeper.sweep_stale_vehicles()).raised == 1
+
+    clock.advance(timedelta(minutes=5))
+    await ping_now(db_session, world, clock.now())
+
+    result = await sweeper.sweep_stale_vehicles()
+
+    assert result.cleared == 1
+    alert = (await alerts_in(db_session))[0]
+    assert alert.status == str(AlertStatus.resolved)
+    assert alert.resolved_at is not None
+
+
+async def test_a_vehicle_still_quiet_keeps_its_alert_open(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+) -> None:
+    """The condition has not changed, so neither has the alert."""
+    sweeper = service(db_session, clock, events)
+    await sweeper.sweep_stale_vehicles()
+
+    clock.advance(timedelta(minutes=5))
+    result = await sweeper.sweep_stale_vehicles()
+
+    assert result.cleared == 0
+    assert (await alerts_in(db_session))[0].status == str(AlertStatus.open)
+
+
+async def test_a_cab_that_goes_quiet_again_is_news_again(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    clock: FakeClock,
+    events: RecordingEventPublisher,
+) -> None:
+    """Auto-closing must not mean the second incident is swallowed by the first."""
+    sweeper = service(db_session, clock, events)
+    await sweeper.sweep_stale_vehicles()
+    clock.advance(timedelta(minutes=5))
+    await ping_now(db_session, world, clock.now())
+    await sweeper.sweep_stale_vehicles()
+
+    clock.advance(timedelta(minutes=10))
+    assert (await sweeper.sweep_stale_vehicles()).raised == 1
+    assert len(await alerts_in(db_session)) == 2
+
+
 async def test_an_off_duty_vehicle_is_not_expected_to_ping(
     db_session: AsyncSession,
     world: dict[str, Any],

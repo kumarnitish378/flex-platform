@@ -85,6 +85,8 @@ LAST_POSITION_LOOKBACK = timedelta(minutes=15)
 @dataclass(frozen=True, slots=True)
 class StaleSweep:
     raised: int = 0
+    #: Alerts closed because the vehicle started reporting again (ADR-0022).
+    cleared: int = 0
 
 
 class AlertService:
@@ -521,9 +523,59 @@ class AlertService:
                 )
                 raised += 1 if alert is not None else 0
 
-        if raised:
-            logger.info("stale_vehicle_sweep", raised=raised)
-        return StaleSweep(raised=raised)
+        cleared = await self._clear_recovered_vehicles(operator_id)
+        if raised or cleared:
+            logger.info("stale_vehicle_sweep", raised=raised, cleared=cleared)
+        return StaleSweep(raised=raised, cleared=cleared)
+
+    async def _clear_recovered_vehicles(self, operator_id: uuid.UUID | None) -> int:
+        """Close the alert once the vehicle is reporting again (ADR-0022).
+
+        The alert says "this cab has gone quiet". When it starts pinging, that stops
+        being true, and a condition alert that outlives its condition is worse than no
+        alert: the board shows cabs as lost while they are driving, and a supervisor
+        learns to scroll past the row - so the one that matters next is missed too. The
+        same reasoning as the rolling unassigned-request alert, applied to the other
+        condition alert we raise.
+
+        Dedupe means a vehicle that goes quiet again after recovering raises a fresh
+        alert, which is right: that is a new incident, not a continuation.
+        """
+        from app.modules.tracking.service import GpsIngestor
+
+        query = (
+            select(Alert)
+            .where(Alert.type == str(AlertType.stale_vehicle))
+            .where(Alert.status.in_([str(status) for status in OPEN_STATUSES]))
+        )
+        if operator_id is not None:
+            query = query.where(Alert.operator_id == operator_id)
+
+        open_alerts = list((await self.session.execute(query)).scalars().all())
+        if not open_alerts:
+            return 0
+
+        ingestor = GpsIngestor(self.session, self.clock)
+        # One query per operator, not per alert: this runs on every simulated clock jump.
+        still_quiet: dict[uuid.UUID, set[uuid.UUID]] = {}
+        cleared = 0
+        for alert in open_alerts:
+            if alert.vehicle_id is None:
+                continue
+            if alert.operator_id not in still_quiet:
+                stale_after = int(await self.config.get(alert.operator_id, "stale_gps_seconds"))
+                still_quiet[alert.operator_id] = set(
+                    await ingestor.stale_vehicles(alert.operator_id, stale_after)
+                )
+            if alert.vehicle_id in still_quiet[alert.operator_id]:
+                continue
+            alert.status = AlertStatus.resolved
+            alert.resolved_at = self.clock.now()
+            cleared += 1
+
+        if cleared:
+            await self.session.flush()
+        return cleared
 
     # --- reading and closing ----------------------------------------------------------
 
