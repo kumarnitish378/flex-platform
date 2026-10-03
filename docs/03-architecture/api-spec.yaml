@@ -455,6 +455,21 @@ paths:
         '201': {description: Alert raised}
 
   /driver/duty:
+    get:
+      tags: [driver]
+      summary: Whether this driver is on duty, and in which cab
+      description: >
+        What the driver app shows when it reopens. Without it the app cannot tell an
+        off-duty driver from one whose session it has forgotten, and `POST /driver/duty`
+        with `on_duty: true` on an open session is a 409 - so the app would have to
+        provoke an error to find out where it stands. Returns the MQTT credentials when
+        on duty, so a reconnecting app can resume publishing without a new duty session.
+      responses:
+        '200':
+          description: Current duty state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DutyState'}
     post:
       tags: [driver]
       summary: Go on or off duty
@@ -795,6 +810,35 @@ paths:
           content:
             application/json:
               schema: {type: object, additionalProperties: true}
+  /simctl/release:
+    x-env: sim-only
+    post:
+      tags: [simctl]
+      summary: Give up this run's claim on the backend so another can start
+      description: >
+        One simulation run at a time per backend, enforced by an atomic claim
+        (ADR-0014). A finished run releases its claim here rather than leaving it to the
+        two-hour TTL, which is the fallback for a crash and not the normal way a claim
+        ends - without this the next run, often the same developer seconds later, is
+        refused by a run that is no longer there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id: {type: string, description: the id that made the claim}
+      responses:
+        '200':
+          description: Whether a claim was released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  released: {type: boolean}
 
 components:
   securitySchemes:
