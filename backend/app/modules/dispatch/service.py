@@ -751,6 +751,9 @@ class DispatchService:
             candidate_max_eta_minutes=widened_candidate_eta_minutes(
                 base_minutes=int(settings["candidate_max_eta_minutes"]),
                 waited_minutes=(now - request.queued_at).total_seconds() / 60.0,
+                # The first widening happens when the wait becomes "too long" by the
+                # operator's own threshold; after that, once per retry interval.
+                escalate_after_minutes=int(settings["alert_wait_minutes"]),
                 retry_after_minutes=int(settings["retry_after_minutes"]),
                 widen_minutes=int(settings["retry_eta_widen_minutes"]),
                 ceiling_minutes=int(settings["retry_eta_max_minutes"]),

@@ -532,8 +532,9 @@ class RideRequestService:
     async def _escalate_unassigned(self, now: datetime, operator_id: uuid.UUID | None) -> int:
         """Escalate a request nobody has served yet (`allocation-rules.md` section 3.1).
 
-        Waiting is not a plan. After `retry_after_minutes`, and once the cab is actually
-        due, the search for a cab widens (derived from the wait in
+        Waiting is not a plan. After `alert_wait_minutes` - the operator's own answer to
+        "how long is too long", and the threshold their board already turns red at - and
+        once the cab is actually due, the search for a cab widens (derived from the wait in
         `widened_candidate_eta_minutes`, so there is nothing to store), `forced_priority`
         and `escalated_at` are set, and the supervisor's board alert is refreshed.
 
@@ -562,7 +563,7 @@ class RideRequestService:
             if request.operator_id not in settings:
                 values = await self.config.all_values(request.operator_id)
                 settings[request.operator_id] = (
-                    int(values["retry_after_minutes"]),
+                    int(values["alert_wait_minutes"]),
                     int(values["pickup_window_minutes"]),
                 )
             after, window = settings[request.operator_id]

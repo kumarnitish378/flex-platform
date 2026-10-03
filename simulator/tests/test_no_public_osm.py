@@ -55,8 +55,13 @@ def test_default_run_makes_no_http_requests(no_network: list[str]) -> None:
     assert no_network == []
 
 
-def test_default_cli_run_makes_no_http_requests(no_network: list[str]) -> None:
-    assert main(["run", str(SCENARIOS / "smoke_tiny.yaml")]) == 0
+def test_default_cli_run_makes_no_http_requests(no_network: list[str], tmp_path: Path) -> None:
+    """`--runs-dir` into a temp directory, not because this test cares where the output
+    goes, but because the default is the real `runs/` - so every pytest run was leaving
+    a stray scenario directory among the genuine results. That is the mistake commit
+    5ab583d was about: an artefact in `runs/` reads as a result, and CI uploads the
+    whole directory."""
+    assert main(["run", str(SCENARIOS / "smoke_tiny.yaml"), "--runs-dir", str(tmp_path)]) == 0
     assert no_network == []
 
 

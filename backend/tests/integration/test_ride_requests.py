@@ -708,7 +708,7 @@ async def test_an_unassigned_request_is_escalated_after_the_retry_interval(
     service = RideRequestService(db_session, clock)
 
     assert (await service.run_due_expiries()).escalated == 0, "nothing is due yet"
-    clock.advance(timedelta(minutes=11))  # retry_after_minutes defaults to 10
+    clock.advance(timedelta(minutes=21))  # alert_wait_minutes defaults to 20
     assert (await service.run_due_expiries()).escalated == 1
 
     request = await db_session.get(RideRequest, uuid.UUID(request_id))
@@ -720,14 +720,18 @@ async def test_an_unassigned_request_is_escalated_after_the_retry_interval(
 
 
 async def test_escalation_does_not_rewrite_what_the_rider_asked_for(
-    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+    client: AsyncClient,
+    rider: dict[str, str],
+    clock: FakeClock,
+    db_session: AsyncSession,
+    world: dict[str, uuid.UUID],
 ) -> None:
     """ADR-0021. `urgency` is the rider's own answer. A first cut set it to `high` on
     escalation, which in a surge made 142 of 150 requests "high" - destroying the
     rider's answer and the field's meaning at once. Lateness lives in `escalated_at`."""
     request_id = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
 
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     await RideRequestService(db_session, clock).run_due_expiries()
 
     request = await db_session.get(RideRequest, uuid.UUID(request_id))
@@ -735,9 +739,27 @@ async def test_escalation_does_not_rewrite_what_the_rider_asked_for(
     await db_session.refresh(request)
     assert request.urgency == str(Urgency.medium), "the rider never said this was urgent"
 
-    shown = (await client.get(f"/ride-requests/{request_id}", headers=rider)).json()
+    shown = (
+        await client.get(f"/ride-requests/{request_id}", headers=rider_now(world, clock))
+    ).json()
     assert shown["escalated_at"] is not None, "the board still needs to see it is late"
     assert shown["urgency"] == str(Urgency.medium)
+
+
+def rider_now(world: dict[str, uuid.UUID], clock: FakeClock) -> dict[str, str]:
+    """A rider's headers minted at the clock's *current* time.
+
+    The `rider` fixture's token lasts 900 s, and escalation does not begin until
+    `alert_wait_minutes` (20) has passed - so any test that waits for it has an expired
+    token by then. A real app refreshes on 401; a test may simply ask for a fresh one.
+    """
+    return token_headers(
+        Role.employee,
+        world["operator_id"],
+        clock,
+        world["rider_user_id"],
+        world["client_id"],
+    )
 
 
 async def unassigned_alerts(db_session: AsyncSession) -> list[Alert]:
@@ -759,9 +781,9 @@ async def test_escalation_tells_the_supervisor_once(
     await client.post("/ride-requests", json=soon(), headers=rider)
     service = RideRequestService(db_session, clock)
 
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     await service.run_due_expiries()
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     assert (await service.run_due_expiries()).escalated == 0
 
     alerts = await unassigned_alerts(db_session)
@@ -790,7 +812,7 @@ async def test_many_abandoned_riders_are_one_alert_carrying_the_count(
         )
         assert response.status_code == 201
 
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     assert (await RideRequestService(db_session, clock).run_due_expiries()).escalated == 3
 
     alerts = await unassigned_alerts(db_session)
@@ -806,7 +828,7 @@ async def test_the_alert_clears_itself_once_everyone_is_served(
     are not, and makes the next real one look like the same stale row."""
     request_id = (await client.post("/ride-requests", json=soon(), headers=rider)).json()["id"]
     service = RideRequestService(db_session, clock)
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     await service.run_due_expiries()
     assert (await unassigned_alerts(db_session))[0].status == str(AlertStatus.open)
 
@@ -837,7 +859,7 @@ async def test_the_alert_stays_open_while_anyone_is_still_unserved(
     await client.post("/ride-requests", json=soon(employee_id=str(other.id)), headers=supervisor)
 
     service = RideRequestService(db_session, clock)
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     assert (await service.run_due_expiries()).escalated == 2
 
     served = await db_session.get(RideRequest, uuid.UUID(first))
@@ -850,17 +872,23 @@ async def test_the_alert_stays_open_while_anyone_is_still_unserved(
 
 
 async def test_the_waiting_clock_is_not_reset_by_escalation(
-    client: AsyncClient, rider: dict[str, str], clock: FakeClock, db_session: AsyncSession
+    client: AsyncClient,
+    rider: dict[str, str],
+    clock: FakeClock,
+    db_session: AsyncSession,
+    world: dict[str, uuid.UUID],
 ) -> None:
     """The one thing "retry" must not mean. Re-creating the request would report a rider
     who waited fifty minutes as having waited ten - the number the pilot is judged on."""
     created = (await client.post("/ride-requests", json=soon(), headers=rider)).json()
     service = RideRequestService(db_session, clock)
 
-    clock.advance(timedelta(minutes=11))
+    clock.advance(timedelta(minutes=21))
     await service.run_due_expiries()
 
-    still_there = (await client.get(f"/ride-requests/{created['id']}", headers=rider)).json()
+    still_there = (
+        await client.get(f"/ride-requests/{created['id']}", headers=rider_now(world, clock))
+    ).json()
     assert still_there["waiting_since"] == created["waiting_since"]
     assert still_there["expires_at"] == created["expires_at"]
 

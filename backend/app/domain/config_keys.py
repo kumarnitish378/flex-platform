@@ -149,7 +149,10 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             10,
             5,
             60,
-            description="An unassigned request is escalated after waiting this long.",
+            description=(
+                "How often an already-escalated request widens its search again. The "
+                "*first* escalation is at `alert_wait_minutes` (ADR-0023)."
+            ),
         ),
         ConfigKey(
             "retry_eta_widen_minutes",
@@ -179,7 +182,16 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             choices=("auto_assign", "escalate"),
             description="What happens on failsafe timeout.",
         ),
-        ConfigKey("alert_wait_minutes", 20, 5, 60, description="Pending request turns red."),
+        ConfigKey(
+            "alert_wait_minutes",
+            20,
+            5,
+            60,
+            description=(
+                "A waiting request has waited too long: the board turns it red, and "
+                "escalation starts (ADR-0023)."
+            ),
+        ),
         ConfigKey(
             "request_expiry_minutes", 120, 30, 480, description="Unassigned request expires."
         ),
@@ -218,6 +230,37 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
 #: Keys a client may override, and of those, the ones that may only get stricter.
 PER_CLIENT_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.per_client)
 STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.stricter_only)
+
+
+#: Declared ahead of the code that will read them. Phase 1 reads none of these: the
+#: cost-function weights and rider urgency factors belong to the Phase 2 optimizer
+#: (`allocation-rules.md` section 4), the failsafe pair to semi-auto mode
+#: (`control-model.md`), `batch_window_seconds` to micro-batching, the hold window to
+#: pooling (section 2 rule 6) and the night-safety trio to section 2 rule 11, whose exact
+#: policy is still OQ-10. `night_safety_enabled` is the subtle one: `client_policy` has a
+#: column of that name, so a loose search for the string finds a "reader" that is really
+#: a different thing - which is why the guard matches quoted lookups only.
+#: Keeping the list here means the next audit does not have to work out which
+#: absences are deliberate - ADR-0023, which found `alert_wait_minutes` hiding among
+#: them and read by nothing while all seven scenarios set it.
+PHASE_2_KEYS = frozenset(
+    {
+        "batch_window_seconds",
+        "cost_new_vehicle",
+        "failsafe_action",
+        "failsafe_timeout_seconds",
+        "hold_window_max_minutes",
+        "hold_window_min_minutes",
+        "night_safety_enabled",
+        "night_safety_end",
+        "night_safety_start",
+        "urgency_factor_high",
+        "urgency_factor_low",
+        "urgency_factor_medium",
+        "weight_empty_km",
+        "weight_wait",
+    }
+)
 
 
 def defaults() -> dict[str, Any]:

@@ -15,13 +15,13 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `max_detour_factor` | 1.5 | 1.0–3.0 | yes (stricter only) | Rider ride time ≤ factor × direct time. |
 | `max_detour_minutes` | 15 | 0–60 | yes (stricter only) | Rider ride time ≤ direct time + this. |
 | `enroute_reuse_max_eta_minutes` | 5 | 0–15 | no | An assigned/en-route vehicle may take a new same-direction rider if it reaches them within this. |
-| `retry_after_minutes` | 10 | 5–60 | no | An unassigned request is escalated after waiting this long, and again every interval after. |
+| `retry_after_minutes` | 10 | 5–60 | no | How often an already-escalated request widens its search again. The *first* escalation is at `alert_wait_minutes`. |
 | `retry_eta_widen_minutes` | 10 | 0–30 | no | Each escalation widens `candidate_max_eta_minutes` for that request by this. |
 | `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
 | `failsafe_timeout_seconds` | 180 | 30–900 | no | Semi-auto suggestion timeout. |
 | `failsafe_action` | `auto_assign` | `auto_assign` / `escalate` | no | What happens on timeout. |
-| `alert_wait_minutes` | 20 | 5–60 | no | Pending request turns red. |
+| `alert_wait_minutes` | 20 | 5–60 | no | A waiting request has waited too long: the board turns it red **and escalation starts** (ADR-0023). |
 | `request_expiry_minutes` | 120 | 30–480 | no | Unassigned request expires. |
 | `no_show_wait_minutes` | 5 | 1–15 | yes | Driver wait before no-show allowed. |
 | `stale_gps_seconds` | 60 | 20–300 | no | Vehicle considered stale. |
@@ -60,8 +60,9 @@ Applied in this order. A candidate that fails any rule is removed. If no candida
   empty one.
 
 ### 3.1 When nobody has been served
-A request that is still `queued` after `retry_after_minutes` is **escalated**, and again at every
-interval after that (ADR-0019). It stays one request with one waiting clock — the number the pilot is
+A request still `queued` once it has waited `alert_wait_minutes` - the operator's own answer to "how long
+is too long", and the threshold their board already turns red at - is **escalated**, and again every
+`retry_after_minutes` after that (ADR-0019, ADR-0023). It stays one request with one waiting clock — the number the pilot is
 judged on must keep counting from the original ask, so nothing here cancels and re-creates it.
 
 Each escalation:

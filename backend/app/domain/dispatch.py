@@ -336,6 +336,7 @@ def check_hard_rules(
 def widened_candidate_eta_minutes(
     base_minutes: int,
     waited_minutes: float,
+    escalate_after_minutes: int,
     retry_after_minutes: int,
     widen_minutes: int,
     ceiling_minutes: int,
@@ -343,18 +344,22 @@ def widened_candidate_eta_minutes(
     """How far to look for a cab for a request nobody has served yet (ADR-0019).
 
     `allocation-rules.md` section 3.1. A rider who has waited half an hour is better served
-    by a cab twenty-five minutes away than by the rule that says twenty, so the ceiling
-    widens once per `retry_after_minutes` of waiting - and stops at `ceiling_minutes`, or
-    the reasoning would run to the other end of the city.
+    by a cab twenty-five minutes away than by the rule that says twenty.
+
+    Nothing widens until the wait is "too long" by the operator's own threshold,
+    `escalate_after_minutes` (`alert_wait_minutes` - ADR-0023); after that it widens once
+    per `retry_after_minutes`, and stops at `ceiling_minutes`, or the reasoning would run
+    to the other end of the city.
 
     Derived from the wait rather than stored, so it cannot drift from what the board shows
     and re-running the sweep changes nothing.
     """
     if retry_after_minutes <= 0 or widen_minutes <= 0:
         return base_minutes
-    rounds = int(waited_minutes // retry_after_minutes)
-    if rounds <= 0:
+    overdue = waited_minutes - escalate_after_minutes
+    if overdue < 0:
         return base_minutes
+    rounds = 1 + int(overdue // retry_after_minutes)
     # A ceiling below the base is a misconfiguration, not an instruction to narrow.
     return min(base_minutes + rounds * widen_minutes, max(ceiling_minutes, base_minutes))
 
