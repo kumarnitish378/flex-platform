@@ -297,7 +297,10 @@ class Engine:
             rider.record.left_riding = True
             stuck += 1
         if stuck:
-            self.record(f"{stuck} rider(s) were still in a cab when the run stopped")
+            riders = ", ".join(
+                rider.profile.employee_id for rider in self.riders if rider.record.left_riding
+            )
+            self.record(f"{stuck} rider(s) were still in a cab when the run stopped: {riders}")
         return stuck
 
     def metrics(self, summary: RunSummary) -> RunMetrics:

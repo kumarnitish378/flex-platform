@@ -103,6 +103,12 @@ class DriverAgent:
         self._late_start_p = late_start_probability
         self._rng: np.random.Generator = engine.rng.for_agent(f"driver:{driver_id}")
         self._handled: set[uuid.UUID] = set()
+        #: What the backend last refused, per stop. A stuck stop is only diagnosable if
+        #: the reason survives: "could not finish stop <uuid>" on its own sent me reading
+        #: a six-hour run's log for an hour.
+        self._last_refusal: dict[uuid.UUID, str] = {}
+        #: Set by `_call` when the backend refuses, so the caller can attribute it.
+        self._refused: str | None = None
         #: Set once this driver has reported a breakdown. The cab is off the road and the
         #: backend has ended its trip, so there is nothing left to tap through.
         self.broken_down = False
@@ -203,8 +209,20 @@ class DriverAgent:
                 # people already in the cab, so the driver leaves this one behind and
                 # drives the rest. The trip will fail to complete, which is the truth.
                 stuck.add(stop_id)
-                self.record.errors.append(f"stop stuck: {stop_id}")
-                self.engine.record(f"driver {self.driver_id} could not finish stop {stop_id}")
+                why = self._last_refusal.get(stop_id, "no refusal recorded")
+                kind = stop.get("stop_type", "stop")
+                self.record.errors.append(f"stop stuck ({kind}): {why}")
+                self.engine.record(
+                    f"driver {self.driver_id} could not finish {kind} stop {stop_id}: {why}"
+                )
+                if kind == "drop":
+                    # The rider is in the cab and will now never be dropped, so they stay
+                    # `picked_up` for the rest of the run. Worth saying out loud: it is
+                    # the one way a stuck stop strands somebody rather than just skipping
+                    # them, and it reads as `still_riding` in the metrics.
+                    self.engine.record(
+                        f"driver {self.driver_id} is carrying a rider it cannot drop off"
+                    )
                 continue
             attempted.add(stop_id)
             yield from self._work_a_stop(trip_id, stop)
@@ -278,6 +296,7 @@ class DriverAgent:
 
         stop_id = uuid.UUID(stop["id"])
         here = self.vehicle.position
+        self._refused = None
         if not self._call(
             lambda: platform.stop_action(
                 self.token, stop_id, "arrived", self.engine.now(), here.lat, here.lng
@@ -294,12 +313,15 @@ class DriverAgent:
         yield self.engine.env.timeout(self._boarding_delay_seconds() + late_minutes * 60)
 
         position = self.vehicle.position
+        self._refused = None
         if self._call(
             lambda: platform.stop_action(
                 self.token, stop_id, "done", self.engine.now(), position.lat, position.lng
             )
         ):
             self.record.stops_done += 1
+        elif self._refused is not None:
+            self._last_refusal[stop_id] = self._refused
 
     def _wait_out_a_no_show(self, stop_id: uuid.UUID) -> Process:
         """DRV-05: the driver must wait `no_show_wait_minutes` before giving up.
@@ -394,6 +416,7 @@ class DriverAgent:
                 return False
             self.record.errors.append(f"{type(exc).__name__}: {exc}")
             self.engine.record(f"driver {self.driver_id} API call failed: {exc}")
+            self._refused = str(exc)
             return False
         return True
 

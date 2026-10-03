@@ -630,6 +630,40 @@ def test_a_stop_that_cannot_be_finished_is_left_behind_not_retried(engine: Engin
     assert sum(action == "arrived" for _, action in platform.stop_actions) == 0
 
 
+def test_a_stuck_stop_records_why_the_backend_refused_it(engine: Engine) -> None:
+    """ "could not finish stop <uuid>" on its own is undiagnosable. Six hours of run log
+    and no reason is how a real afternoon gets spent."""
+    platform = with_platform(engine, FakePlatform())
+    trip = a_trip(stop_count=2)
+    platform.trips = [trip]
+    platform.refuse_stops.add(uuid.UUID(trip["stops"][0]["id"]))
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    stuck = [error for error in driver.record.errors if "stop stuck" in error]
+    assert stuck, "the stop was stuck"
+    assert "backend said no" in stuck[0], "the backend's own words, not just an id"
+    assert "pickup" in stuck[0], "and which kind of stop it was"
+
+
+def test_a_driver_that_cannot_drop_a_rider_says_so(engine: Engine) -> None:
+    """A stuck *drop* is the one case that strands somebody: the rider is in the cab and
+    will never be let out, so they read as `still_riding` at the end of the run. The log
+    has to connect those two facts."""
+    platform = with_platform(engine, FakePlatform())
+    trip = a_trip(stop_count=2)
+    platform.trips = [trip]
+    platform.refuse_stops.add(uuid.UUID(trip["stops"][1]["id"]))
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    summary = engine.run()
+
+    assert any("cannot drop off" in line for line in summary.events)
+
+
 def test_a_driver_with_one_stuck_stop_still_drops_everyone_else(engine: Engine) -> None:
     """Abandoning the trip would strand the people already in the cab - which is exactly
     what `evening_surge` showed: five riders still aboard after the drain."""
