@@ -27,7 +27,13 @@ SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 # `make sim-quick` in CI: short scenarios only (simulator-spec.md §12).
 #: The PR suite. One hour of simulated time, so it stays cheap enough to run on every
 #: push - the S01 comment ("must stay small and fast") is a constraint, not a note.
-QUICK_SUITE = ("smoke_tiny",)
+#: The PR gate. Cheap enough to run on every pull request, and chosen to cover the paths
+#: that have actually broken: `smoke_tiny` is the end-to-end loop, and
+#: `breakdown_with_riders` is the incident path - an aborted trip, riders re-queued, a
+#: stranded rider collected from the roadside - which four separate defects have hidden
+#: in (ADR-0012, ADR-0016, ADR-0020, and twice in the driver agent). Two minutes of
+#: simulated incident is worth more than any unit test can say about it.
+QUICK_SUITE = ("smoke_tiny", "breakdown_with_riders")
 
 #: The nightly suite, cheapest first so a broken build reports in a minute rather than
 #: an hour. `normal_weekday` and `rain_day` are 16 simulated hours each and dominate the

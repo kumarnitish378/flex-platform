@@ -181,7 +181,7 @@ what lets a red run name its own cause.
 Load real requests and vehicle shifts from an exported day; replay with a chosen policy; compare against what actually happened.
 
 ## 12. CI integration
-- `make sim-quick`: 3 short scenarios (1 hour sim time each), on every pull request touching `backend/` or `simulator/`.
+- `make sim-quick`: the PR gate, on every pull request touching `backend/` or `simulator/`. `smoke_tiny` (the end-to-end loop) and `breakdown_with_riders` (the incident path - aborted trip, riders re-queued, a stranded rider collected from the roadside), about four minutes of wall clock between them. The incident path is in the gate because four separate defects have hidden there.
 - `make sim-full`: full suite nightly and before each release. Any failed assertion blocks release.
 
 ## 13. Determinism
