@@ -63,6 +63,26 @@ class SupervisorRecord:
     errors: list[str] = field(default_factory=list)
 
 
+#: Violations a supervisor will not accept, however long the rider has waited.
+#:
+#: ADR-0011 makes hard rules advisory in manual mode, and that is right for the ones that
+#: encode an average - a detour limit, an ETA ceiling - because the supervisor can see the
+#: road and the rule cannot. These two are different in kind: they are promises already
+#: made to a particular rider. `allocation-rules.md` section 2 rule 4 is "VIP -> VIP car
+#: immediately, no waiting, **no sharing**", and rule 9 is "request marked `no_sharing` ->
+#: exclusive trip". Putting that rider in with someone else does not give them a slightly
+#: worse ride; it gives them the thing they were promised would not happen.
+#:
+#: S07 asserts `vip_never_pooled`, and the agent was breaking it by design: five VIPs
+#: pooled in the full suite, two of them genuinely sharing. The honest trade is that a VIP
+#: waits for a VIP car - and that wait then shows up in the metrics, where it belongs.
+EXCLUSIVITY_VIOLATIONS = frozenset({"no_sharing", "pooling_blocked"})
+
+
+def _breaks_a_promise(candidate: dict[str, Any]) -> bool:
+    return bool(EXCLUSIVITY_VIOLATIONS.intersection(candidate.get("violations") or []))
+
+
 class SupervisorAgent:
     """One person, one queue, one request at a time."""
 
@@ -182,17 +202,19 @@ class SupervisorAgent:
 
         Candidates with violations are taken only when nothing clean is offered - which
         mirrors a supervisor who would rather send an imperfect cab than none at all, and
-        keeps the accepted-violation count meaningful.
+        keeps the accepted-violation count meaningful. Two kinds of violation are never
+        taken, because for those "an imperfect cab" is not what the rider gets.
         """
         # A full cab is not a candidate whatever its ETA: capacity is the one hard rule
         # the backend refuses outright (ADR-0011), so offering one wastes the assignment
         # and, in a scenario, looks like a dispatch failure that is really a bad choice.
         seated = [item for item in candidates if item.get("seats_free_after", 0) >= 0]
-        if not seated:
+        usable = [item for item in seated if not _breaks_a_promise(item)]
+        if not usable:
             return None
 
-        clean = [item for item in seated if not item.get("violations")]
-        pool = clean or seated
+        clean = [item for item in usable if not item.get("violations")]
+        pool = clean or usable
         return min(pool, key=lambda item: item.get("eta_to_pickup_seconds", float("inf")))
 
     def _reaction_seconds(self) -> float:

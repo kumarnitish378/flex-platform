@@ -194,6 +194,60 @@ def test_a_clean_assignment_names_no_rules(engine: Engine) -> None:
     assert agent.record.violations_by_rule == {}
 
 
+def test_a_vip_waits_rather_than_sharing_a_cab(engine: Engine) -> None:
+    """`allocation-rules.md` section 2 rule 4: VIP means no sharing, and S07 asserts it.
+
+    The agent used to take any violating candidate when nothing clean was offered, so a
+    VIP burst put VIPs in with other people - the full suite reported five pooled. "An
+    imperfect cab beats no cab" is right for a detour limit and wrong here: this is a
+    promise already made to that rider, not an average the supervisor can overrule."""
+    only = candidate(eta=60, violations=["no_sharing"])
+    platform = FakeDispatch([request_row()], [only])
+    agent = supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert platform.assigned == [], "the VIP waits for a car of their own"
+    assert agent.record.no_candidate >= 1
+
+
+def test_an_exclusive_trip_is_not_joined_by_someone_else(engine: Engine) -> None:
+    """The same promise from the other side (rule 9): a trip already carrying a rider who
+    asked not to share stays theirs."""
+    only = candidate(eta=60, violations=["pooling_blocked"])
+    platform = FakeDispatch([request_row()], [only])
+    supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert platform.assigned == []
+
+
+def test_an_ordinary_rule_is_still_overridable(engine: Engine) -> None:
+    """ADR-0011 stands for the rules that encode an average - the supervisor can see the
+    road and the rule cannot."""
+    only = candidate(eta=60, violations=["detour_minutes_exceeded"])
+    platform = FakeDispatch([request_row()], [only])
+    agent = supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert len(platform.assigned) == 1
+    assert agent.record.violations_accepted == 1
+
+
+def test_a_clean_cab_is_preferred_over_an_exclusive_breach(engine: Engine) -> None:
+    """And when there is a lawful option, nothing changes."""
+    breaking = candidate(eta=60, violations=["no_sharing"])
+    clean = candidate(eta=600)
+    platform = FakeDispatch([request_row()], [breaking, clean])
+    supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert str(platform.assigned[0][1]) == clean["vehicle_id"]
+
+
 def test_no_candidates_leaves_the_request_waiting(engine: Engine) -> None:
     """The rider's patience decides what happens next; that is the real dynamic."""
     platform = FakeDispatch([request_row()], [])

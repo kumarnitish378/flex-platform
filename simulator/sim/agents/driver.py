@@ -147,7 +147,11 @@ class DriverAgent:
         Every *action* still goes through this driver's own token.
         """
         board = self.engine.trip_board
-        if board is not None and self.platform_driver_id is not None:
+        # `refreshes` guards against a board that has never managed a read - an older
+        # backend without `/dispatch/trips`, say. Without this the fleet would simply
+        # never be given any work, and a run would report a motionless day as though
+        # dispatch had failed.
+        if board is not None and board.refreshes and self.platform_driver_id is not None:
             for trip in board.trips_of(self.platform_driver_id):
                 if uuid.UUID(str(trip["id"])) not in self._handled:
                     return trip
@@ -186,7 +190,7 @@ class DriverAgent:
         if not self._call(lambda: platform.start_trip(self.token, trip_id, self.engine.now())):
             return
         self.record.trips_started += 1
-        self._note_riders(trip_id, trip)
+        self.record.riders_per_trip.setdefault(str(trip_id), set())
         self.engine.record(f"driver {self.driver_id} started trip {trip_id}")
 
         attempted: set[uuid.UUID] = set()
@@ -259,7 +263,6 @@ class DriverAgent:
         for trip in trips:
             if uuid.UUID(trip["id"]) != trip_id:
                 continue
-            self._note_riders(trip_id, trip)
             pending = [
                 stop
                 for stop in trip.get("stops", [])
@@ -272,19 +275,20 @@ class DriverAgent:
         # The trip is no longer active - cancelled or aborted under the driver.
         return None
 
-    def _note_riders(self, trip_id: uuid.UUID, trip: dict[str, Any]) -> None:
-        """Who this driver is actually carrying, including riders added mid-trip.
+    def _note_boarded(self, trip_id: uuid.UUID, request_id: str) -> None:
+        """Record that this rider actually got into this cab.
 
-        S07 reads this to check a VIP was never pooled, and a trip that gained a second
-        rider after the VIP boarded breaks that rule just as surely as one planned that
-        way.
+        S07 reads this to check a VIP was never pooled, so it has to mean "shared the
+        cab", not "appeared on the same trip". Two earlier versions got that wrong in
+        opposite directions: the first recorded the riders listed when the trip started,
+        and so missed anyone dispatch added afterwards - which is pooling too. The second
+        accumulated every request ever listed on the trip, which counted riders whose
+        pickup was later skipped because they cancelled - so a VIP who rode alone was
+        reported as pooled, and `vip_burst` failed on five riders who shared nothing.
+
+        A completed pickup is the moment someone is in the cab. That is the rule.
         """
-        riders = self.record.riders_per_trip.setdefault(str(trip_id), set())
-        riders.update(
-            str(stop["request_id"])
-            for stop in trip.get("stops", [])
-            if stop.get("request_id") is not None
-        )
+        self.record.riders_per_trip.setdefault(str(trip_id), set()).add(request_id)
 
     def _work_a_stop(self, trip_id: uuid.UUID, stop: dict[str, Any]) -> Process:
         """Drive there, arrive, wait for the rider, then finish or call a no-show."""
@@ -320,6 +324,8 @@ class DriverAgent:
             )
         ):
             self.record.stops_done += 1
+            if stop.get("stop_type") == "pickup" and stop.get("request_id") is not None:
+                self._note_boarded(trip_id, str(stop["request_id"]))
         elif self._refused is not None:
             self._last_refusal[stop_id] = self._refused
 

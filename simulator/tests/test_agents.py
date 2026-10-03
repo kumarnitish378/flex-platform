@@ -610,7 +610,9 @@ def test_a_rider_added_after_the_trip_started_is_still_collected(engine: Engine)
 
     assert driver.record.stops_done == 4
     assert driver.record.trips_completed == 1
-    assert latecomer in driver.record.riders_per_trip[trip["id"]]
+    assert latecomer in driver.record.riders_per_trip[trip["id"]], (
+        "a rider added mid-trip who then boarded is sharing the cab (S07)"
+    )
 
 
 def test_a_stop_that_cannot_be_finished_is_left_behind_not_retried(engine: Engine) -> None:
@@ -628,6 +630,76 @@ def test_a_stop_that_cannot_be_finished_is_left_behind_not_retried(engine: Engin
     assert sum("stop stuck" in error for error in driver.record.errors) == 2
     # Each stop was attempted once and given up on once - never a third time.
     assert sum(action == "arrived" for _, action in platform.stop_actions) == 0
+
+
+def test_a_driver_falls_back_when_the_shared_board_cannot_load(engine: Engine) -> None:
+    """A board that never loads - an older backend with no `/dispatch/trips` - must not
+    silently stop the whole fleet. The run would report a motionless day and look like a
+    dispatch failure."""
+    from sim.board import TripBoard
+
+    platform = with_platform(engine, FakePlatform())
+    platform.trips = [a_trip()]
+
+    class DeadBoard(TripBoard):
+        def refresh(self) -> None:
+            self.errors += 1  # never sets `refreshes`
+
+    engine.trip_board = DeadBoard(engine, token="supervisor")
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    assert driver.record.trips_started == 1, "the driver polled for itself instead"
+
+
+def test_a_rider_who_never_boarded_is_not_sharing_the_cab(engine: Engine) -> None:
+    """S07 asks whether a VIP shared a cab. A rider whose pickup was skipped - they
+    cancelled while the cab was on its way - was never in it.
+
+    This is what failed `vip_burst` in the full suite: counting every request ever listed
+    on the trip reported five VIPs as pooled when they had ridden alone."""
+    platform = with_platform(engine, FakePlatform())
+    trip = a_trip(stop_count=2)
+    vip = str(uuid.uuid4())
+    # A second rider joins, then their pickup can never be completed.
+    trip["stops"].extend(
+        {
+            "id": str(uuid.uuid4()),
+            "sequence": 3 + index,
+            "stop_type": ["pickup", "drop"][index],
+            "request_id": vip,
+            "status": "pending",
+            "location": {"lat": 28.57 + index * 0.01, "lng": 77.39},
+        }
+        for index in range(2)
+    )
+    platform.trips = [trip]
+    platform.refuse_stops.add(uuid.UUID(trip["stops"][2]["id"]))
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    carried = driver.record.riders_per_trip[trip["id"]]
+    assert vip not in carried, "they never got in"
+    assert len(carried) == 1, "only the rider who actually boarded"
+
+
+def test_a_trip_nobody_boarded_carries_nobody(engine: Engine) -> None:
+    """Every rider cancelled before the cab arrived. The trip happened; the sharing did
+    not, and `vip_never_pooled` must not fire on an empty cab."""
+    platform = with_platform(engine, FakePlatform())
+    trip = a_trip(stop_count=2)
+    platform.trips = [trip]
+    platform.refuse_stops.add(uuid.UUID(trip["stops"][0]["id"]))
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    assert driver.record.riders_per_trip[trip["id"]] == set()
 
 
 def test_a_stuck_stop_records_why_the_backend_refused_it(engine: Engine) -> None:
