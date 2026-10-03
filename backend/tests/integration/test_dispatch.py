@@ -388,6 +388,23 @@ async def test_candidates_are_returned_nearest_first(
     assert items[0]["eta_to_pickup_seconds"] < items[1]["eta_to_pickup_seconds"]
 
 
+async def test_a_candidate_says_how_old_its_position_is(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """A supervisor choosing between cabs is choosing between claims about where they
+    are, and a four-minute-old claim is a different thing from a four-second-old one.
+    `gps_stale` says only that it crossed the threshold, never by how much - which made
+    a simulator run reporting `gps_stale` on every assignment impossible to diagnose."""
+    request = await make_request(db_session, world, "near")
+
+    items = (
+        await client.get(f"/dispatch/requests/{request.id}/candidates", headers=supervisor)
+    ).json()["items"]
+
+    # The world's cabs pinged five seconds before NOW.
+    assert items[0]["gps_age_seconds"] == pytest.approx(5.0, abs=1.0)
+
+
 async def test_a_candidate_reports_seats_and_the_trip_it_would_join(
     client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
 ) -> None:

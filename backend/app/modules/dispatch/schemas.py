@@ -23,6 +23,9 @@ class CandidateOut(BaseModel):
     eta_to_pickup_seconds: int
     eta_approximate: bool = False
     seats_free_after: int
+    #: How old this vehicle's position is by the server's clock; `None` if it has never
+    #: reported one. `gps_stale` in `violations` says only that it crossed the threshold.
+    gps_age_seconds: float | None = None
     added_minutes_existing: list[AddedMinutes] = Field(default_factory=list)
     new_trip: bool = True
     #: Phase 2 fills these; Phase 1 has no cost function and no ranked reasons.

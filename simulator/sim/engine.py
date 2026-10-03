@@ -333,6 +333,8 @@ class Engine:
             no_candidate=summary.no_candidate,
             violations_accepted=summary.violations_accepted,
             violations_by_rule=summary.violations_by_rule,
+            gps_age_seconds_median=summary.gps_age_seconds_median,
+            gps_age_seconds_max=summary.gps_age_seconds_max,
             errors=summary.errors,
         )
 
@@ -623,12 +625,27 @@ def _first_shift(engine: Engine) -> tuple[datetime, datetime]:
 DEFAULT_NO_SHOW_WAIT_MINUTES = 5
 
 #: How often, in simulated seconds, to push the clock to the backend during a run.
-#: One minute keeps a ping at most a minute ahead of the backend's "now" - well inside
-#: the two-minute future tolerance in `mqtt-topics.md` - without making an HTTP call per
-#: simulated second.
-CLOCK_SYNC_INTERVAL_SECONDS = 60
+#:
+#: This was 60 s, and that collided with `stale_gps_seconds`, which is also 60. The
+#: backend's clock is held one interval *ahead* (below), while pings are released only up
+#: to simulated now - so the freshest position the backend could ever hold was already a
+#: full interval old by its own clock, and **every vehicle was permanently stale**. Every
+#: candidate came back flagged `gps_stale`, and the sweep raised an open `stale_vehicle`
+#: alert for all thirty cabs while they were driving.
+#:
+#: Nothing failed loudly, which is why it survived: Phase 1 only *reports* hard rules
+#: (ADR-0011), so a flag nobody enforces looked like noise. Phase 2's optimizer treats
+#: the same list as a filter, where it would have meant no vehicle was ever dispatchable.
+#:
+#: Twenty seconds keeps the freshest ping a third of the way to the staleness threshold,
+#: at three clock calls a simulated minute. A clock jump costs about 20 ms since the
+#: OQ-26 query fixes, so this is a few seconds of wall clock per simulated hour.
+CLOCK_SYNC_INTERVAL_SECONDS = 20
 
-#: How far ahead of the simulation to hold the backend's clock.
+#: How far ahead of the simulation to hold the backend's clock. One interval, so that a
+#: ping published just before the next sync is not stamped in the backend's future and
+#: dropped by the ingestor as `too_far_future`. It must stay well under
+#: `stale_gps_seconds` (60) - see above.
 _LEAD = timedelta(seconds=CLOCK_SYNC_INTERVAL_SECONDS)
 
 

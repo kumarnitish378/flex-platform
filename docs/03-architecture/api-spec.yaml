@@ -1109,6 +1109,14 @@ components:
           default: false
           description: true when this ETA is a straight-line estimate, not road routing (ADR-0010)
         seats_free_after: {type: integer}
+        gps_age_seconds:
+          type: [number, 'null']
+          description: >
+            How old this vehicle's position is, by the server's clock. `null` when it has
+            never reported one. A supervisor choosing between cabs is choosing between
+            claims about where they are, and a claim four minutes old is a different
+            thing from one four seconds old - `gps_stale` in `violations` only says it
+            crossed `stale_gps_seconds`, not by how much.
         added_minutes_existing:
           type: array
           items:

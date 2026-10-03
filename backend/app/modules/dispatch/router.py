@@ -197,6 +197,7 @@ def _candidate_out(candidate: Candidate) -> CandidateOut:
         eta_to_pickup_seconds=int(candidate.eta_to_pickup_seconds),
         eta_approximate=candidate.eta_approximate,
         seats_free_after=candidate.seats_free_after,
+        gps_age_seconds=candidate.gps_age_seconds,
         added_minutes_existing=[
             AddedMinutes(request_id=request_id, minutes=round(minutes, 1))
             for request_id, minutes in candidate.added_minutes.items()

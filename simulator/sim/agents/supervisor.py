@@ -59,6 +59,10 @@ class SupervisorRecord:
     #: surge where every cab is too far away is a fleet problem, one where every cab is
     #: the wrong type is a seeding problem, and the count alone cannot tell them apart.
     violations_by_rule: dict[str, int] = field(default_factory=dict)
+    #: How old each chosen cab's position was. A run where every assignment is flagged
+    #: `gps_stale` needs the number, not the flag, to tell a real problem from a
+    #: time-compression artefact.
+    gps_age_seconds: list[float] = field(default_factory=list)
     minutes_away: float = 0.0
     errors: list[str] = field(default_factory=list)
 
@@ -183,6 +187,9 @@ class SupervisorAgent:
             return
 
         self.record.assignments += 1
+        age = choice.get("gps_age_seconds")
+        if age is not None:
+            self.record.gps_age_seconds.append(float(age))
         broken = choice.get("violations") or []
         if broken:
             # ADR-0011: manual assignment reports hard-rule violations and applies anyway.
@@ -232,6 +239,8 @@ class DispatchSummary:
     no_candidate: int = 0
     violations_accepted: int = 0
     violations_by_rule: dict[str, int] = field(default_factory=dict)
+    gps_age_seconds_median: float | None = None
+    gps_age_seconds_max: float | None = None
     errors: int = 0
 
 
@@ -245,5 +254,17 @@ def summarise(record: SupervisorRecord | None) -> DispatchSummary:
         no_candidate=record.no_candidate,
         violations_accepted=record.violations_accepted,
         violations_by_rule=dict(record.violations_by_rule),
+        gps_age_seconds_median=_median(record.gps_age_seconds),
+        gps_age_seconds_max=max(record.gps_age_seconds, default=None),
         errors=len(record.errors),
     )
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0

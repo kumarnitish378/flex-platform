@@ -108,6 +108,11 @@ class DispatchMetrics:
     #: than enforces in Phase 1). "46 of 46 assignments broke something" is a mystery;
     #: "46 of them were `eta_over_candidate_limit`" is a finding about the fleet.
     violations_by_rule: dict[str, int] = field(default_factory=dict)
+    #: How old the chosen cab's position was, by the server's clock. A run reporting
+    #: `gps_stale` on every assignment needs the number to tell a real problem from a
+    #: time-compression artefact.
+    gps_age_seconds_median: float | None = None
+    gps_age_seconds_max: float | None = None
     errors: int = 0
 
 

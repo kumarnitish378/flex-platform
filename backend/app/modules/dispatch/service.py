@@ -120,6 +120,9 @@ class Candidate:
     eta_to_pickup_seconds: float
     eta_approximate: bool
     seats_free_after: int
+    #: Age of the position this ETA was computed from, by the injected Clock. `None`
+    #: when the vehicle has never reported one.
+    gps_age_seconds: float | None = None
     added_minutes: dict[uuid.UUID, float] = field(default_factory=dict)
     new_trip: bool = True
     violations: list[Violation] = field(default_factory=list)
@@ -317,6 +320,7 @@ class DispatchService:
                     eta_to_pickup_seconds=eta.seconds,
                     eta_approximate=eta.approximate,
                     seats_free_after=vehicle.seat_capacity - len(on_board) - 1,
+                    gps_age_seconds=facts.gps_age_seconds,
                     added_minutes=insertion.added_minutes if insertion else {},
                     new_trip=trip is None,
                     violations=check_hard_rules(facts, insertion, limits, direct),
