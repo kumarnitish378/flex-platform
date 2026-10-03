@@ -121,6 +121,23 @@ async def assign(body: AssignInput, service: ServiceDep, current_user: CurrentUs
 
 
 @router.get(
+    "/trips",
+    summary="Every trip for the operator, with stops - one read for a whole board",
+    dependencies=[Depends(require(Permission.request_queue_view))],
+)
+async def list_trips(
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    status: Annotated[list[str] | None, Query()] = None,
+) -> dict[str, list[TripOut]]:
+    operator_id = _operator_id(current_user)
+    trips = await service.trips(operator_id, status)
+    # One stop query for every trip, not one per trip: see `stops_by_trip`.
+    stops = await service.stops_by_trip([trip.id for trip in trips])
+    return {"items": [_trip_with_stops(trip, stops.get(trip.id, [])) for trip in trips]}
+
+
+@router.get(
     "/automation",
     summary="Whether automatic assignment is paused",
     dependencies=[Depends(require(Permission.request_queue_view))],
@@ -196,7 +213,10 @@ class HasStops(Protocol):
 
 
 async def _trip_out(service: HasStops, trip: Trip) -> TripOut:
-    stops = await service.stops_of(trip.id)
+    return _trip_with_stops(trip, await service.stops_of(trip.id))
+
+
+def _trip_with_stops(trip: Trip, stops: list[TripStop]) -> TripOut:
     return TripOut(
         id=trip.id,
         vehicle_id=trip.vehicle_id,

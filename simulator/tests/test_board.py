@@ -7,12 +7,14 @@ rather than the platform, and blocked the simulation while doing it.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from sim.board import ALL_STATUSES, REFRESH_INTERVAL_SECONDS, StatusBoard
+from sim.board import ALL_STATUSES, REFRESH_INTERVAL_SECONDS, StatusBoard, TripBoard
 from sim.engine import Engine
 from sim.scenario import load_scenario
 
@@ -138,6 +140,101 @@ def test_it_refreshes_on_a_timer(engine: Engine) -> None:
 
 def test_it_does_nothing_without_a_platform(engine: Engine) -> None:
     board = StatusBoard(engine, token="t")
+
+    board.refresh()
+
+    assert board.refreshes == 0
+    assert board.errors == 0
+
+
+# --- the drivers' shared board (OQ-26) ----------------------------------------------
+
+
+class TripPlatform:
+    """Answers `/dispatch/trips` once for every driver, and counts the reads."""
+
+    def __init__(self, trips: list[dict[str, Any]]) -> None:
+        self._trips = trips
+        self.reads = 0
+        self.tokens: list[str] = []
+        self.statuses: list[Sequence[str] | None] = []
+
+    def dispatch_trips(
+        self, token: str, statuses: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        self.reads += 1
+        self.tokens.append(token)
+        self.statuses.append(statuses)
+        return self._trips
+
+    def set_clock(self, now: datetime) -> datetime:
+        return now
+
+
+def a_trip(driver_id: uuid.UUID, trip_id: uuid.UUID | None = None) -> dict[str, Any]:
+    return {
+        "id": str(trip_id or uuid.uuid4()),
+        "driver_id": str(driver_id),
+        "status": "planned",
+        "stops": [],
+    }
+
+
+def trip_board(engine: Engine, trips: list[dict[str, Any]]) -> tuple[TripBoard, TripPlatform]:
+    platform = TripPlatform(trips)
+    engine.platform = platform  # type: ignore[assignment]
+    return TripBoard(engine, token="supervisor-token"), platform
+
+
+def test_the_board_groups_each_drivers_work(engine: Engine) -> None:
+    """The whole point: one read answers every driver."""
+    first, second = uuid.uuid4(), uuid.uuid4()
+    board, platform = trip_board(engine, [a_trip(first), a_trip(first), a_trip(second)])
+
+    board.refresh()
+
+    assert platform.reads == 1
+    assert len(board.trips_of(first)) == 2
+    assert len(board.trips_of(second)) == 1
+
+
+def test_a_driver_with_nothing_to_do_gets_an_empty_list(engine: Engine) -> None:
+    """Not `None`: a driver with no work is a normal Tuesday, not a missing answer."""
+    board, _ = trip_board(engine, [a_trip(uuid.uuid4())])
+    board.refresh()
+
+    assert board.trips_of(uuid.uuid4()) == []
+
+
+def test_the_board_only_asks_for_trips_a_driver_could_still_work(engine: Engine) -> None:
+    """A day of completed trips would make the shared read bigger than the per-driver
+    reads it is replacing."""
+    board, platform = trip_board(engine, [])
+    board.refresh()
+
+    assert platform.statuses == [("planned", "dispatched", "in_progress")]
+
+
+def test_a_failed_refresh_leaves_the_last_answer_standing(engine: Engine) -> None:
+    """A stale board beats a dead run - the same trade `StatusBoard` makes."""
+    driver = uuid.uuid4()
+    board, platform = trip_board(engine, [a_trip(driver)])
+    board.refresh()
+
+    def explode(token: str, statuses: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        raise RuntimeError("backend said no")
+
+    platform.dispatch_trips = explode  # type: ignore[method-assign]
+    board.refresh()
+
+    assert board.errors == 1
+    assert len(board.trips_of(driver)) == 1, "the driver did not lose their trip"
+
+
+def test_an_offline_run_has_no_board_to_read(engine: Engine) -> None:
+    """There is no platform to ask, and that must not raise."""
+    engine.platform = None
+    board = TripBoard(engine, token="unused")
 
     board.refresh()
 

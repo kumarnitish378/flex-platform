@@ -603,6 +603,14 @@ paths:
   /dispatch/trips:
     get:
       tags: [dispatch]
+      summary: Every trip for the operator, with stops - one read for a whole board
+      description: >
+        The supervisor's view of what every cab is doing. Requires `request_queue_view`
+        and a non-client-scoped caller, exactly like `/dispatch/requests`: this is the
+        whole operator's work, so a client admin must not see it.
+        Defaults to the live statuses (`planned`, `dispatched`, `in_progress`) because a
+        board asking "what is happening now" should not have to enumerate them, and a
+        day's completed trips would dwarf the answer.
       parameters:
         - {name: status, in: query, schema: {type: array, items: {$ref: '#/components/schemas/TripStatus'}}, style: form, explode: true}
       responses:
@@ -610,7 +618,10 @@ paths:
           description: Trips
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Trip'}}
   /dispatch/automation:
     get:
       tags: [dispatch]

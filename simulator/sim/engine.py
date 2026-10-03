@@ -23,7 +23,7 @@ from sim.agents.employee import EmployeeAgent, EmployeeProfile, Outcome
 from sim.agents.employee import summarise as summarise_demand
 from sim.agents.supervisor import SupervisorAgent
 from sim.agents.supervisor import summarise as summarise_dispatch
-from sim.board import StatusBoard
+from sim.board import StatusBoard, TripBoard
 from sim.clock import IST, SimClock
 from sim.events import EventInjector
 from sim.events import summarise as summarise_events
@@ -105,6 +105,9 @@ class Engine:
         self.supervisor: SupervisorAgent | None = None
         #: One shared read of the request board, so riders do not each poll (OQ-26).
         self.board: StatusBoard | None = None
+        #: The same for the drivers' trips. None means every driver polls for itself,
+        #: which is correct and slow - an offline run has no board to share.
+        self.trip_board: TripBoard | None = None
         #: Conditions the event injector turns on and off during the run (M07).
         self.traffic = TrafficModel(self.routing)
         self.events: EventInjector | None = None
@@ -499,6 +502,7 @@ def spawn_people(engine: Engine, world: SeededWorld) -> None:
     so the rider must exist before any trip can be worked.
     """
     _spawn_status_board(engine, world)
+    _spawn_trip_board(engine, world)
     _spawn_riders(engine, world)
     _spawn_drivers(engine, world)
     _spawn_supervisor(engine, world)
@@ -558,6 +562,7 @@ def _spawn_drivers(engine: Engine, world: SeededWorld) -> None:
             vehicle=vehicle,
             credentials=credentials,
             late_start_probability=engine.scenario.drivers.late_start_p,
+            platform_driver_id=(world.driver_ids[index] if index < len(world.driver_ids) else None),
         )
         engine.drivers.append(driver)
         engine.spawn(driver.shift)
@@ -567,6 +572,17 @@ def _spawn_status_board(engine: Engine, world: SeededWorld) -> None:
     """One process reads every request's status for all the riders (OQ-26)."""
     board = StatusBoard(engine, token=world.token_for("supervisor"))
     engine.board = board
+    engine.spawn(board.watch)
+
+
+def _spawn_trip_board(engine: Engine, world: SeededWorld) -> None:
+    """And one reads every driver's trips, for all the drivers (OQ-26).
+
+    The last remaining per-agent poll: thirty-five drivers asking `/driver/trips` every
+    simulated minute, each call blocking the whole single-threaded loop.
+    """
+    board = TripBoard(engine, token=world.token_for("supervisor"))
+    engine.trip_board = board
     engine.spawn(board.watch)
 
 

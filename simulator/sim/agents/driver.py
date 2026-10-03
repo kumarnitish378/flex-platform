@@ -88,9 +88,14 @@ class DriverAgent:
         vehicle: VehicleAgent,
         credentials: DutyCredentials,
         late_start_probability: float = 0.0,
+        platform_driver_id: uuid.UUID | None = None,
     ) -> None:
         self.engine = engine
         self.driver_id = driver_id
+        #: The platform's own id for this driver, which is how the shared trip board
+        #: groups work. `driver_id` above is a label for the run log ("driver-7"), so it
+        #: cannot be used for this - and `None` simply means "poll for yourself".
+        self.platform_driver_id = platform_driver_id
         self.token = token
         self.vehicle = vehicle
         self.credentials = credentials
@@ -129,7 +134,19 @@ class DriverAgent:
                 yield from self.drive(trip)
 
     def _next_trip(self) -> dict[str, Any] | None:
-        """Whatever dispatch has given this driver and they have not driven yet."""
+        """Whatever dispatch has given this driver and they have not driven yet.
+
+        Read from the shared trip board when there is one (OQ-26): thirty-five drivers
+        each polling for themselves is thirty-five blocking calls a simulated minute.
+        Every *action* still goes through this driver's own token.
+        """
+        board = self.engine.trip_board
+        if board is not None and self.platform_driver_id is not None:
+            for trip in board.trips_of(self.platform_driver_id):
+                if uuid.UUID(str(trip["id"])) not in self._handled:
+                    return trip
+            return None
+
         platform = self.engine.platform
         if platform is None:
             return None
@@ -210,6 +227,9 @@ class DriverAgent:
         left standing, and a `smoke_tiny` failure that looked like a measurement
         artefact.
         """
+        # Deliberately the driver's **own** read, not the shared board: this runs between
+        # every stop, and a minute-stale view would hand the driver a stop they have just
+        # finished. The same staleness trap the refused-cancellation chase fell into.
         platform = self.engine.platform
         assert platform is not None
         try:

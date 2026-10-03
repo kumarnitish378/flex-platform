@@ -311,6 +311,18 @@ class PlatformClient:
         items: list[dict[str, Any]] = body.get("items", [])
         return items
 
+    def dispatch_trips(
+        self, token: str, statuses: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Every live trip for the operator, with stops, in one read (OQ-26).
+
+        Needs a supervisor token: this is the whole operator's work, not one driver's.
+        """
+        query = "".join(f"&status={status}" for status in (statuses or ()))
+        body = self._get(f"/dispatch/trips?{query.lstrip('&')}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
     def start_trip(self, token: str, trip_id: uuid.UUID, at: datetime) -> dict[str, Any]:
         return self._driver_event(f"/driver/trips/{trip_id}/start", token, at)
 

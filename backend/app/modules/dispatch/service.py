@@ -956,6 +956,44 @@ class DispatchService:
             )
         )
 
+    async def trips(self, operator_id: uuid.UUID, statuses: list[str] | None = None) -> list[Trip]:
+        """Every trip for the operator, newest plan first.
+
+        One read for a whole board. Thirty-five drivers each polling `/driver/trips` is
+        thirty-five round trips per simulated minute, and because the simulator's client
+        is synchronous inside one SimPy loop, each one stops the world - the remaining
+        cost OQ-26 named after the clock-jump queries were fixed.
+
+        Defaults to the live statuses: a board asking "what is happening now" should not
+        have to enumerate them, and a day of completed trips would bury the answer.
+        """
+        wanted = statuses or [str(status) for status in LIVE_TRIP_STATUSES]
+        rows = await self.session.execute(
+            select(Trip)
+            .where(Trip.operator_id == operator_id)
+            .where(Trip.status.in_(wanted))
+            .order_by(Trip.planned_start)
+        )
+        return list(rows.scalars().all())
+
+    async def stops_by_trip(self, trip_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[TripStop]]:
+        """Every stop for these trips in **one** query, grouped by trip.
+
+        The whole point of the endpoint above is to replace N calls with one; building
+        the response with one stop query per trip would put the N straight back.
+        """
+        if not trip_ids:
+            return {}
+        rows = await self.session.execute(
+            select(TripStop)
+            .where(TripStop.trip_id.in_(trip_ids))
+            .order_by(TripStop.trip_id, TripStop.sequence)
+        )
+        grouped: dict[uuid.UUID, list[TripStop]] = {}
+        for stop in rows.scalars().all():
+            grouped.setdefault(stop.trip_id, []).append(stop)
+        return grouped
+
     async def stops_of(self, trip_id: uuid.UUID) -> list[TripStop]:
         return list(
             (

@@ -51,6 +51,58 @@ ALL_STATUSES = (
 )
 
 
+#: Trip statuses a driver could still have work in. `completed` and the terminal ones are
+#: deliberately absent: a driver has nothing left to do on them, and a day of finished
+#: trips would make the shared read bigger than the per-driver reads it replaces.
+LIVE_TRIP_STATUSES = ("planned", "dispatched", "in_progress")
+
+
+class TripBoard:
+    """Every driver's work, read once for all of them (OQ-26).
+
+    The same trade as `StatusBoard` and for the same reason: thirty-five drivers each
+    polling `/driver/trips` is thirty-five HTTP calls per simulated minute, and the
+    platform client is synchronous inside one SimPy loop, so each one stops the world.
+
+    Observation is shared; **action is not**. A driver still starts its trip, marks its
+    stops and reports its breakdowns through its own token, which are the calls the
+    product is being tested on.
+    """
+
+    def __init__(self, engine: Engine, token: str) -> None:
+        self.engine = engine
+        self.token = token
+        self.refreshes = 0
+        self.errors = 0
+        self._by_driver: dict[uuid.UUID, list[dict[str, Any]]] = {}
+
+    def trips_of(self, driver_id: uuid.UUID) -> list[dict[str, Any]]:
+        """This driver's live trips as of the last refresh."""
+        return self._by_driver.get(driver_id, [])
+
+    def refresh(self) -> None:
+        platform = self.engine.platform
+        if platform is None:
+            return
+        try:
+            trips = platform.dispatch_trips(self.token, statuses=LIVE_TRIP_STATUSES)
+        except Exception as exc:  # noqa: BLE001 - a stale board beats a dead run
+            self.errors += 1
+            self.engine.record(f"trip board refresh failed: {type(exc).__name__}: {exc}")
+            return
+
+        self.refreshes += 1
+        grouped: dict[uuid.UUID, list[dict[str, Any]]] = {}
+        for trip in trips:
+            grouped.setdefault(uuid.UUID(str(trip["driver_id"])), []).append(trip)
+        self._by_driver = grouped
+
+    def watch(self) -> Process:
+        while True:
+            self.refresh()
+            yield self.engine.env.timeout(REFRESH_INTERVAL_SECONDS)
+
+
 class StatusBoard:
     """The operator's request board, refreshed on a timer and read by every rider."""
 

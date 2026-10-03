@@ -877,6 +877,101 @@ async def test_an_existing_stop_that_already_happened_is_not_rewritten(
 # --- automation pause (SUP-05) ------------------------------------------------------
 
 
+# --- the whole board in one read (OQ-26) ---------------------------------------------
+
+
+async def test_every_live_trip_comes_back_with_its_stops(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """One read instead of one per driver. Thirty-five drivers polling their own trips is
+    thirty-five round trips a minute, which is the cost OQ-26 named."""
+    first = await make_request(db_session, world, "near")
+    second = await make_request(db_session, world, "far")
+    await assign(client, supervisor, first, world["vehicles"]["alpha"])
+    await assign(client, supervisor, second, world["vehicles"]["bravo"])
+
+    response = await client.get("/dispatch/trips", headers=supervisor)
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 2
+    assert all(trip["stops"] for trip in items), "a trip with no stops tells a driver nothing"
+    assert {len(trip["stops"]) for trip in items} == {2}
+
+
+async def test_the_board_is_scoped_to_the_operator(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    supervisor: dict[str, str],
+    clock: FakeClock,
+) -> None:
+    """The one guard that matters most: this endpoint hands over an operator's whole day."""
+    request = await make_request(db_session, world, "near")
+    await assign(client, supervisor, request, world["vehicles"]["alpha"])
+
+    stranger = make_operator("Rival Cabs")
+    db_session.add(stranger)
+    await db_session.flush()
+    stranger_user = make_user(name="Rival", phone=unique_phone())
+    db_session.add(stranger_user)
+    await db_session.flush()
+    db_session.add(make_user_role(stranger_user.id, Role.supervisor, operator_id=stranger.id))
+    await db_session.flush()
+    token, _ = create_access_token(
+        user_id=stranger_user.id,
+        role=str(Role.supervisor),
+        secret=JWT_SECRET,
+        clock=clock,
+        ttl_seconds=900,
+        operator_id=stranger.id,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    items = (await client.get("/dispatch/trips", headers=headers)).json()["items"]
+
+    assert items == [], "another operator's trips are not this operator's business"
+
+
+async def test_finished_trips_are_not_on_the_live_board(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """A board asking what is happening now must not be buried in the morning's history."""
+    request = await make_request(db_session, world, "near")
+    created = (await assign(client, supervisor, request, world["vehicles"]["alpha"])).json()
+    trip = await db_session.get(Trip, uuid.UUID(created["id"]))
+    assert trip is not None
+    trip.status = str(TripStatus.completed)
+    await db_session.flush()
+
+    assert (await client.get("/dispatch/trips", headers=supervisor)).json()["items"] == []
+
+
+async def test_finished_trips_can_be_asked_for_explicitly(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    request = await make_request(db_session, world, "near")
+    created = (await assign(client, supervisor, request, world["vehicles"]["alpha"])).json()
+    trip = await db_session.get(Trip, uuid.UUID(created["id"]))
+    assert trip is not None
+    trip.status = str(TripStatus.completed)
+    await db_session.flush()
+
+    response = await client.get("/dispatch/trips?status=completed", headers=supervisor)
+
+    assert [item["id"] for item in response.json()["items"]] == [created["id"]]
+
+
+async def test_a_driver_cannot_read_the_whole_operators_board(
+    client: AsyncClient, world: dict[str, Any], driver_headers: dict[str, str]
+) -> None:
+    """A driver has `/driver/trips` for their own work. Every cab's movements for the day
+    is a different thing, and authorization is enforced on the server (hard rule 3)."""
+    response = await client.get("/dispatch/trips", headers=driver_headers)
+
+    assert response.status_code == 403
+
+
 async def test_automation_starts_unpaused(
     client: AsyncClient, world: dict[str, Any], supervisor: dict[str, str]
 ) -> None:
