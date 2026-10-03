@@ -104,6 +104,10 @@ class DispatchMetrics:
     refusals: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
+    #: Which hard rules those assignments broke, and how often (ADR-0011 reports rather
+    #: than enforces in Phase 1). "46 of 46 assignments broke something" is a mystery;
+    #: "46 of them were `eta_over_candidate_limit`" is a finding about the fleet.
+    violations_by_rule: dict[str, int] = field(default_factory=dict)
     errors: int = 0
 
 

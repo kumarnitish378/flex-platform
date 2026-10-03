@@ -156,6 +156,44 @@ def test_an_imperfect_cab_beats_no_cab(engine: Engine) -> None:
     assert agent.record.violations_accepted == 1
 
 
+def test_the_rules_an_assignment_broke_are_named(engine: Engine) -> None:
+    """A bare count cannot tell a fleet problem from a seeding one. `evening_surge`
+    reported 46 of 46 assignments breaking *something*, with no way to know what."""
+    only = candidate(eta=60, violations=["pickup_window_missed", "eta_over_candidate_limit"])
+    platform = FakeDispatch([request_row()], [only])
+    agent = supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert agent.record.violations_by_rule == {
+        "pickup_window_missed": 1,
+        "eta_over_candidate_limit": 1,
+    }
+
+
+def test_the_same_broken_rule_is_counted_each_time(engine: Engine) -> None:
+    """ "Every cab is too far away" is the finding; it needs the tally, not a set."""
+    rows = [request_row(), request_row()]
+    only = candidate(eta=60, violations=["eta_over_candidate_limit"])
+    platform = FakeDispatch(rows, [only])
+    agent = supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert agent.record.violations_by_rule["eta_over_candidate_limit"] == len(platform.assigned)
+    assert len(platform.assigned) >= 2
+
+
+def test_a_clean_assignment_names_no_rules(engine: Engine) -> None:
+    platform = FakeDispatch([request_row()], [candidate(eta=60)])
+    agent = supervisor_for(engine, platform)
+
+    engine.run()
+
+    assert agent.record.violations_accepted == 0
+    assert agent.record.violations_by_rule == {}
+
+
 def test_no_candidates_leaves_the_request_waiting(engine: Engine) -> None:
     """The rider's patience decides what happens next; that is the real dynamic."""
     platform = FakeDispatch([request_row()], [])

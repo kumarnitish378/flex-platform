@@ -54,6 +54,11 @@ class SupervisorRecord:
     refusals: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
+    #: Which rules, and how often. A bare count says "every assignment broke something"
+    #: without saying what, which is the difference between a finding and a mystery: a
+    #: surge where every cab is too far away is a fleet problem, one where every cab is
+    #: the wrong type is a seeding problem, and the count alone cannot tell them apart.
+    violations_by_rule: dict[str, int] = field(default_factory=dict)
     minutes_away: float = 0.0
     errors: list[str] = field(default_factory=list)
 
@@ -158,10 +163,15 @@ class SupervisorAgent:
             return
 
         self.record.assignments += 1
-        if choice.get("violations"):
+        broken = choice.get("violations") or []
+        if broken:
             # ADR-0011: manual assignment reports hard-rule violations and applies anyway.
             # Counted so a scenario can tell "dispatched well" from "dispatched at all".
             self.record.violations_accepted += 1
+            for rule in broken:
+                self.record.violations_by_rule[str(rule)] = (
+                    self.record.violations_by_rule.get(str(rule), 0) + 1
+                )
         self.engine.record(
             f"supervisor assigned {request_id} to {choice['vehicle_id']} "
             f"(eta {choice.get('eta_to_pickup_seconds')}s)"
@@ -199,6 +209,7 @@ class DispatchSummary:
     refusals: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
+    violations_by_rule: dict[str, int] = field(default_factory=dict)
     errors: int = 0
 
 
@@ -211,5 +222,6 @@ def summarise(record: SupervisorRecord | None) -> DispatchSummary:
         refusals=record.refusals,
         no_candidate=record.no_candidate,
         violations_accepted=record.violations_accepted,
+        violations_by_rule=dict(record.violations_by_rule),
         errors=len(record.errors),
     )

@@ -332,6 +332,7 @@ class Engine:
             refusals=summary.refusals,
             no_candidate=summary.no_candidate,
             violations_accepted=summary.violations_accepted,
+            violations_by_rule=summary.violations_by_rule,
             errors=summary.errors,
         )
 

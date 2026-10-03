@@ -17,7 +17,13 @@ from sim.agents.vehicle import VehicleAgent, VehicleConfig
 from sim.cli import main
 from sim.engine import Engine
 from sim.geo import LatLng
-from sim.metrics import RunMetrics, compute_fleet_metrics, percentile
+from sim.metrics import (
+    DemandMetrics,
+    DispatchMetrics,
+    RunMetrics,
+    compute_fleet_metrics,
+    percentile,
+)
 from sim.pings import Ping
 from sim.recorder import (
     Recorder,
@@ -192,7 +198,58 @@ def test_summary_is_readable_markdown(tmp_path: Path) -> None:
     text = paths.summary.read_text(encoding="utf-8")
     assert text.startswith("# smoke_tiny")
     assert "Invalid transitions" in text
-    assert "M05" in text, "the summary must say what is not measured yet"
+    # An offline run genuinely measured no demand, and must say so rather than printing
+    # a table of zeroes that reads as "nobody wanted a cab today".
+    assert "no platform" in text
+    assert "M05" not in text, "that caveat outlived M05 by four milestones"
+
+
+def test_the_summary_reports_what_happened_to_the_riders(tmp_path: Path) -> None:
+    """`summary.md` is the artefact a person opens. It claimed demand was "not measured
+    yet: agents arrive with task M05" long after M05 landed, so every run directory
+    understated its own run while `metrics.json` beside it held the numbers."""
+    engine, metrics = run_with_traffic()
+    metrics.demand = DemandMetrics(
+        requests=10,
+        completed=4,
+        gave_up=5,
+        unresolved=1,
+        still_waiting=1,
+        still_riding=0,
+        wait_minutes_p90=52.5,
+    )
+    metrics.drain_minutes = 12.0
+    paths = Recorder(run_directory("smoke_tiny", datetime.now(UTC), tmp_path)).write_all(
+        metrics, engine.pings.pings, []
+    )
+
+    text = paths.summary.read_text(encoding="utf-8")
+
+    assert "Riders who asked | 10" in text
+    assert "40%" in text, "carried, as a share - the number the pilot is judged on"
+    assert "52.5" in text
+    assert "Nobody came | 1 |" in text, "a tally, not 1.0"
+    assert "12 more minutes" in text
+
+
+def test_the_summary_names_the_rules_dispatch_broke(tmp_path: Path) -> None:
+    """ "46 of 46 assignments broke something" is a mystery; naming the rule is a finding."""
+    engine, metrics = run_with_traffic()
+    metrics.dispatch = DispatchMetrics(
+        policy="manual_nearest",
+        assignments=46,
+        violations_accepted=46,
+        violations_by_rule={"eta_over_candidate_limit": 46, "pickup_window_missed": 3},
+    )
+    paths = Recorder(run_directory("smoke_tiny", datetime.now(UTC), tmp_path)).write_all(
+        metrics, engine.pings.pings, []
+    )
+
+    text = paths.summary.read_text(encoding="utf-8")
+
+    assert "`eta_over_candidate_limit` | 46" in text
+    # Worst first: the long tail is noise when you are looking for the cause.
+    assert text.index("eta_over_candidate_limit") < text.index("pickup_window_missed")
 
 
 # --- compare -----------------------------------------------------------------

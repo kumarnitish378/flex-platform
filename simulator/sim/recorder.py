@@ -154,10 +154,8 @@ class Recorder:
             f"| Hard-rule violations | {metrics.integrity.hard_rule_violations} |",
             f"| API 5xx | {metrics.integrity.api_5xx} |",
             "",
-            "## Demand",
-            "",
-            "Not measured yet: employee and driver agents arrive with task M05.",
-            "",
+            *_demand_lines(metrics),
+            *_dispatch_lines(metrics),
         ]
         self.paths.summary.write_text("\n".join(lines), encoding="utf-8")
         return self.paths.summary
@@ -236,3 +234,101 @@ def _delta(a: Any, b: Any) -> str:
 
 def _show(value: float | None) -> str:
     return "-" if value is None else f"{value:.1f}"
+
+
+def _count(value: int | None) -> str:
+    """A tally, not a measurement. "125 riders gave up" - never "125.0 riders"."""
+    return "-" if value is None else f"{int(value)}"
+
+
+def _demand_lines(metrics: RunMetrics) -> list[str]:
+    """What happened to the riders - the half of the summary that matters most.
+
+    This section said "not measured yet: agents arrive with task M05" long after M05
+    landed, so every run directory's human-readable artefact understated its own run
+    while `metrics.json` beside it held the numbers. `summary.md` is what a person opens.
+    """
+    demand = metrics.demand
+    if demand.requests is None:
+        return [
+            "## Demand",
+            "",
+            "Not measured: this run had no platform, so nobody asked for a cab.",
+            "",
+        ]
+
+    served = demand.completed or 0
+    asked = demand.requests or 0
+    lines = [
+        "## Demand",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Riders who asked | {asked} |",
+        f"| Carried | {served}" + (f" ({served / asked:.0%})" if asked else "") + " |",
+        f"| Gave up | {_count(demand.gave_up)} |",
+        f"| No-shows | {_count(demand.no_shows)} |",
+        f"| Expired | {_count(demand.expired)} |",
+        f"| Wait median (min) | {_show(demand.wait_minutes_median)} |",
+        f"| Wait p90 (min) | {_show(demand.wait_minutes_p90)} |",
+        "",
+    ]
+
+    unresolved = demand.unresolved or 0
+    if unresolved:
+        # Both halves, because they are different failures: nobody came, versus the ride
+        # never ended (ADR-0018).
+        lines += [
+            "### Unresolved (fails `all_requests_terminal`)",
+            "",
+            "| Metric | Value |",
+            "|---|---|",
+            f"| Nobody came | {_count(demand.still_waiting)} |",
+            f"| Still riding at the end | {_count(demand.still_riding)} |",
+            "",
+        ]
+    if metrics.drain_minutes:
+        drained = (
+            "ran out with someone still aboard" if metrics.drain_capped else "every cab emptied"
+        )
+        lines += [
+            f"Rides in progress were given {metrics.drain_minutes:.0f} more minutes "
+            f"after the demand window closed; {drained} (ADR-0017).",
+            "",
+        ]
+    return lines
+
+
+def _dispatch_lines(metrics: RunMetrics) -> list[str]:
+    dispatch = metrics.dispatch
+    if dispatch.policy is None:
+        return []
+    lines = [
+        "## Dispatch",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Policy | `{dispatch.policy}` |",
+        f"| Assignments | {dispatch.assignments} |",
+        f"| Refused by the backend | {dispatch.refusals} |",
+        f"| No cab to offer | {dispatch.no_candidate} |",
+        f"| Assignments breaking a hard rule | {dispatch.violations_accepted} |",
+        "",
+    ]
+    if dispatch.violations_by_rule:
+        # ADR-0011 reports rather than enforces in Phase 1, so these are decisions a
+        # supervisor made knowingly - and which rule it was is the whole finding.
+        lines += [
+            "### Which rules were broken",
+            "",
+            "| Rule | Times |",
+            "|---|---|",
+            *(
+                f"| `{rule}` | {count} |"
+                for rule, count in sorted(
+                    dispatch.violations_by_rule.items(), key=lambda item: -item[1]
+                )
+            ),
+            "",
+        ]
+    return lines
