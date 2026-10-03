@@ -61,6 +61,9 @@ class IngestResult:
     #: dropped as too_far_future" does not say whether the clock is a second out or an
     #: hour, and `Rejected.detail` already carries the number (OQ-33).
     examples: dict[str, str] = field(default_factory=dict)
+    #: Rows this call wrote to the session. The caller commits when it is non-zero: a
+    #: write nobody commits is invisible to the API's own connection (OQ-33).
+    written: int = 0
     latest_moved: bool = False
 
     def drop(self, rejection: Rejected) -> None:
@@ -144,7 +147,7 @@ class GpsIngestor:
                 reasons=result.reasons,
                 examples=result.examples,
             )
-        await self.flush_if_due()
+        result.written = await self.flush_if_due()
         return result
 
     def _row(
