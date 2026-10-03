@@ -57,11 +57,17 @@ class IngestResult:
     accepted: int = 0
     dropped: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
+    #: One example of each reason, kept because the count alone is undiagnosable: "2251
+    #: dropped as too_far_future" does not say whether the clock is a second out or an
+    #: hour, and `Rejected.detail` already carries the number (OQ-33).
+    examples: dict[str, str] = field(default_factory=dict)
     latest_moved: bool = False
 
     def drop(self, rejection: Rejected) -> None:
         self.dropped += 1
         self.reasons[str(rejection.reason)] = self.reasons.get(str(rejection.reason), 0) + 1
+        # Last one wins: in a drifting clock the most recent example is the useful one.
+        self.examples[str(rejection.reason)] = rejection.detail
 
 
 class GpsIngestor:
@@ -97,6 +103,20 @@ class GpsIngestor:
         for rejection in parsed.rejected:
             result.drop(rejection)
 
+        # Read the simulated clock *here*, not just on the flush loop. The ingestor is a
+        # separate process and `SharedSimClock` serves the last value it read, so judging
+        # a ping against a value refreshed every five real seconds means judging it
+        # against a clock that is five seconds stale - which at `speed_factor: 60` is
+        # **five simulated minutes**, against a two-minute future tolerance.
+        #
+        # That is how half of every run's GPS was being discarded as `too_far_future`,
+        # in bursts of whole minutes, while the surviving positions were minutes old and
+        # so flagged `gps_stale` on every candidate (OQ-33). `SharedSimClock`'s own
+        # docstring assumed this call existed; it did not.
+        refresh = getattr(self.clock, "refresh", None)
+        if refresh is not None:
+            await refresh()
+
         now = self.clock.now()
         # Oldest first, so a reconnect batch is judged in the order it happened rather
         # than tripping the jump check against its own newest ping.
@@ -122,6 +142,7 @@ class GpsIngestor:
                 vehicle_id=str(vehicle_id),
                 dropped=result.dropped,
                 reasons=result.reasons,
+                examples=result.examples,
             )
         await self.flush_if_due()
         return result
