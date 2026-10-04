@@ -16,7 +16,11 @@ dependencies = [
     # Runtime, not just tests: the OSRM client (app/modules/routing/osrm.py) uses httpx,
     # and the routing cache + rate limiter use redis.
     "httpx==0.28.1",
-    "redis==8.1.0",
+    # 6.4.x, not 8.x: Celery's broker goes through kombu, which caps redis at <6.5
+    # (B20). The APIs this project uses - get/set/expire/delete/ping/pubsub/aclose -
+    # have all existed since 5.0, so the ceiling costs nothing; a newer redis would cost
+    # the scheduler.
+    "redis==6.4.0",
     # Geography columns and the shapes tests build (tech-stack.md, Geo).
     "geoalchemy2==0.20.0",
     "shapely==2.1.2",
@@ -25,6 +29,10 @@ dependencies = [
     "python-multipart==0.0.32",
     # MQTT consumer for the GPS ingestor (tech-stack.md).
     "aiomqtt==2.5.1",
+    # The scheduler that runs the platform's due work (B20). Named in tech-stack.md from
+    # the start; until B20 nothing ran the expiry, escalation, stop-ETA or stale-vehicle
+    # sweeps outside the simulator.
+    "celery[redis]==5.6.0",
 ]
 
 [project.optional-dependencies]
@@ -87,6 +95,13 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = ["app.domain.*", "app.core.*"]
 strict = true
+
+# Celery ships no type information for its task decorator, so every `@task` would be
+# reported as making the function untyped. The bodies are checked normally; only the
+# decorator is exempt, and the tasks are deliberately three lines each.
+[[tool.mypy.overrides]]
+module = ["app.workers.*"]
+disallow_untyped_decorators = false
 
 
 # --- pytest -----------------------------------------------------------------

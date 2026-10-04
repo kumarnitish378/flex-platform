@@ -20,7 +20,11 @@ class Env {
     defaultValue: 'http://10.0.2.2:8000/api/v1',
   );
 
-  /// Raster tile template, e.g. `https://tile.openstreetmap.org/{z}/{x}/{y}.png`.
+  /// Raster tile template - the usual `{z}/{x}/{y}.png` shape, supplied per build.
+  ///
+  /// No example URL here, not even in a comment: the repo guard that enforces hard rule
+  /// 7 reads source files and cannot tell a comment from code, and it is right not to
+  /// try. The value for each environment lives in the build command and `.env.example`.
   ///
   /// Empty by default on purpose: a map with no configured tile source must fail
   /// visibly in review rather than quietly fall back to somebody's demo server.

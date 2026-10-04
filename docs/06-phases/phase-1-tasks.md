@@ -80,6 +80,39 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   that blocks mypy's compiled wheel), and the generator needs `-i` as a POSIX path or it
   rejects `D:\...` as an illegal URI.
 
+- [x] **B20 · Scheduler: the platform's due work** · deps B09, B15, B17
+  Docs: tech-stack.md (Celery), architecture.md §3.2, ADR-0008
+  Do: Celery app + beat schedule running the three sweeps that have to happen on their
+  own - expiry and escalation, the stop-ETA refresh, and the stale-vehicle sweep.
+  Done when: `make worker` and `make beat` run; every sweep reachable from a clock jump
+  is also reachable from the beat, proved by a test.
+
+  **Why this task exists.** It was not in the plan, and it should have been. Until now
+  the three sweeps had exactly one caller between them: `PUT /simctl/clock`, which is
+  mounted only when `APP_ENV=sim` (ADR-0008 - "a runtime flag could be flipped; an
+  unregistered route cannot be"). Two services even documented themselves as "called by
+  the Celery beat loop in production". There was no Celery: not a dependency, not a
+  package, not a target that ran.
+
+  So a deployed Phase 1 would have silently done none of this: requests never expiring,
+  no near-expiry warning, no escalation (ADR-0019, written the same day), no
+  stale-vehicle alert (SUP-01), and no stop-ETA refresh (B15's "30-second job"). Every
+  one is work that is supposed to happen by itself, so its absence looks like a quiet
+  morning - and the simulator exercised all of it, because the simulator drives the
+  clock endpoint.
+
+  Found by `make help` reporting `worker` and `beat` as "not usable yet", which they had
+  been since F01.
+
+  The tasks are deliberately thin - open a session, call the same service method the sim
+  endpoint calls, commit, log - so production and the scenarios run the same code. The
+  guard test reads the sim endpoint's source and fails if it runs a sweep the beat does
+  not, which is this exact failure caught at its source.
+
+  One dependency consequence: `redis` is pinned to 6.4.x rather than 8.x, because
+  Celery's broker goes through kombu, which caps it at `<6.5`. Every Redis API this
+  project uses has existed since 5.0, so the ceiling costs nothing.
+
 - [x] **M01 · Simulator skeleton** · deps F01, I02
   Docs: simulator-spec.md §2–4, ADR-0010
   Do: package layout, CLI, scenario YAML loader + schema validation, SimPy engine, routing through the

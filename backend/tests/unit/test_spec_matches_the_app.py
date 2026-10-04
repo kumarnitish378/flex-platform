@@ -42,9 +42,7 @@ def declared() -> set[tuple[str, str]]:
     for path, item in (spec.get("paths") or {}).items():
         if item.get("x-phase") == 2:
             continue
-        found |= {
-            (method.upper(), path) for method in item if method.lower() in METHODS
-        }
+        found |= {(method.upper(), path) for method in item if method.lower() in METHODS}
     return found
 
 
