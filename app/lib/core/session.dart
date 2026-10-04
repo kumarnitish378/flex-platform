@@ -84,6 +84,42 @@ class SessionNotifier extends Notifier<Session> {
   @override
   Session build() => Session.none;
 
+  /// A token read back from storage, before `/auth/me` has confirmed anything.
+  ///
+  /// Deliberately not `signIn`: at this point the app has a token and no idea whether it
+  /// is still valid or which roles it carries. `isSignedIn` stays false until a role is
+  /// known, so the router keeps the person on the splash rather than flashing a screen
+  /// that a dead token is about to empty.
+  void restore({required String accessToken, Role? activeRole}) {
+    state = Session(
+      roles: state.roles,
+      activeRole: activeRole,
+      accessToken: accessToken,
+      userId: state.userId,
+    );
+  }
+
+  /// A confirmed session: `/auth/me` answered, so the roles are real.
+  void signIn({
+    required String userId,
+    required List<Role> roles,
+    required Role activeRole,
+    required String accessToken,
+  }) {
+    state = Session(
+      roles: roles,
+      activeRole: activeRole,
+      accessToken: accessToken,
+      userId: userId,
+    );
+  }
+
+  /// After a refresh. Only the token changes - who they are and the role they are using
+  /// must survive, or every token rotation would quietly bounce them to login.
+  void updateAccessToken(String accessToken) {
+    state = state.copyWith(accessToken: accessToken);
+  }
+
   /// Switch which of this person's roles the app is acting as.
   ///
   /// Refuses a role they do not hold. The server would refuse it too (hard rule 3), but
