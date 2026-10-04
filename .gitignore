@@ -46,3 +46,8 @@ infra/tiles/*.mbtiles
 *.swp
 .DS_Store
 Thumbs.db
+
+# Downloaded build tools, cached per machine. `scripts/api_client.py` fetches the
+# openapi-generator jar here on first run; it is pinned by version, so a checkout
+# reproduces the same client without carrying 27 MB of jar in history.
+.tooling/

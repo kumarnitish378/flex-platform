@@ -1,0 +1,44 @@
+{
+  "@@locale": "en",
+
+  "appTitle": "Smart Cab",
+  "@appTitle": {
+    "description": "Shown on the splash screen and as the Android task name. The product name is not final (OQ-18), which is one reason every string lives here from day one."
+  },
+
+  "splashTagline": "Your cab, tracked",
+  "@splashTagline": {
+    "description": "One line under the app name while the session is being restored."
+  },
+
+  "signIn": "Sign in",
+  "@signIn": {
+    "description": "Button on the login screen."
+  },
+
+  "signInNotReady": "Signing in arrives with the login task. Nothing here is faked, so there is no way in yet.",
+  "@signInNotReady": {
+    "description": "Placeholder on the login screen until A03 lands. Deliberately honest rather than a fake login."
+  },
+
+  "homeForRole": "Signed in as {role}",
+  "@homeForRole": {
+    "description": "Placeholder home screen heading until each role's screens are built.",
+    "placeholders": {
+      "role": {
+        "type": "String",
+        "example": "driver"
+      }
+    }
+  },
+
+  "switchRole": "Switch role",
+  "@switchRole": {
+    "description": "Opens the role switcher. Only shown when the person holds more than one role."
+  },
+
+  "signOut": "Sign out",
+  "@signOut": {
+    "description": "Ends the session. Also stops the driver's location service (coding-standards.md section 3 rule 6)."
+  }
+}

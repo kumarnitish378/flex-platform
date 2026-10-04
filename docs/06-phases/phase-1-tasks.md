@@ -46,15 +46,39 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Do: FastAPI app factory, settings (pydantic-settings), async DB session, Alembic init, `Clock` (SystemClock + FakeClock), error handler, JSON logging, `/health/live` and `/health/ready`.
   Done when: `make backend-dev` serves health endpoints; unit test proves FakeClock is injectable; ruff + mypy clean.
 
-- [ ] **A01 · App skeleton** · deps F01
+- [x] **A01 · App skeleton** · deps F01
   Docs: tech-stack.md, coding-standards.md §3
   Do: Flutter project, Riverpod, go_router, theme, env via `--dart-define`, ARB setup (en), folder layout, strict lints.
   Done when: app builds and runs on Android emulator showing splash; `flutter analyze` clean.
+  Flutter 3.47.6 stable; `com.flexplatform.smart_cab` (provisional, OQ-18). Splash ->
+  login -> role home, with the role deciding home and what each role may open
+  (`roleMayOpen`). Nothing is faked: there is no way to sign in until A03, because a
+  pretend login is how screens get built against a session that does not exist. A
+  **debug APK builds** on this machine - `flutter analyze` clean, 26 tests.
+  One bug the tests caught immediately: `redirect` is only consulted on navigation, so
+  signing out cleared the session and left the person on a screen they were no longer
+  allowed to see. The router listens for session changes now.
 
-- [ ] **A02 · API client generation** · deps A01, B01
+- [x] **A02 · API client generation** · deps A01, B01
   Docs: ADR-0009, api-spec.yaml
   Do: `make api-client` generates Dart client into `app/lib/data/api/`; wrapper with auth interceptor (token + `X-Active-Role`, refresh on 401).
   Done when: generated client compiles; interceptor unit-tested.
+  `make api-client` runs `scripts/api_client.py`: it finds Java (Android Studio's JBR),
+  caches a pinned openapi-generator, generates `dart-dio`, and runs `build_runner`.
+  The client is a **package** at `app/packages/smart_cab_api/` rather than files under
+  `lib/data/api/`, because dart-dio emits its own pubspec and needs build_runner -
+  neither of which can live inside the app's own package. `lib/data/api/` holds the
+  hand-written wrapper, which is the part worth reading. `coding-standards.md` §3 updated
+  to say so.
+  **Generating it found a real spec defect:** `tracker_type` was an inline enum on
+  `VehicleInput`, inherited by `Vehicle` and `VehicleLive` through `allOf`, and the
+  generated client referenced a `VehicleInputTrackerTypeEnum` class it never emitted -
+  so the client did not compile. Named as `TrackerType` and `$ref`-ed, like the two
+  enums above it. Nothing but generating a client would have found that.
+  Two machine constraints worth knowing: `build_runner` is run with `--force-jit`
+  because Windows Application Control blocks `gen_snapshot.exe` here (the same policy
+  that blocks mypy's compiled wheel), and the generator needs `-i` as a POSIX path or it
+  rejects `D:\...` as an illegal URI.
 
 - [x] **M01 · Simulator skeleton** · deps F01, I02
   Docs: simulator-spec.md §2–4, ADR-0010

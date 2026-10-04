@@ -1,0 +1,44 @@
+name: smart_cab
+description: >
+  Smart Cab - one universal app for employees, drivers, supervisors and admins.
+  Screens are rendered by the active role after login (ADR-0003).
+publish_to: "none"
+
+# versionName+versionCode on Android. Bumped by the release task (R02), not by hand
+# during development.
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  # The generated API client is dart-dio (ADR-0009), so dio and its friends are direct
+  # dependencies of our own wrapper rather than transitive luck.
+  built_collection: ^5.1.1
+  built_value: ^8.12.0
+  dio: ^5.9.0
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  # State and routing (coding-standards.md section 3, rules 1 and 2).
+  flutter_riverpod: ^3.0.3
+  # Tokens never touch shared preferences (non-functional.md, Privacy).
+  flutter_secure_storage: ^9.2.4
+  go_router: ^17.2.1
+  intl: any
+  one_of: ^1.5.0
+  # The generated client (ADR-0009). A path dependency: it is produced by
+  # `make api-client` from api-spec.yaml and never hand-edited.
+  smart_cab_api:
+    path: packages/smart_cab_api
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
+  generate: true

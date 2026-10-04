@@ -934,6 +934,12 @@ components:
         app_version: {type: string}
     VehicleType: {type: string, enum: [sedan_4, suv_6, vip]}
     VehicleStatus: {type: string, enum: [off_duty, available, on_trip, out_of_service]}
+    # Named rather than inline, like the two above it. As an inline enum on
+    # `VehicleInput` it was inherited by `Vehicle` and `VehicleLive` through `allOf`, and
+    # the generated Dart client referenced a `VehicleInputTrackerTypeEnum` class that it
+    # never emitted in those files - so the client did not compile. An enum used by more
+    # than one schema is a type, and types get names.
+    TrackerType: {type: string, enum: [app, esp32]}
     VehicleInput:
       type: object
       required: [registration_no, vehicle_type, seat_capacity]
@@ -942,7 +948,7 @@ components:
         model: {type: string}
         vehicle_type: {$ref: '#/components/schemas/VehicleType'}
         seat_capacity: {type: integer, minimum: 1, maximum: 12}
-        tracker_type: {type: string, enum: [app, esp32], default: app}
+        tracker_type: {$ref: '#/components/schemas/TrackerType', default: app}
     Vehicle:
       allOf:
         - $ref: '#/components/schemas/VehicleInput'

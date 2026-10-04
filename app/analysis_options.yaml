@@ -1,0 +1,47 @@
+# Strict analysis (coding-standards.md section 3 rule 8: `flutter analyze` must be clean).
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # Unused code and TODOs without an issue are how a codebase rots quietly. The
+    # definition of done says no TODOs without an open question, so make the analyzer
+    # say so too.
+    todo: warning
+    unused_element: error
+    unused_import: error
+    unused_local_variable: error
+    # A missing `await` on a Future is a race, not a style question.
+    unawaited_futures: error
+    # The generated API client is not ours to lint (coding-standards.md: do not edit by
+    # hand), but it must still compile.
+  exclude:
+    # Generated from api-spec.yaml by `make api-client`, never hand-edited
+    # (coding-standards.md section 3 rule 3). It must compile - and it does, which is
+    # how the `TrackerType` spec defect surfaced - but its unused imports are the
+    # generator's business, not ours.
+    - packages/smart_cab_api/**
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - build/**
+    - android/**
+
+linter:
+  rules:
+    # Every user-visible string lives in an ARB file (section 3 rule 4), so a literal in
+    # a widget is a bug the analyzer can catch.
+    - prefer_single_quotes
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - avoid_print
+    - cancel_subscriptions
+    - close_sinks
+    - directives_ordering
+    - prefer_final_locals
+    - require_trailing_commas
+    - sort_pub_dependencies
+    - unnecessary_parenthesis
+    - use_super_parameters

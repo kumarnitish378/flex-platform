@@ -77,7 +77,7 @@ format:
 
 ## Regenerate the Dart API client from docs/03-architecture/api-spec.yaml
 api-client:
-	python scripts/not_ready.py api-client A02
+	python scripts/api_client.py
 
 # SIM_PLATFORM points the suites at a live backend so their assertions are actually
 # evaluated. Without it a run finishes and reports "assertions not checked" - useful for

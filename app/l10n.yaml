@@ -1,0 +1,8 @@
+# Every user-visible string comes from an ARB file (coding-standards.md section 3 rule 4).
+# English first; the product is sold in India and a second locale is a translation job,
+# not a code change.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppText
+nullable-getter: false
