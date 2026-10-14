@@ -20,7 +20,7 @@ corporate transport. The working directory is `D:\flex-platform`.
 1. `app/AGENTS.md` — the working agreement for the app. Read it **fully**. It lists ten
    specific traps, each of which has already cost this project real time.
 2. `CLAUDE.md` in the repo root — the project's hard rules.
-3. `docs/06-phases/phase-1-tasks.md` — find task **A03** and read its acceptance criteria.
+3. `docs/06-phases/phase-1-tasks.md` — find task **A04** and read its acceptance criteria.
 4. `docs/01-requirements/screens-by-role.md` — the "Common" section, screens C-01 to C-03.
 
 Do not skim these. The project has strict conventions that are enforced by tests, and
@@ -31,12 +31,9 @@ code that ignores them will fail `flutter analyze` or a repo guard.
 The backend and the simulator are complete and heavily tested. **Do not change them.**
 Your work is confined to `app/`.
 
-Within the app, A01 (skeleton, routing, theme, localisation) and A02 (generated API
-client, auth interceptor) are done. A03's *logic* is done too — token storage, the auth
-repository and the session controller all exist and compile. What is missing is A03's
-**screens**.
+Within the app, A01, A02, and A03 (login, splash, role switcher, secure storage, session restoration, localizations) are complete.
 
-`flutter analyze` is currently clean and 26 tests pass. Keep it that way: if your change
+`flutter analyze` is currently clean and 42 tests pass. Keep it that way: if your change
 makes either fail, fix it before moving on.
 
 ## The five things most likely to go wrong
@@ -86,22 +83,11 @@ To run against a real backend, from the repo root: `make up`, then
 
 ## Your task
 
-**A03 — Login, session and role switcher.** Build these three screens:
+**A04 — Role-based navigation.**
 
-- **C-02 Login.** Phone input defaulting to `+91`, then a 6-digit code field. A resend
-  option that becomes available after 30 seconds. One error message for a refused code; a
-  different one for "could not reach the server", because telling somebody to re-check a
-  code that was correct is maddening.
-- **C-01 Splash.** Call `restore()` on the session controller, then route by role. A
-  skeleton exists — wire it up.
-- **C-03 Role switcher.** Shown only when the person holds more than one role. Calls
-  `switchTo(role)`, which also remembers the choice for the next launch.
+Ensure each role sees only its screens (widget tests for all 5 roles) and unauthorized deep links redirect home for the active role.
 
-Done when: OTP login works against the dev backend, tokens are in secure storage, an
-expired access token refreshes without the person noticing, and a multi-role user can
-switch roles.
-
-When A03 is finished: run `flutter analyze` and `flutter test`, tick A03 in
+When A04 is finished: run `flutter analyze` and `flutter test`, tick A04 in
 `docs/06-phases/phase-1-tasks.md` with a one-paragraph note on what you built, and
-**stop**. Do not start A04. Report what you did, what you could not do, and anything you
+**stop**. Do not start A05. Report what you did, what you could not do, and anything you
 found that looked wrong.

@@ -21,6 +21,118 @@
     "description": "Placeholder on the login screen until A03 lands. Deliberately honest rather than a fake login."
   },
 
+  "phoneNumber": "Phone number",
+  "@phoneNumber": {
+    "description": "Label for the phone input field."
+  },
+
+  "enterPhoneNumber": "Enter your phone number to sign in",
+  "@enterPhoneNumber": {
+    "description": "Instruction text on the phone step of login."
+  },
+
+  "sendCode": "Send code",
+  "@sendCode": {
+    "description": "Button to request OTP code."
+  },
+
+  "enterCode": "Enter verification code",
+  "@enterCode": {
+    "description": "Heading for the OTP code entry step."
+  },
+
+  "codeSentTo": "Code sent to {phone}",
+  "@codeSentTo": {
+    "description": "Subtitle showing which phone number received the OTP.",
+    "placeholders": {
+      "phone": {
+        "type": "String",
+        "example": "+91 9876543210"
+      }
+    }
+  },
+
+  "verifyCode": "Verify code",
+  "@verifyCode": {
+    "description": "Button to submit the OTP verification code."
+  },
+
+  "resendCode": "Resend code",
+  "@resendCode": {
+    "description": "Button to resend the OTP code."
+  },
+
+  "resendCodeIn": "Resend code in {seconds}s",
+  "@resendCodeIn": {
+    "description": "Disabled button text during OTP resend countdown.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "30"
+      }
+    }
+  },
+
+  "changePhone": "Change phone number",
+  "@changePhone": {
+    "description": "Action to go back and edit the phone number."
+  },
+
+  "otpRejected": "Invalid or expired code. Please try again.",
+  "@otpRejected": {
+    "description": "Single error message shown when OTP verification fails for any reason (B03, OQ-24)."
+  },
+
+  "authUnavailable": "Could not reach the server. Please check your connection.",
+  "@authUnavailable": {
+    "description": "Error message when backend network request fails."
+  },
+
+  "tooManyRequests": "Too many requests. Please wait a moment.",
+  "@tooManyRequests": {
+    "description": "Error message when rate limit (429) is hit."
+  },
+
+  "noRolesAssigned": "Your account has no assigned roles. Please contact support.",
+  "@noRolesAssigned": {
+    "description": "Error message when authenticated user has no roles."
+  },
+
+  "selectRole": "Select active role",
+  "@selectRole": {
+    "description": "Title for the role switcher bottom sheet or screen (C-03)."
+  },
+
+  "roleNameEmployee": "Employee",
+  "@roleNameEmployee": {
+    "description": "Display name for Employee role."
+  },
+
+  "roleNameDriver": "Driver",
+  "@roleNameDriver": {
+    "description": "Display name for Driver role."
+  },
+
+  "roleNameSupervisor": "Supervisor",
+  "@roleNameSupervisor": {
+    "description": "Display name for Supervisor role."
+  },
+
+  "roleNameOperatorAdmin": "Operator Admin",
+  "@roleNameOperatorAdmin": {
+    "description": "Display name for Operator Admin role."
+  },
+
+  "roleNameClientAdmin": "Client Admin",
+  "@roleNameClientAdmin": {
+    "description": "Display name for Client Admin role."
+  },
+
+  "roleNamePlatformAdmin": "Platform Admin",
+  "@roleNamePlatformAdmin": {
+    "description": "Display name for Platform Admin role."
+  },
+
   "homeForRole": "Signed in as {role}",
   "@homeForRole": {
     "description": "Placeholder home screen heading until each role's screens are built.",

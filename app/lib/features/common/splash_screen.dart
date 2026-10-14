@@ -3,14 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/session.dart';
+import '../../core/session_controller.dart';
 import '../../l10n/app_localizations.dart';
 
-/// First frame, while the stored session is restored (A01).
+/// First frame, while the stored session is restored (C-01).
 ///
 /// It exists because the alternative is showing the login screen to somebody who is
 /// already signed in, for however long the secure-storage read takes - a flash of the
-/// wrong screen on every cold start. Restoring the session is A03's job; until then
-/// this moves straight on, which is also what a genuinely signed-out user sees.
+/// wrong screen on every cold start.
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -22,10 +22,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _decide());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreAndDecide());
   }
 
-  void _decide() {
+  Future<void> _restoreAndDecide() async {
+    await ref.read(sessionControllerProvider.notifier).restore();
     if (!mounted) {
       return;
     }
@@ -40,7 +41,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     final AppText text = AppText.of(context);
     final ThemeData theme = Theme.of(context);
     return Scaffold(
-      key: const Key('splash'),
+      key: const Key('C-01'),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

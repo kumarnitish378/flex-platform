@@ -53,18 +53,32 @@ class SecureTokenStore implements TokenStore {
 
   @override
   Future<StoredSession?> read() async {
-    final String? access = await _storage.read(key: _accessKey);
-    final String? refresh = await _storage.read(key: _refreshKey);
-    if (access == null || refresh == null) {
-      // Half a session is no session. Returning the access token alone would give a
-      // signed-in-looking app that cannot recover when the token expires minutes later.
+    try {
+      final String? access = await _storage.read(key: _accessKey).timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null,
+      );
+      final String? refresh = await _storage.read(key: _refreshKey).timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null,
+      );
+      if (access == null || refresh == null) {
+        // Half a session is no session. Returning the access token alone would give a
+        // signed-in-looking app that cannot recover when the token expires minutes later.
+        return null;
+      }
+      final String? role = await _storage.read(key: _roleKey).timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null,
+      );
+      return StoredSession(
+        accessToken: access,
+        refreshToken: refresh,
+        activeRole: role,
+      );
+    } catch (_) {
       return null;
     }
-    return StoredSession(
-      accessToken: access,
-      refreshToken: refresh,
-      activeRole: await _storage.read(key: _roleKey),
-    );
   }
 
   @override

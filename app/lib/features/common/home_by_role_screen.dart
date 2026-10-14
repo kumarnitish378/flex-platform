@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/session.dart';
 import '../../l10n/app_localizations.dart';
+import 'role_switcher.dart';
 
 /// The landing screen for whichever role is active (A01).
 ///
@@ -29,7 +30,7 @@ class HomeByRoleScreen extends ConsumerWidget {
               key: const Key('switch-role'),
               tooltip: text.switchRole,
               icon: const Icon(Icons.swap_horiz),
-              onPressed: () {},
+              onPressed: () => RoleSwitcherModal.show(context),
             ),
           IconButton(
             key: const Key('sign-out'),

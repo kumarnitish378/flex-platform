@@ -23,6 +23,7 @@ class SmartCabApp extends ConsumerWidget {
       onGenerateTitle: (BuildContext context) => AppText.of(context).appTitle,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
+      themeMode: ThemeMode.light,
       localizationsDelegates: const <LocalizationsDelegate<Object>>[
         AppText.delegate,
         GlobalMaterialLocalizations.delegate,

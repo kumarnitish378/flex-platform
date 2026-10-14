@@ -111,29 +111,33 @@ class SessionController extends Notifier<SignInState> {
   /// Always ends with a definite answer - signed in or not - because the splash waits on
   /// it, and an exception here would leave the app on the splash screen forever.
   Future<void> restore() async {
-    final StoredSession? stored = await _store.read();
-    if (stored == null) {
-      return;
-    }
+    try {
+      final StoredSession? stored = await _store.read();
+      if (stored == null) {
+        return;
+      }
 
-    _session.restore(
-      accessToken: stored.accessToken,
-      activeRole: Role.fromWire(stored.activeRole),
-    );
+      _session.restore(
+        accessToken: stored.accessToken,
+        activeRole: Role.fromWire(stored.activeRole),
+      );
 
-    // `/auth/me` both validates the token and tells us the roles. If it fails, the
-    // interceptor has already tried a refresh, so this is a dead session.
-    final Identity? identity = await _auth.me();
-    if (identity == null || identity.roles.isEmpty) {
+      // `/auth/me` both validates the token and tells us the roles. If it fails, the
+      // interceptor has already tried a refresh, so this is a dead session.
+      final Identity? identity = await _auth.me();
+      if (identity == null || identity.roles.isEmpty) {
+        await signOut(revoke: false);
+        return;
+      }
+      _session.signIn(
+        userId: identity.userId,
+        roles: identity.roles,
+        activeRole: _chooseRole(identity.roles, Role.fromWire(stored.activeRole)),
+        accessToken: stored.accessToken,
+      );
+    } catch (_) {
       await signOut(revoke: false);
-      return;
     }
-    _session.signIn(
-      userId: identity.userId,
-      roles: identity.roles,
-      activeRole: _chooseRole(identity.roles, Role.fromWire(stored.activeRole)),
-      accessToken: stored.accessToken,
-    );
   }
 
   /// C-02, first step: ask for a code.
@@ -148,6 +152,11 @@ class SessionController extends Notifier<SignInState> {
     } on AuthUnavailable catch (error) {
       state = state.copyWith(busy: false, unavailable: error.cause);
     }
+  }
+
+  /// Go back from the code entry step to phone input.
+  void backToPhone() {
+    state = state.copyWith(stage: SignInStage.phone, rejected: false, unavailable: null);
   }
 
   /// C-02, second step: exchange the code for a session.

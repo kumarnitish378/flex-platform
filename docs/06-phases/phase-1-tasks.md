@@ -236,9 +236,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## App (Phase 1)
 
-- [ ] **A03 · Login + session + role switcher** · deps A02, B03
+- [x] **A03 · Login + session + role switcher** · deps A02, B03
   Screens: C-01..C-03 · Stories: EMP-01
   Done when: OTP login works against dev backend; tokens in secure storage; refresh on expiry; multi-role user can switch.
+  Built screens C-01 (Splash with session restoration and role-based routing), C-02 (Login screen with phone step defaulting to +91, 6-digit OTP entry, 30s resend timer, single refused-code error message per OQ-24, and network/server error handling), and C-03 (Role switcher modal allowing users with multiple roles to switch active role). Secure storage token persistence and session restoration wired through SessionController. All user-visible strings localized in `app_en.arb`. 42 tests passing and `flutter analyze` clean.
 
 - [ ] **A04 · Role-based navigation** · deps A03, B04
   Done when: each role sees only its screens (widget tests for all 5 roles); unauthorized deep links redirect.

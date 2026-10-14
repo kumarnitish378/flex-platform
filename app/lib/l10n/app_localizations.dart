@@ -117,6 +117,126 @@ abstract class AppText {
   /// **'Signing in arrives with the login task. Nothing here is faked, so there is no way in yet.'**
   String get signInNotReady;
 
+  /// Label for the phone input field.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone number'**
+  String get phoneNumber;
+
+  /// Instruction text on the phone step of login.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your phone number to sign in'**
+  String get enterPhoneNumber;
+
+  /// Button to request OTP code.
+  ///
+  /// In en, this message translates to:
+  /// **'Send code'**
+  String get sendCode;
+
+  /// Heading for the OTP code entry step.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter verification code'**
+  String get enterCode;
+
+  /// Subtitle showing which phone number received the OTP.
+  ///
+  /// In en, this message translates to:
+  /// **'Code sent to {phone}'**
+  String codeSentTo(String phone);
+
+  /// Button to submit the OTP verification code.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify code'**
+  String get verifyCode;
+
+  /// Button to resend the OTP code.
+  ///
+  /// In en, this message translates to:
+  /// **'Resend code'**
+  String get resendCode;
+
+  /// Disabled button text during OTP resend countdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Resend code in {seconds}s'**
+  String resendCodeIn(int seconds);
+
+  /// Action to go back and edit the phone number.
+  ///
+  /// In en, this message translates to:
+  /// **'Change phone number'**
+  String get changePhone;
+
+  /// Single error message shown when OTP verification fails for any reason (B03, OQ-24).
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid or expired code. Please try again.'**
+  String get otpRejected;
+
+  /// Error message when backend network request fails.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach the server. Please check your connection.'**
+  String get authUnavailable;
+
+  /// Error message when rate limit (429) is hit.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many requests. Please wait a moment.'**
+  String get tooManyRequests;
+
+  /// Error message when authenticated user has no roles.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account has no assigned roles. Please contact support.'**
+  String get noRolesAssigned;
+
+  /// Title for the role switcher bottom sheet or screen (C-03).
+  ///
+  /// In en, this message translates to:
+  /// **'Select active role'**
+  String get selectRole;
+
+  /// Display name for Employee role.
+  ///
+  /// In en, this message translates to:
+  /// **'Employee'**
+  String get roleNameEmployee;
+
+  /// Display name for Driver role.
+  ///
+  /// In en, this message translates to:
+  /// **'Driver'**
+  String get roleNameDriver;
+
+  /// Display name for Supervisor role.
+  ///
+  /// In en, this message translates to:
+  /// **'Supervisor'**
+  String get roleNameSupervisor;
+
+  /// Display name for Operator Admin role.
+  ///
+  /// In en, this message translates to:
+  /// **'Operator Admin'**
+  String get roleNameOperatorAdmin;
+
+  /// Display name for Client Admin role.
+  ///
+  /// In en, this message translates to:
+  /// **'Client Admin'**
+  String get roleNameClientAdmin;
+
+  /// Display name for Platform Admin role.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform Admin'**
+  String get roleNamePlatformAdmin;
+
   /// Placeholder home screen heading until each role's screens are built.
   ///
   /// In en, this message translates to:

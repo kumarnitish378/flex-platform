@@ -2,24 +2,40 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_cab/core/session.dart';
+import 'package:smart_cab/core/session_controller.dart';
+import 'package:smart_cab/core/token_store.dart';
 import 'package:smart_cab/main.dart';
 
 /// The app starts, shows the splash, and sends a signed-out person to login (A01).
 void main() {
   testWidgets('a cold start shows the splash', (WidgetTester tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SmartCabApp()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tokenStoreProvider.overrideWithValue(_InMemoryTokenStore()),
+        ],
+        child: const SmartCabApp(),
+      ),
+    );
 
-    expect(find.byKey(const Key('splash')), findsOneWidget);
+    expect(find.byKey(const Key('C-01')), findsOneWidget);
     expect(find.text('Smart Cab'), findsOneWidget);
   });
 
   testWidgets('a signed-out person lands at login, not at a role home', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const ProviderScope(child: SmartCabApp()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tokenStoreProvider.overrideWithValue(_InMemoryTokenStore()),
+        ],
+        child: const SmartCabApp(),
+      ),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('login')), findsOneWidget);
+    expect(find.byKey(const Key('C-02')), findsOneWidget);
     expect(find.byKey(const Key('home-employee')), findsNothing);
   });
 
@@ -30,6 +46,7 @@ void main() {
       ProviderScope(
         overrides: [
           sessionProvider.overrideWith(_FakeSession.new),
+          tokenStoreProvider.overrideWithValue(_InMemoryTokenStore()),
         ],
         child: const SmartCabApp(),
       ),
@@ -46,6 +63,7 @@ void main() {
       ProviderScope(
         overrides: [
           sessionProvider.overrideWith(_FakeSession.new),
+          tokenStoreProvider.overrideWithValue(_InMemoryTokenStore()),
         ],
         child: const SmartCabApp(),
       ),
@@ -55,7 +73,7 @@ void main() {
     await tester.tap(find.byKey(const Key('sign-out')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('login')), findsOneWidget);
+    expect(find.byKey(const Key('C-02')), findsOneWidget);
   });
 }
 
@@ -68,4 +86,21 @@ class _FakeSession extends SessionNotifier {
     accessToken: 'test-token',
     userId: 'test-user',
   );
+}
+
+class _InMemoryTokenStore implements TokenStore {
+  StoredSession? _session;
+
+  @override
+  Future<StoredSession?> read() async => _session;
+
+  @override
+  Future<void> write(StoredSession session) async {
+    _session = session;
+  }
+
+  @override
+  Future<void> clear() async {
+    _session = null;
+  }
 }
