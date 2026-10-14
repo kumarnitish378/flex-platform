@@ -36,7 +36,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('C-02')), findsOneWidget);
-    expect(find.byKey(const Key('home-employee')), findsNothing);
+    expect(find.byKey(const Key('E-01')), findsNothing);
   });
 
   testWidgets('a signed-in driver lands on the driver home', (
@@ -53,7 +53,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('home-driver')), findsOneWidget);
+    expect(find.byKey(const Key('D-01')), findsOneWidget);
+    expect(find.byKey(const Key('shell-driver')), findsOneWidget);
     // One role only, so there is nothing to switch to and no switcher.
     expect(find.byKey(const Key('switch-role')), findsNothing);
   });

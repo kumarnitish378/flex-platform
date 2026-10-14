@@ -111,12 +111,6 @@ abstract class AppText {
   /// **'Sign in'**
   String get signIn;
 
-  /// Placeholder on the login screen until A03 lands. Deliberately honest rather than a fake login.
-  ///
-  /// In en, this message translates to:
-  /// **'Signing in arrives with the login task. Nothing here is faked, so there is no way in yet.'**
-  String get signInNotReady;
-
   /// Label for the phone input field.
   ///
   /// In en, this message translates to:
@@ -237,12 +231,6 @@ abstract class AppText {
   /// **'Platform Admin'**
   String get roleNamePlatformAdmin;
 
-  /// Placeholder home screen heading until each role's screens are built.
-  ///
-  /// In en, this message translates to:
-  /// **'Signed in as {role}'**
-  String homeForRole(String role);
-
   /// Opens the role switcher. Only shown when the person holds more than one role.
   ///
   /// In en, this message translates to:
@@ -254,6 +242,198 @@ abstract class AppText {
   /// In en, this message translates to:
   /// **'Sign out'**
   String get signOut;
+
+  /// The fifth navigation destination, opening the screens that do not have a tab of their own (A04).
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get more;
+
+  /// Shown on a screen the navigation reaches but whose task has not been built yet. Deliberately names the task rather than apologising vaguely: a missing thing stays visibly missing (AGENTS.md rule 10).
+  ///
+  /// In en, this message translates to:
+  /// **'{screen} arrives with task {task}.'**
+  String screenNotBuiltYet(String screen, String task);
+
+  /// Employee home, E-01.
+  ///
+  /// In en, this message translates to:
+  /// **'Home'**
+  String get navHome;
+
+  /// Employee ride history, E-06.
+  ///
+  /// In en, this message translates to:
+  /// **'History'**
+  String get navHistory;
+
+  /// Employee saved places, E-07.
+  ///
+  /// In en, this message translates to:
+  /// **'Places'**
+  String get navSavedPlaces;
+
+  /// Employee request form, E-02.
+  ///
+  /// In en, this message translates to:
+  /// **'Request a cab'**
+  String get navRequestCab;
+
+  /// Employee request confirmation, E-03.
+  ///
+  /// In en, this message translates to:
+  /// **'Request'**
+  String get navRequestStatus;
+
+  /// Employee live tracking, E-04.
+  ///
+  /// In en, this message translates to:
+  /// **'Live tracking'**
+  String get navLiveTracking;
+
+  /// Employee trip completed, E-05.
+  ///
+  /// In en, this message translates to:
+  /// **'Rate your trip'**
+  String get navRateTrip;
+
+  /// Profile screen, C-04.
+  ///
+  /// In en, this message translates to:
+  /// **'Profile'**
+  String get navProfile;
+
+  /// Notifications list, C-05.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get navNotifications;
+
+  /// Driver duty home, D-01.
+  ///
+  /// In en, this message translates to:
+  /// **'Duty'**
+  String get navDuty;
+
+  /// Driver background location explainer, D-02.
+  ///
+  /// In en, this message translates to:
+  /// **'Location permission'**
+  String get navLocationPermission;
+
+  /// Driver trip list, D-03.
+  ///
+  /// In en, this message translates to:
+  /// **'Trips'**
+  String get navTrips;
+
+  /// Driver trip detail, D-04.
+  ///
+  /// In en, this message translates to:
+  /// **'Trip'**
+  String get navTripDetail;
+
+  /// Driver navigation map, D-05.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigate'**
+  String get navNavigate;
+
+  /// Driver report issue, D-06.
+  ///
+  /// In en, this message translates to:
+  /// **'Report an issue'**
+  String get navReportIssue;
+
+  /// Supervisor live dispatch map, S-01.
+  ///
+  /// In en, this message translates to:
+  /// **'Map'**
+  String get navDispatchMap;
+
+  /// Supervisor pending queue, S-02.
+  ///
+  /// In en, this message translates to:
+  /// **'Queue'**
+  String get navPendingQueue;
+
+  /// Supervisor assign panel, S-03.
+  ///
+  /// In en, this message translates to:
+  /// **'Assign'**
+  String get navAssign;
+
+  /// Supervisor trips board, S-04.
+  ///
+  /// In en, this message translates to:
+  /// **'Board'**
+  String get navTripsBoard;
+
+  /// Supervisor alerts, S-07.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts'**
+  String get navAlerts;
+
+  /// Supervisor creates a request for an employee, S-08.
+  ///
+  /// In en, this message translates to:
+  /// **'Request on behalf'**
+  String get navRequestOnBehalf;
+
+  /// Operator admin dashboard, A-01.
+  ///
+  /// In en, this message translates to:
+  /// **'Dashboard'**
+  String get navDashboard;
+
+  /// Operator admin vehicles, A-02.
+  ///
+  /// In en, this message translates to:
+  /// **'Vehicles'**
+  String get navVehicles;
+
+  /// Operator admin drivers, A-03.
+  ///
+  /// In en, this message translates to:
+  /// **'Drivers'**
+  String get navDrivers;
+
+  /// Operator admin clients and offices, A-04.
+  ///
+  /// In en, this message translates to:
+  /// **'Clients'**
+  String get navClients;
+
+  /// Operator admin users, A-05.
+  ///
+  /// In en, this message translates to:
+  /// **'Users'**
+  String get navUsers;
+
+  /// Reports, A-07 for the operator admin and L-04 for the client admin.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports'**
+  String get navReports;
+
+  /// Operator config values, A-08.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get navSettings;
+
+  /// Client admin employee list, L-01.
+  ///
+  /// In en, this message translates to:
+  /// **'Employees'**
+  String get navEmployees;
+
+  /// Client admin employee form, L-02.
+  ///
+  /// In en, this message translates to:
+  /// **'Employee'**
+  String get navEmployeeForm;
 }
 
 class _AppTextDelegate extends LocalizationsDelegate<AppText> {

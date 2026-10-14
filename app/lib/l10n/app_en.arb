@@ -16,10 +16,6 @@
     "description": "Button on the login screen."
   },
 
-  "signInNotReady": "Signing in arrives with the login task. Nothing here is faked, so there is no way in yet.",
-  "@signInNotReady": {
-    "description": "Placeholder on the login screen until A03 lands. Deliberately honest rather than a fake login."
-  },
 
   "phoneNumber": "Phone number",
   "@phoneNumber": {
@@ -133,16 +129,6 @@
     "description": "Display name for Platform Admin role."
   },
 
-  "homeForRole": "Signed in as {role}",
-  "@homeForRole": {
-    "description": "Placeholder home screen heading until each role's screens are built.",
-    "placeholders": {
-      "role": {
-        "type": "String",
-        "example": "driver"
-      }
-    }
-  },
 
   "switchRole": "Switch role",
   "@switchRole": {
@@ -152,5 +138,175 @@
   "signOut": "Sign out",
   "@signOut": {
     "description": "Ends the session. Also stops the driver's location service (coding-standards.md section 3 rule 6)."
+  },
+
+  "more": "More",
+  "@more": {
+    "description": "The fifth navigation destination, opening the screens that do not have a tab of their own (A04)."
+  },
+
+  "screenNotBuiltYet": "{screen} arrives with task {task}.",
+  "@screenNotBuiltYet": {
+    "description": "Shown on a screen the navigation reaches but whose task has not been built yet. Deliberately names the task rather than apologising vaguely: a missing thing stays visibly missing (AGENTS.md rule 10).",
+    "placeholders": {
+      "screen": {
+        "type": "String",
+        "example": "Pending queue"
+      },
+      "task": {
+        "type": "String",
+        "example": "A11"
+      }
+    }
+  },
+
+  "navHome": "Home",
+  "@navHome": {
+    "description": "Employee home, E-01."
+  },
+
+  "navHistory": "History",
+  "@navHistory": {
+    "description": "Employee ride history, E-06."
+  },
+
+  "navSavedPlaces": "Places",
+  "@navSavedPlaces": {
+    "description": "Employee saved places, E-07."
+  },
+
+  "navRequestCab": "Request a cab",
+  "@navRequestCab": {
+    "description": "Employee request form, E-02."
+  },
+
+  "navRequestStatus": "Request",
+  "@navRequestStatus": {
+    "description": "Employee request confirmation, E-03."
+  },
+
+  "navLiveTracking": "Live tracking",
+  "@navLiveTracking": {
+    "description": "Employee live tracking, E-04."
+  },
+
+  "navRateTrip": "Rate your trip",
+  "@navRateTrip": {
+    "description": "Employee trip completed, E-05."
+  },
+
+  "navProfile": "Profile",
+  "@navProfile": {
+    "description": "Profile screen, C-04."
+  },
+
+  "navNotifications": "Notifications",
+  "@navNotifications": {
+    "description": "Notifications list, C-05."
+  },
+
+  "navDuty": "Duty",
+  "@navDuty": {
+    "description": "Driver duty home, D-01."
+  },
+
+  "navLocationPermission": "Location permission",
+  "@navLocationPermission": {
+    "description": "Driver background location explainer, D-02."
+  },
+
+  "navTrips": "Trips",
+  "@navTrips": {
+    "description": "Driver trip list, D-03."
+  },
+
+  "navTripDetail": "Trip",
+  "@navTripDetail": {
+    "description": "Driver trip detail, D-04."
+  },
+
+  "navNavigate": "Navigate",
+  "@navNavigate": {
+    "description": "Driver navigation map, D-05."
+  },
+
+  "navReportIssue": "Report an issue",
+  "@navReportIssue": {
+    "description": "Driver report issue, D-06."
+  },
+
+  "navDispatchMap": "Map",
+  "@navDispatchMap": {
+    "description": "Supervisor live dispatch map, S-01."
+  },
+
+  "navPendingQueue": "Queue",
+  "@navPendingQueue": {
+    "description": "Supervisor pending queue, S-02."
+  },
+
+  "navAssign": "Assign",
+  "@navAssign": {
+    "description": "Supervisor assign panel, S-03."
+  },
+
+  "navTripsBoard": "Board",
+  "@navTripsBoard": {
+    "description": "Supervisor trips board, S-04."
+  },
+
+  "navAlerts": "Alerts",
+  "@navAlerts": {
+    "description": "Supervisor alerts, S-07."
+  },
+
+  "navRequestOnBehalf": "Request on behalf",
+  "@navRequestOnBehalf": {
+    "description": "Supervisor creates a request for an employee, S-08."
+  },
+
+  "navDashboard": "Dashboard",
+  "@navDashboard": {
+    "description": "Operator admin dashboard, A-01."
+  },
+
+  "navVehicles": "Vehicles",
+  "@navVehicles": {
+    "description": "Operator admin vehicles, A-02."
+  },
+
+  "navDrivers": "Drivers",
+  "@navDrivers": {
+    "description": "Operator admin drivers, A-03."
+  },
+
+  "navClients": "Clients",
+  "@navClients": {
+    "description": "Operator admin clients and offices, A-04."
+  },
+
+  "navUsers": "Users",
+  "@navUsers": {
+    "description": "Operator admin users, A-05."
+  },
+
+  "navReports": "Reports",
+  "@navReports": {
+    "description": "Reports, A-07 for the operator admin and L-04 for the client admin."
+  },
+
+  "navSettings": "Settings",
+  "@navSettings": {
+    "description": "Operator config values, A-08."
+  },
+
+  "navEmployees": "Employees",
+  "@navEmployees": {
+    "description": "Client admin employee list, L-01."
+  },
+
+  "navEmployeeForm": "Employee",
+  "@navEmployeeForm": {
+    "description": "Client admin employee form, L-02."
   }
 }

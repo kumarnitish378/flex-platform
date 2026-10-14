@@ -1,42 +1,34 @@
-/// Routing, with the active role deciding where "home" is (A01).
+/// Routing, with the active role deciding what exists (A01, A04).
 ///
 /// `coding-standards.md` section 3 rule 2: routes come from the active role, and an
 /// unauthorised route redirects home rather than showing an empty screen. Hiding a
 /// screen is **not** security - the server authorises every call (hard rule 3) - but a
 /// driver who can reach the admin screens will eventually tap something and get a 403
 /// they cannot explain, so the app should not offer it.
+///
+/// The routes are built from the catalogue in `screens.dart`, which also carries the
+/// role gate. One table, so a screen cannot exist without a gate and a gate cannot
+/// point at a screen that does not exist.
 library;
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/login_screen.dart';
-import '../features/common/home_by_role_screen.dart';
+import '../features/common/app_shell.dart';
+import '../features/common/detail_scaffold.dart';
+import '../features/common/pending_screen.dart';
 import '../features/common/splash_screen.dart';
+import 'screens.dart';
 import 'session.dart';
 
-
-/// Where each role lands after login. The screen ids are from `screens-by-role.md`.
-const Map<Role, String> homeForRole = <Role, String>{
-  Role.employee: '/employee',
-  Role.driver: '/driver',
-  Role.supervisor: '/supervisor',
-  Role.operatorAdmin: '/admin',
-  Role.clientAdmin: '/client',
-  Role.platformAdmin: '/admin',
-};
-
-/// Which roles may open a route prefix. Checked on every navigation.
-const Map<String, Set<Role>> rolesForRoute = <String, Set<Role>>{
-  '/employee': <Role>{Role.employee},
-  '/driver': <Role>{Role.driver},
-  '/supervisor': <Role>{Role.supervisor, Role.operatorAdmin, Role.platformAdmin},
-  '/admin': <Role>{Role.operatorAdmin, Role.platformAdmin},
-  '/client': <Role>{Role.clientAdmin},
-};
+export 'screens.dart' show AppScreen, AppSection, homeForRole, primaryDestinations;
 
 /// True when this role may open this location.
+///
+/// The match is on path segments, not characters: `/driverish` is not under `/driver`,
+/// and a plain `startsWith` would say that it was.
 bool roleMayOpen(Role? role, String location) {
   if (role == null) {
     return false;
@@ -46,8 +38,31 @@ bool roleMayOpen(Role? role, String location) {
       return entry.value.contains(role);
     }
   }
-  // Routes nobody has claimed - the splash and login - are open to everyone.
+  // Routes nobody has claimed - the splash, login, and the screens every role has -
+  // are open to anyone signed in.
   return true;
+}
+
+/// The screens that live inside the navigation shell: everything any role reaches from
+/// a tab or from "More".
+final Set<AppScreen> _shellScreens = <AppScreen>{
+  for (final Role role in Role.values) ...destinationsFor(role),
+};
+
+/// Everything else with a route: the screens a person is pushed into from a
+/// destination. Longest path first, so `/driver/trips/:tripId/navigate` is matched
+/// before `/driver/trips/:tripId` rather than being swallowed by it.
+List<AppScreen> get _detailScreens {
+  final List<AppScreen> screens = AppScreen.values
+      .where(
+        (AppScreen screen) =>
+            screen != AppScreen.splash &&
+            screen != AppScreen.login &&
+            !_shellScreens.contains(screen),
+      )
+      .toList()
+    ..sort((AppScreen a, AppScreen b) => b.path.length.compareTo(a.path.length));
+  return screens;
 }
 
 /// Nudges the router whenever the session changes.
@@ -79,17 +94,29 @@ final Provider<GoRouter> routerProvider = Provider<GoRouter>((Ref ref) {
   ref.onDispose(refresh.dispose);
 
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: AppScreen.splash.path,
     refreshListenable: refresh,
     routes: <RouteBase>[
-      GoRoute(path: '/', builder: (_, _) => const SplashScreen()),
-      GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
-      for (final MapEntry<Role, String> entry in homeForRole.entries)
-        if (entry.key != Role.platformAdmin)
-          GoRoute(
-            path: entry.value,
-            builder: (_, _) => HomeByRoleScreen(role: entry.key),
+      GoRoute(path: AppScreen.splash.path, builder: (_, _) => const SplashScreen()),
+      GoRoute(path: AppScreen.login.path, builder: (_, _) => const LoginScreen()),
+      ShellRoute(
+        builder: (_, _, Widget child) => AppShell(child: child),
+        routes: <RouteBase>[
+          for (final AppScreen screen in _shellScreens)
+            GoRoute(
+              path: screen.path,
+              builder: (_, _) => PendingScreen(screen: screen, key: Key(screen.id)),
+            ),
+        ],
+      ),
+      for (final AppScreen screen in _detailScreens)
+        GoRoute(
+          path: screen.path,
+          builder: (_, _) => DetailScaffold(
+            screen: screen,
+            body: PendingScreen(screen: screen, key: Key(screen.id)),
           ),
+        ),
     ],
     redirect: (_, GoRouterState state) {
       final Session session = ref.read(sessionProvider);
@@ -97,10 +124,13 @@ final Provider<GoRouter> routerProvider = Provider<GoRouter>((Ref ref) {
 
       if (!session.isSignedIn) {
         // The splash decides when to leave; everything else waits at login.
-        return location == '/' || location == '/login' ? null : '/login';
+        return location == AppScreen.splash.path || location == AppScreen.login.path
+            ? null
+            : AppScreen.login.path;
       }
-      final String home = homeForRole[session.activeRole] ?? '/employee';
-      if (location == '/' || location == '/login') {
+      final String home =
+          homeForRole[session.activeRole] ?? AppScreen.employeeHome.path;
+      if (location == AppScreen.splash.path || location == AppScreen.login.path) {
         return home;
       }
       return roleMayOpen(session.activeRole, location) ? null : home;

@@ -19,10 +19,6 @@ class AppTextEn extends AppText {
   String get signIn => 'Sign in';
 
   @override
-  String get signInNotReady =>
-      'Signing in arrives with the login task. Nothing here is faked, so there is no way in yet.';
-
-  @override
   String get phoneNumber => 'Phone number';
 
   @override
@@ -89,13 +85,106 @@ class AppTextEn extends AppText {
   String get roleNamePlatformAdmin => 'Platform Admin';
 
   @override
-  String homeForRole(String role) {
-    return 'Signed in as $role';
-  }
-
-  @override
   String get switchRole => 'Switch role';
 
   @override
   String get signOut => 'Sign out';
+
+  @override
+  String get more => 'More';
+
+  @override
+  String screenNotBuiltYet(String screen, String task) {
+    return '$screen arrives with task $task.';
+  }
+
+  @override
+  String get navHome => 'Home';
+
+  @override
+  String get navHistory => 'History';
+
+  @override
+  String get navSavedPlaces => 'Places';
+
+  @override
+  String get navRequestCab => 'Request a cab';
+
+  @override
+  String get navRequestStatus => 'Request';
+
+  @override
+  String get navLiveTracking => 'Live tracking';
+
+  @override
+  String get navRateTrip => 'Rate your trip';
+
+  @override
+  String get navProfile => 'Profile';
+
+  @override
+  String get navNotifications => 'Notifications';
+
+  @override
+  String get navDuty => 'Duty';
+
+  @override
+  String get navLocationPermission => 'Location permission';
+
+  @override
+  String get navTrips => 'Trips';
+
+  @override
+  String get navTripDetail => 'Trip';
+
+  @override
+  String get navNavigate => 'Navigate';
+
+  @override
+  String get navReportIssue => 'Report an issue';
+
+  @override
+  String get navDispatchMap => 'Map';
+
+  @override
+  String get navPendingQueue => 'Queue';
+
+  @override
+  String get navAssign => 'Assign';
+
+  @override
+  String get navTripsBoard => 'Board';
+
+  @override
+  String get navAlerts => 'Alerts';
+
+  @override
+  String get navRequestOnBehalf => 'Request on behalf';
+
+  @override
+  String get navDashboard => 'Dashboard';
+
+  @override
+  String get navVehicles => 'Vehicles';
+
+  @override
+  String get navDrivers => 'Drivers';
+
+  @override
+  String get navClients => 'Clients';
+
+  @override
+  String get navUsers => 'Users';
+
+  @override
+  String get navReports => 'Reports';
+
+  @override
+  String get navSettings => 'Settings';
+
+  @override
+  String get navEmployees => 'Employees';
+
+  @override
+  String get navEmployeeForm => 'Employee';
 }

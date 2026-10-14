@@ -241,8 +241,32 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: OTP login works against dev backend; tokens in secure storage; refresh on expiry; multi-role user can switch.
   Built screens C-01 (Splash with session restoration and role-based routing), C-02 (Login screen with phone step defaulting to +91, 6-digit OTP entry, 30s resend timer, single refused-code error message per OQ-24, and network/server error handling), and C-03 (Role switcher modal allowing users with multiple roles to switch active role). Secure storage token persistence and session restoration wired through SessionController. All user-visible strings localized in `app_en.arb`. 42 tests passing and `flutter analyze` clean.
 
-- [ ] **A04 · Role-based navigation** · deps A03, B04
+- [x] **A04 · Role-based navigation** · deps A03, B04
   Done when: each role sees only its screens (widget tests for all 5 roles); unauthorized deep links redirect.
+  `lib/core/screens.dart` is now the one catalogue of screens: each carries its id from
+  `screens-by-role.md`, its path, and the section it belongs to - and a screen inherits
+  its permitted roles **from its path prefix**, so a screen added in Phase 2 cannot be
+  reachable by the wrong role through somebody forgetting a per-screen list. The router
+  is built from that table, `homeForRole` is derived from each role's first tab (the two
+  can no longer disagree), and one `AppShell` renders the navigation for whichever role
+  is **active** - not five shells, because a supervisor who also rides to work switches
+  mid-session (C-03) and five shells would each hold their own idea of where she is.
+  Phone gets a navigation bar capped at four tabs plus "More"; a tablet gets a rail with
+  every destination, which is what the layout rules ask for.
+  Destination screens sit inside the shell, detail screens (a request form, a trip, an
+  assign panel) outside it with a back arrow - a bottom bar on a half-filled form invites
+  a tap that silently abandons it.
+  **Nothing is faked.** Every screen A06-A12 will build renders a placeholder that names
+  the task that builds it, so a missing screen stays visibly missing (AGENTS.md rule 10).
+  `HomeByRoleScreen`, A01's one-screen-per-role placeholder, is gone.
+  33 new tests: every role's tabs asserted present *and* every other role's asserted
+  absent, which is "sees only its screens" stated as a test rather than by inspection;
+  deep links in both directions, including a parameterised path (`/driver/trips/{id}`),
+  which is the easiest gate to forget because it has no tab anywhere. 75 tests, analyze
+  clean.
+  Two invariants are now machine-checked rather than remembered: no role is offered a
+  tab it cannot open (which would bounce straight home on tap), and no destination has
+  a path parameter a navigation bar has no way to supply.
 
 - [ ] **A05 · Shared map widget** · deps A01, I02
   Docs: ADR-0010 §A2, coding-standards.md §3 rule 7, screens-by-role.md C-06
