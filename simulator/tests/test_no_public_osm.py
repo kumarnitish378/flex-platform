@@ -102,3 +102,74 @@ def test_build_routing_osrm_requires_a_url() -> None:
 def test_build_routing_refuses_a_public_url() -> None:
     with pytest.raises(PublicServerRefusedError):
         build_routing("osrm", "https://router.project-osrm.org")
+
+
+# --- the --routing override (OQ-22) ------------------------------------------
+
+
+def test_routing_override_cannot_point_at_a_public_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, no_network: list[str]
+) -> None:
+    """The override must not become a way around ADR-0010 rule 6.
+
+    `--routing osrm` exists so a box with a self-hosted instance can produce numbers
+    that mean something (OQ-22). A run makes thousands of route lookups, so pointing
+    that at donated infrastructure is exactly what rule 6 forbids - and the refusal has
+    to happen before any request, not after the first thousand.
+    """
+    monkeypatch.setenv("OSRM_URL", "https://router.project-osrm.org")
+
+    code = main(
+        [
+            "run",
+            str(SCENARIOS / "smoke_tiny.yaml"),
+            "--routing",
+            "osrm",
+            "--runs-dir",
+            str(tmp_path),
+            "--no-output",
+        ]
+    )
+
+    assert code == 2, "a public OSRM must be refused, not used"
+    assert attempted_nothing(no_network)
+
+
+def test_routing_override_needs_a_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, no_network: list[str]
+) -> None:
+    monkeypatch.delenv("OSRM_URL", raising=False)
+
+    code = main(
+        [
+            "run",
+            str(SCENARIOS / "smoke_tiny.yaml"),
+            "--routing",
+            "osrm",
+            "--runs-dir",
+            str(tmp_path),
+            "--no-output",
+        ]
+    )
+
+    assert code == 2
+    assert attempted_nothing(no_network)
+
+
+def test_scenarios_still_declare_approx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The override is for the command line, never for the committed files.
+
+    A scenario that declared `osrm` would make `make sim-full` on any developer's
+    machine try to route against whatever `OSRM_URL` happened to be set to - which, by
+    default everywhere, is the public demo server.
+    """
+    for path in sorted(SCENARIOS.glob("*.yaml")):
+        scenario = load_scenario(str(path))
+        assert str(scenario.routing) == "approx", (
+            f"{path.name} declares routing={scenario.routing}; scenarios must stay on "
+            "approx and let the command line override it (ADR-0010 rule 6)"
+        )
+
+
+def attempted_nothing(attempted: list[str]) -> bool:
+    return not attempted

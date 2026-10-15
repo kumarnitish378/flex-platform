@@ -110,7 +110,7 @@ def create_app(
         "routing",
         routing_check(
             settings.osrm_url,
-            is_public=settings.uses_public_osm,
+            is_public=settings.uses_public_osrm,
             user_agent=settings.user_agent,
             timeout_seconds=settings.osm_request_timeout_seconds,
         ),

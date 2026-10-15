@@ -114,3 +114,27 @@ def test_a_deployment_tells_devices_the_public_address_not_its_own() -> None:
     assert settings.broker_host_for_devices == "staging.example.com"
     assert settings.broker_port_for_devices == 8883
     assert settings.mqtt_public_tls is True
+
+
+def test_public_osrm_is_a_narrower_question_than_public_osm() -> None:
+    """A self-hosted OSRM with public tiles is the ordinary mid-migration state.
+
+    `uses_public_osm` guards "do we owe anyone an identifying contact address" and is
+    true throughout it. Using that to decide whether to probe OSRM skipped the probe on
+    exactly the server we are allowed to probe - found by running the stack with
+    `OSRM_URL=http://localhost:5000` and watching readiness still report "not probed".
+    """
+    settings = Settings(
+        database_url=GOOD_DB,
+        osrm_url="http://localhost:5000",
+        tiles_url="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        osm_contact_email="ops@example.com",
+    )
+
+    assert settings.uses_public_osm is True, "tiles are still donated infrastructure"
+    assert settings.uses_public_osrm is False, "routing is ours, and may be probed"
+
+
+def test_a_public_osrm_is_still_recognised() -> None:
+    settings = Settings(database_url=GOOD_DB, osm_contact_email="ops@example.com")
+    assert settings.uses_public_osrm is True

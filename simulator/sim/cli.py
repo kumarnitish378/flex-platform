@@ -20,7 +20,7 @@ from sim.mqtt import MqttUnavailableError
 from sim.platform import PlatformClient, PlatformError
 from sim.recorder import Recorder, compare_runs, run_directory
 from sim.routing import PublicServerRefusedError
-from sim.scenario import Scenario, ScenarioError, load_scenario
+from sim.scenario import RoutingMode, Scenario, ScenarioError, load_scenario
 
 SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 
@@ -67,6 +67,16 @@ def main(argv: list[str] | None = None) -> int:
         help="override the scenario's seed, to check a result is not one lucky draw",
     )
     run.add_argument(
+        "--routing",
+        choices=[str(mode) for mode in RoutingMode],
+        default=None,
+        help=(
+            "override the scenario's routing provider. Scenarios declare `approx` "
+            "because ADR-0010 rule 6 forbids pointing bulk work at a public OSRM; "
+            "`osrm` needs OSRM_URL set to a self-hosted instance (task I02b)"
+        ),
+    )
+    run.add_argument(
         "--platform",
         default=None,
         metavar="URL",
@@ -82,6 +92,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="run against a live backend so assertions are actually evaluated",
     )
+    suite.add_argument(
+        "--routing",
+        choices=[str(mode) for mode in RoutingMode],
+        default=None,
+        help="override every scenario's routing provider (see `run --routing`)",
+    )
 
     compare = subparsers.add_parser("compare", help="delta table between two runs")
     compare.add_argument("run_a")
@@ -92,10 +108,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         return _validate(args.scenario)
     if args.command == "run":
-        return _run(args.scenario, args.runs_dir, args.no_output, args.platform, args.seed)
+        return _run(
+            args.scenario,
+            args.runs_dir,
+            args.no_output,
+            args.platform,
+            args.seed,
+            args.routing,
+        )
     if args.command == "compare":
         return _compare(args.run_a, args.run_b)
-    return _suite(args.name, args.runs_dir, args.platform_url)
+    return _suite(args.name, args.runs_dir, args.platform_url, args.routing)
 
 
 def _validate(path: str) -> int:
@@ -122,6 +145,7 @@ def _run(
     no_output: bool = False,
     platform_url: str | None = None,
     seed: int | None = None,
+    routing: str | None = None,
 ) -> int:
     try:
         scenario = load_scenario(path)
@@ -132,6 +156,12 @@ def _run(
         # One seed is one draw. A scenario's result is only worth quoting if it holds
         # across a few of them.
         scenario = scenario.model_copy(update={"seed": seed})
+    if routing is not None:
+        # The provider is a property of the environment a run happens in, not of the
+        # scenario: the file says `approx` because that is the only safe default
+        # (ADR-0010 rule 6), and a box with a self-hosted OSRM can say otherwise
+        # without seven files being edited and later committed by accident.
+        scenario = scenario.model_copy(update={"routing": RoutingMode(routing)})
     return _run_scenario(scenario, runs_dir, no_output, platform_url)
 
 
@@ -252,13 +282,22 @@ def _compare(left: str, right: str) -> int:
     return 0
 
 
-def _suite(name: str, runs_dir: str = "runs", platform_url: str | None = None) -> int:
+def _suite(
+    name: str,
+    runs_dir: str = "runs",
+    platform_url: str | None = None,
+    routing: str | None = None,
+) -> int:
     """Run a named suite, reporting every scenario before returning a verdict.
 
     Every scenario runs even after one fails: a nightly suite that stopped at the first
     failure would hide the other six, and the artifacts are the point.
     """
     names = QUICK_SUITE if name == "quick" else FULL_SUITE
+    if routing is not None:
+        # Printed, because it changes every number the suite reports: `approx` assumes
+        # a flat speed and straight lines, `osrm` follows the road network (OQ-22).
+        print(f"routing  every scenario overridden to {routing}", flush=True)
     if platform_url is None:
         print(
             "note     no --platform: scenarios run offline and their assertions are NOT checked",
@@ -272,7 +311,7 @@ def _suite(name: str, runs_dir: str = "runs", platform_url: str | None = None) -
         # it is redirected to a file. A nightly job that printed nothing until it
         # finished would be undiagnosable the moment it timed out.
         print(f"--- {scenario_name} ---", flush=True)
-        if _run(str(path), runs_dir, platform_url=platform_url) != 0:
+        if _run(str(path), runs_dir, platform_url=platform_url, routing=routing) != 0:
             failed.append(scenario_name)
 
     print(

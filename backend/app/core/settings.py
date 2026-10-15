@@ -221,12 +221,30 @@ class Settings(BaseSettings):
 
     @property
     def uses_public_osm(self) -> bool:
-        """True when any configured map URL is donated OSM infrastructure."""
+        """True when **any** configured map URL is donated OSM infrastructure.
+
+        The right question for "do we owe anyone an identifying contact address", which
+        is what it guards. It is the **wrong** question for anything about OSRM alone -
+        see `uses_public_osrm`.
+        """
         return any(
             host_of(url) in PUBLIC_OSM_HOSTS
             for url in (self.osrm_url, self.tiles_url, self.nominatim_url or "")
             if url
         )
+
+    @property
+    def uses_public_osrm(self) -> bool:
+        """True when the **routing** server is donated infrastructure.
+
+        Distinct from `uses_public_osm`, and the distinction is not academic: the
+        ordinary mid-migration state is a self-hosted OSRM with tiles still coming from
+        the public server (task I02b lands routing and tiles together, but either can be
+        repointed alone). `uses_public_osm` is true throughout that, so using it to
+        decide whether to probe OSRM skipped the probe on exactly the server we are
+        allowed - and want - to probe.
+        """
+        return host_of(self.osrm_url) in PUBLIC_OSM_HOSTS
 
     @property
     def user_agent(self) -> str:
