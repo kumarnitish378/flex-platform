@@ -1,0 +1,43 @@
+# Prometheus scrape configuration (task R01).
+#
+# Three targets, not one. The API, the GPS ingestor and the Celery worker are separate
+# processes with separate counters (see `backend/app/core/metrics.py`), so scraping only
+# the API would report zero GPS pings on a platform ingesting forty a second.
+#
+# All three are reached by compose service name over the private network. None of them
+# publishes its metrics port to the host.
+
+global:
+  # 15 s: fine enough that a two-minute incident has eight points, cheap enough that the
+  # business gauges - which run four aggregate queries per scrape - cost nothing.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: smartcab-staging
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          component: api
+
+  - job_name: ingestor
+    static_configs:
+      - targets: ["ingestor:9101"]
+        labels:
+          component: ingestor
+
+  - job_name: worker
+    static_configs:
+      - targets: ["worker:9102"]
+        labels:
+          component: worker
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

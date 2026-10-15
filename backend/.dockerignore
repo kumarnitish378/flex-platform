@@ -1,0 +1,13 @@
+# Keep the build context to what the image actually needs.
+tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+README.md

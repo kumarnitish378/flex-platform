@@ -31,7 +31,7 @@ down:
 check-infra:
 	python scripts/check_infra.py
 
-## Start the OPTIONAL self-hosted map containers (osrm, tileserver, nominatim) - task I02b/I02c
+## Start the self-hosted map containers (osrm + tileserver) - needs `make maps` first
 up-maps:
 	docker compose -f infra/docker-compose.yml -f infra/docker-compose.maps.yml up -d
 
@@ -106,4 +106,42 @@ sim-offline:
 
 ## OPTIONAL (self-hosting only): prepare OSM map data - see dev-environment.md section 8
 maps:
-	python scripts/not_ready.py maps I02b
+	bash infra/scripts/prepare_maps.sh
+
+# --- staging / production (task R01) -----------------------------------------
+# Runbook: docs/05-engineering/deployment.md. These run on the VM, from the repo root,
+# and read infra/.env.staging (copy infra/.env.staging.example).
+STAGING := docker compose -f infra/docker-compose.staging.yml --env-file infra/.env.staging
+
+## Build and start the staging stack (api, ingestor, worker, beat, caddy, monitoring)
+staging-up:
+	$(STAGING) up -d --build
+
+## Stop the staging stack, keeping its volumes
+staging-down:
+	$(STAGING) down
+
+## What is running, and is it healthy
+staging-ps:
+	$(STAGING) ps
+
+## Follow the application logs
+staging-logs:
+	$(STAGING) logs -f api ingestor worker beat
+
+## Re-publish Caddy's certificate to the broker after a renewal, and restart it
+staging-mqtt-cert:
+	$(STAGING) up mqtt-certs
+	$(STAGING) restart mosquitto
+
+## Take a database backup now (the staging stack also takes one daily)
+backup:
+	docker compose -f infra/docker-compose.yml exec -T -e PGUSER=smartcab -e PGPASSWORD=smartcab postgres bash /opt/backup/backup.sh once
+
+## List the backups taken so far
+backup-list:
+	docker compose -f infra/docker-compose.yml exec -T -e PGUSER=smartcab -e PGPASSWORD=smartcab postgres bash /opt/backup/backup.sh list
+
+## Prove a backup restores and matches the live database (non-functional.md: monthly)
+backup-verify:
+	bash infra/scripts/verify_restore.sh

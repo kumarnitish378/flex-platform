@@ -1,0 +1,79 @@
+# The public edge (task R01). Automatic TLS from Let's Encrypt.
+#
+# `non-functional.md` (Security): HTTPS everywhere. Caddy obtains and renews the
+# certificate on its own; there is nothing to cron and nothing to remember.
+#
+# **The allow-list is the point of this file.** Only the paths an app or a browser is
+# supposed to reach are proxied, and everything else is refused at the edge:
+#
+#   /api/*     the client contract (api-spec.yaml)
+#   /ws        the realtime hub (websocket-protocol.md)
+#   /health/*  so an uptime monitor can see the service without a credential
+#
+# `/metrics` is **deliberately absent**. It is unauthenticated by design - Prometheus
+# has no token, and giving it one means a long-lived credential sitting in a scrape
+# config - so it is kept inside the compose network instead. Prometheus reaches it at
+# `api:8000/metrics`; nothing outside the box can.
+# `tests/unit/test_edge_exposes_only_the_api.py` fails if that stops being true.
+#
+# `/docs` is absent too: `create_app` already disables it when APP_ENV=prod, and
+# staging is a system under test, not a public API portal.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Logs as JSON to stdout, so promtail ships them with the same shape as the
+	# application's own structured logs (`app/core/logging.py`).
+	log {
+		output stdout
+		format json
+	}
+
+	# Security headers. HSTS is a year because the only thing served here is an API
+	# that must never be reached over plaintext.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# The WebSocket. Declared before /api so the upgrade is not swallowed by a more
+	# general matcher later.
+	@websocket path /ws /ws/*
+	handle @websocket {
+		reverse_proxy api:8000
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Liveness and readiness for an external uptime monitor. These carry no tenant data
+	# - a dependency name and a status - and keeping them reachable is what lets the
+	# monitor distinguish "the box is gone" from "the box is up and the database is not".
+	handle /health/* {
+		reverse_proxy api:8000
+	}
+
+	# Everything else, including /metrics, never reaches the application.
+	handle {
+		respond "Not found" 404
+	}
+}
+
+# Grafana, on its own hostname and behind its own login. Prometheus itself is never
+# published: it has no authentication of its own, and its /api/v1/query would answer
+# anybody. Reach it through Grafana, or over an SSH tunnel.
+{$MONITORING_ADDRESS} {
+	encode zstd gzip
+	log {
+		output stdout
+		format json
+	}
+	reverse_proxy grafana:3000
+}

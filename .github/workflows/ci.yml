@@ -141,6 +141,82 @@ jobs:
           print('production install imports cleanly')
           "
 
+  # The staging deployment is code too (task R01). A Dockerfile that no longer builds,
+  # or a compose file with a typo in it, is discovered at the worst possible moment -
+  # when somebody is deploying. Both are cheap to check on every push.
+  deployment:
+    needs: detect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - if: needs.detect.outputs.backend != 'true'
+        run: echo "backend/ does not exist yet (task B01) - nothing to build."
+
+      - if: needs.detect.outputs.backend == 'true'
+        name: The deployment image builds
+        run: docker build -t smartcab-backend:ci backend/
+
+      - if: needs.detect.outputs.backend == 'true'
+        name: Every entrypoint the staging compose uses actually starts
+        shell: bash
+        run: |
+          # `--help` on each one: it loads the module graph without needing a database,
+          # which is what catches an entrypoint renamed out from under the compose file.
+          set -euo pipefail
+          for module in app.ingestor app.workers.celery_app; do
+            docker run --rm smartcab-backend:ci python -c "import $module" \
+              && echo "OK: $module imports"
+          done
+          docker run --rm smartcab-backend:ci python -m alembic --help >/dev/null \
+            && echo "OK: alembic is available for the migrate container"
+
+      - name: The compose files parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          # docker compose refuses to read a file with unset variables, so the staging
+          # config is validated against the committed template rather than real secrets.
+          # Placeholders only - nothing here is or resembles a credential.
+          sed -e 's/^JWT_SECRET=$/JWT_SECRET=ci-placeholder-0123456789abcdef0123456789/' \
+              -e 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci-placeholder/' \
+              -e 's/^MQTT_INGESTOR_PASSWORD=$/MQTT_INGESTOR_PASSWORD=ci-placeholder/' \
+              -e 's/^GRAFANA_ADMIN_PASSWORD=$/GRAFANA_ADMIN_PASSWORD=ci-placeholder/' \
+              -e 's/^OSM_CONTACT_EMAIL=$/OSM_CONTACT_EMAIL=ci@example.invalid/' \
+              infra/.env.staging.example > infra/.env.staging
+
+          docker compose -f infra/docker-compose.yml config >/dev/null
+          echo "OK: development compose"
+
+          docker compose -f infra/docker-compose.staging.yml \
+            --env-file infra/.env.staging config >/dev/null
+          echo "OK: staging compose"
+
+          docker compose -f infra/docker-compose.yml \
+            -f infra/docker-compose.maps.yml config >/dev/null
+          echo "OK: optional self-hosted maps overlay"
+
+          rm -f infra/.env.staging
+
+      - name: Shell scripts parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in infra/scripts/*.sh scripts/*.sh; do
+            bash -n "$script" && echo "OK: $script"
+          done
+
+      - name: Provisioned dashboards and configs are valid JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in infra/grafana/dashboards/*.json infra/tiles/config.json                       infra/tiles/styles/*/style.json; do
+            python -c "import json,sys; json.load(open(sys.argv[1]))" "$file"               && echo "OK: $file"
+          done
+          # Whether each panel queries a metric that exists, whether any metric is
+          # unread, and whether two panels overlap are all checked by
+          # backend/tests/unit/test_dashboards_match_the_metrics.py, which runs in
+          # backend-test and in `make test`.
+
   app-analyze:
     needs: detect
     runs-on: ubuntu-latest

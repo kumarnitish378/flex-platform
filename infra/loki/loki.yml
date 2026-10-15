@@ -1,0 +1,59 @@
+# Loki, single-binary, filesystem storage (task R01 — log shipping).
+#
+# Sized for one pilot VM, not for a cluster. The whole point is that
+# `non-functional.md`'s structured JSON logs - request_id, operator_id, user_id - are
+# searchable from Grafana next to the metrics, so a 500 on a latency panel leads to the
+# line that caused it rather than to an SSH session and `grep`.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # 30 days, matching Prometheus. Long enough to answer "was it doing this last month",
+  # short enough for the pilot VM's disk.
+  retention_period: 720h
+  # Driver phones reconnect in bursts and the ingestor logs a line per batch; the
+  # default 4 MB/s would start dropping lines exactly during the incident you are
+  # reading the logs for.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # Keep the label set small. Labels are the index; a label per request_id would be a
+  # new stream per request and would fall over by lunchtime. request_id lives in the
+  # line, where Grafana's derived field picks it up.
+  max_label_names_per_series: 15
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true
+
+analytics:
+  reporting_enabled: false

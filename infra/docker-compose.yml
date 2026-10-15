@@ -29,6 +29,10 @@ services:
       - postgres-data:/var/lib/postgresql/data
       # Runs once, on an empty data directory only.
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      # The backup/restore script, so `make backup-verify` can rehearse the production
+      # restore path against development data. Nothing runs it automatically here -
+      # the scheduled loop is a container of its own in docker-compose.staging.yml.
+      - ./scripts:/opt/backup:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartcab} -d ${POSTGRES_DB:-smartcab}"]
       interval: 5s
