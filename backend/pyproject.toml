@@ -33,6 +33,9 @@ dependencies = [
     # the start; until B20 nothing ran the expiry, escalation, stop-ETA or stale-vehicle
     # sweeps outside the simulator.
     "celery[redis]==5.6.0",
+    # Metrics exposition (R01). `non-functional.md` (Operability) names the metrics the
+    # platform must publish; without a client there is nothing for Grafana to draw.
+    "prometheus-client==0.24.1",
 ]
 
 [project.optional-dependencies]

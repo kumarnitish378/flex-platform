@@ -78,10 +78,28 @@ class Settings(BaseSettings):
     # --- storage / transport ------------------------------------------------
     database_url: str = "postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab"
     redis_url: str = "redis://localhost:6379/0"
+    #: Where **this process** reaches the broker. Inside a deployment that is a service
+    #: name on the private network.
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883
+    #: Where a **driver's phone** reaches the broker, which is a different question and
+    #: was being answered with the internal address: `/driver/duty` handed every driver
+    #: `mosquitto:1883`, a Docker service name on an unpublished plaintext port. Empty
+    #: falls back to the internal values, which is correct for local development and
+    #: wrong everywhere else - so the staging compose sets all three.
+    #:
+    #: The host must match the broker certificate's SAN, which is `SITE_ADDRESS`: a
+    #: separate `mqtt.` hostname would fail certificate validation on every phone.
+    mqtt_public_host: str = ""
+    mqtt_public_port: int = 0
+    mqtt_public_tls: bool = False
     mqtt_ingestor_user: str = ""
     mqtt_ingestor_password: str = ""
+    #: Where `python -m app.broker_sync` writes the generated Mosquitto `passwd` and
+    #: `acl` files. B11 renders their contents and deliberately leaves the filesystem to
+    #: deployment; this is the one place that says where. Empty means the container
+    #: default, `/mosquitto/generated`.
+    mqtt_generated_dir: str = ""
 
     # --- auth ---------------------------------------------------------------
     jwt_secret: SecretStr = SecretStr("change-me-random-64-bytes")
@@ -116,6 +134,11 @@ class Settings(BaseSettings):
     # --- observability ------------------------------------------------------
     log_level: str = "INFO"
     log_json: bool = True
+    #: Port on which a non-HTTP process (the GPS ingestor, a Celery worker) exposes its
+    #: Prometheus metrics. The API serves `/metrics` on its own port and ignores this.
+    #: Each process needs a distinct value; the staging compose sets them per container.
+    #: 0 disables the metrics server, which is what tests and `make ingestor` want.
+    metrics_port: int = Field(default=0, ge=0, le=65535)
 
     @field_validator("osrm_url", "tiles_url")
     @classmethod
@@ -182,6 +205,15 @@ class Settings(BaseSettings):
                 "OSM_CONTACT_EMAIL is required when calling public OSM servers (ADR-0010 rule 4)"
             )
         return self
+
+    @property
+    def broker_host_for_devices(self) -> str:
+        """The hostname a phone should use, falling back to the internal one."""
+        return self.mqtt_public_host or self.mqtt_host
+
+    @property
+    def broker_port_for_devices(self) -> int:
+        return self.mqtt_public_port or self.mqtt_port
 
     @property
     def is_sim(self) -> bool:

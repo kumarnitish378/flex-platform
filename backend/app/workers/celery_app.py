@@ -22,8 +22,10 @@ from typing import Any
 
 from celery import Celery
 from celery.schedules import crontab  # noqa: F401 - kept for the schedule's readability
+from celery.signals import worker_ready
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.core import metrics
 from app.core.clock import SystemClock
 from app.core.db import create_engine, create_session_factory
 from app.core.logging import configure_logging, get_logger
@@ -140,15 +142,37 @@ def _run(name: str, coroutine: Any) -> dict[str, int]:
     A sweep that raises is logged and skipped. The alternative - letting the exception
     out - marks the task failed and, with a misconfigured broker, can stall the whole
     beat; and the next tick is thirty seconds away, so one bad pass costs nothing.
+
+    This is also where the sweeps are metered. A swallowed exception is invisible by
+    design, so without `outcome="failed"` on the counter the only symptom of a sweep
+    that has been failing all week is that nothing ever expires - which is exactly the
+    quiet morning B20 was written to prevent.
     """
-    try:
-        result: dict[str, int] = asyncio.run(coroutine())
-    except Exception as exc:  # noqa: BLE001 - one bad sweep must not stop the rest
-        logger.exception("due_work_failed", sweep=name, error=type(exc).__name__)
-        return {}
+    with metrics.timed(metrics.sweep_duration, task=name):
+        try:
+            result: dict[str, int] = asyncio.run(coroutine())
+        except Exception as exc:  # noqa: BLE001 - one bad sweep must not stop the rest
+            metrics.sweep_runs.labels(task=name, outcome="failed").inc()
+            logger.exception("due_work_failed", sweep=name, error=type(exc).__name__)
+            return {}
+    metrics.sweep_runs.labels(task=name, outcome="ok").inc()
     if any(result.values()):
         logger.info("due_work", sweep=name, **result)
     return result
+
+
+@worker_ready.connect
+def _start_metrics_server(**_kwargs: Any) -> None:
+    """Expose the worker's counters once it is up (METRICS_PORT).
+
+    Fires in the worker's **main** process. Run the worker with a thread pool
+    (`--pool=threads`), as the staging compose does: with the default prefork pool the
+    tasks run in forked children whose counters this server would never see. The three
+    sweeps are I/O-bound and take milliseconds, so a thread pool costs nothing.
+    """
+    port = get_settings().metrics_port
+    if port:
+        metrics.serve_metrics(port)
 
 
 @celery_app.task(name="smart_cab.expire_requests")

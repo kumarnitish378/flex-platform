@@ -20,6 +20,7 @@ from app.core.settings import (
 from app.modules.routing.approx import ApproxConfig, ApproxRoutingProvider
 from app.modules.routing.cache import CachedRoutingProvider
 from app.modules.routing.geocoding import NoGeocodingProvider
+from app.modules.routing.metered import MeteredRoutingProvider
 from app.modules.routing.osrm import OsrmRoutingProvider
 from app.modules.routing.rate_limit import (
     RateLimiter,
@@ -51,7 +52,7 @@ def build_routing_provider(
     approx = ApproxRoutingProvider(clock, ApproxConfig())
 
     if settings.routing_provider is RoutingProviderName.approx:
-        return approx
+        return MeteredRoutingProvider(approx)
 
     osrm = OsrmRoutingProvider(
         settings.osrm_url,
@@ -62,12 +63,16 @@ def build_routing_provider(
     )
 
     if settings.routing_provider is RoutingProviderName.osrm:
-        return osrm
+        return MeteredRoutingProvider(osrm)
 
     if redis is None:
         logger.warning("routing_cache_disabled", detail="no redis; using osrm without cache")
-        return osrm
-    return CachedRoutingProvider(osrm, redis, ttl_seconds=settings.routing_cache_ttl_seconds)
+        return MeteredRoutingProvider(osrm)
+    # Metering wraps the cache, not the other way round: a cache hit is an answer the
+    # system served, and counting only the misses would report a 0% hit rate.
+    return MeteredRoutingProvider(
+        CachedRoutingProvider(osrm, redis, ttl_seconds=settings.routing_cache_ttl_seconds)
+    )
 
 
 def build_geocoding_provider(settings: Settings) -> GeocodingProvider:

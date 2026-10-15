@@ -43,8 +43,12 @@ from app.modules.auth.permissions import (
 NOW = datetime(2026, 9, 24, 4, 30, tzinfo=UTC)
 JWT_SECRET = "permission-harness-secret-0123456789abcd"
 
-# Paths outside the API contract: operational endpoints for the process manager.
-OPERATIONAL_PATHS = frozenset({"/health/live", "/health/ready"})
+# Paths outside the API contract: operational endpoints for the process manager and the
+# monitoring stack. `/metrics` is deliberately unauthenticated - Prometheus has no token
+# and giving it one means a long-lived credential in a scrape config - so it is kept off
+# the public edge instead: `infra/caddy/Caddyfile` proxies only /api and /ws, and
+# `tests/unit/test_edge_exposes_only_the_api.py` fails if that ever stops being true.
+OPERATIONAL_PATHS = frozenset({"/health/live", "/health/ready", "/metrics"})
 # FastAPI's own documentation routes.
 DOC_PATHS = frozenset({"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"})
 

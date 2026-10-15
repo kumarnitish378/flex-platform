@@ -27,6 +27,7 @@ from shapely.geometry import Point as ShapelyPoint
 from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import metrics
 from app.core.clock import Clock
 from app.core.logging import get_logger
 from app.core.redis import RedisLike
@@ -132,12 +133,20 @@ class GpsIngestor:
 
             self._buffer.append(self._row(vehicle_id, operator_id, ping, now))
             result.accepted += 1
+            metrics.gps_pings.labels(outcome="accepted").inc()
+            # How late a ping was when we took it. `non-functional.md` wants a position
+            # visible within 10 s of the ping; this is the first half of that number
+            # (broker to ingestor), the other half being the flush.
+            metrics.gps_ingest_lag.observe(max((now - ping.recorded_at).total_seconds(), 0.0))
 
             # Out-of-order pings are stored but must not move the marker backwards.
             if is_newer(ping, previous):
                 self._latest[vehicle_id] = ping
                 await self._publish_latest(vehicle_id, operator_id, ping)
                 result.latest_moved = True
+
+        for reason, count in result.reasons.items():
+            metrics.gps_pings.labels(outcome=reason).inc(count)
 
         if result.dropped:
             logger.info(
@@ -247,6 +256,7 @@ class GpsIngestor:
         await self.session.execute(insert(LocationPing), rows)
         await self.session.flush()
         self._last_flush = self.clock.now()
+        metrics.gps_rows_written.inc(len(rows))
         logger.info("gps_batch_persisted", rows=len(rows))
         return len(rows)
 

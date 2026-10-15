@@ -26,6 +26,7 @@ from typing import Any
 # model fails at the first flush with "could not find table 'vehicle'" - and only at
 # runtime, never at import. Alembic imports this module for the same reason.
 from app import models as _all_models  # noqa: F401
+from app.core import metrics
 from app.core.clock import Clock, SharedSimClock, SystemClock
 from app.core.db import create_engine, create_session_factory
 from app.core.logging import configure_logging, get_logger
@@ -57,6 +58,11 @@ async def run(settings: Settings | None = None) -> None:
 
     settings = settings or get_settings()
     configure_logging(level=settings.log_level, json_output=settings.log_json)
+
+    # This process has no HTTP server of its own, so Prometheus cannot scrape it unless
+    # we open one. Off by default (METRICS_PORT=0); the staging compose sets a port.
+    if settings.metrics_port:
+        metrics.serve_metrics(settings.metrics_port)
 
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
