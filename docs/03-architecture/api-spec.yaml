@@ -1188,9 +1188,14 @@ components:
           oneOf:
             - type: 'null'
             - type: object
+              description: >-
+                Where this device should connect, which is not where the backend
+                connects: the server reaches the broker inside its own network, the
+                phone reaches it across the internet. These are the public values.
               properties:
-                host: {type: string}
+                host: {type: string, description: publicly resolvable hostname, not a service name}
                 port: {type: integer}
+                tls: {type: boolean, description: connect over TLS; true everywhere except local development}
                 username: {type: string}
                 password: {type: string}
                 topic_prefix: {type: string}

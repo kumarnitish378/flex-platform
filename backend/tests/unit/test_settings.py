@@ -77,3 +77,40 @@ def test_secret_is_not_exposed_by_repr() -> None:
     settings = Settings(jwt_secret="super-secret-value", database_url=GOOD_DB)
     assert "super-secret-value" not in repr(settings)
     assert settings.jwt_secret.get_secret_value() == "super-secret-value"
+
+
+# --- what a driver's phone is told (R01) -------------------------------------
+
+
+def test_device_broker_address_falls_back_to_the_internal_one() -> None:
+    """Correct for local development, where they are the same machine."""
+    settings = Settings(database_url=GOOD_DB, mqtt_host="localhost", mqtt_port=1883)
+
+    assert settings.broker_host_for_devices == "localhost"
+    assert settings.broker_port_for_devices == 1883
+    assert settings.mqtt_public_tls is False
+
+
+def test_a_deployment_tells_devices_the_public_address_not_its_own() -> None:
+    """The defect this exists to prevent.
+
+    Inside a deployment `MQTT_HOST` is a compose service name on an unpublished
+    plaintext port. Handing that to a phone - which is what `/driver/duty` did until
+    this was found by running the staging stack - tells every driver to connect to a
+    host that does not resolve, in clear text, and GPS never starts.
+    """
+    settings = Settings(
+        database_url=GOOD_DB,
+        mqtt_host="mosquitto",
+        mqtt_port=1883,
+        mqtt_public_host="staging.example.com",
+        mqtt_public_port=8883,
+        mqtt_public_tls=True,
+    )
+
+    # What this process uses to reach the broker.
+    assert settings.mqtt_host == "mosquitto"
+    # What a phone is told.
+    assert settings.broker_host_for_devices == "staging.example.com"
+    assert settings.broker_port_for_devices == 8883
+    assert settings.mqtt_public_tls is True

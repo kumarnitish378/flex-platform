@@ -26,8 +26,11 @@ class DutyInput(Strict):
 
 
 class MqttOut(Strict):
+    """Where the **device** connects. See `Settings.mqtt_public_host`."""
+
     host: str
     port: int
+    tls: bool
     username: str
     password: str
     topic_prefix: str
@@ -55,6 +58,7 @@ def _out(state: object) -> DutyStateOut:
             MqttOut(
                 host=mqtt.host,
                 port=mqtt.port,
+                tls=mqtt.tls,
                 username=mqtt.username,
                 password=mqtt.password,
                 topic_prefix=mqtt.topic_prefix,

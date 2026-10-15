@@ -38,8 +38,11 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class MqttCredentials:
+    """What the driver's device is told. Public addressing, not the server's own."""
+
     host: str
     port: int
+    tls: bool
     username: str
     password: str
     topic_prefix: str
@@ -145,8 +148,11 @@ class DutyService:
             on_duty=True,
             vehicle_id=vehicle.id,
             mqtt=MqttCredentials(
-                host=self.settings.mqtt_host,
-                port=self.settings.mqtt_port,
+                # The device's view of the broker, never this process's own: inside a
+                # deployment `mqtt_host` is a service name no phone can resolve.
+                host=self.settings.broker_host_for_devices,
+                port=self.settings.broker_port_for_devices,
+                tls=self.settings.mqtt_public_tls,
                 username=username,
                 password=password,
                 topic_prefix=topic_prefix(str(operator_id), str(vehicle.id)),
