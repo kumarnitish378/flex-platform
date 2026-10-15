@@ -241,3 +241,27 @@ def test_identical_candidates_order_by_vehicle_id() -> None:
     )
 
     assert [facts.vehicle_id for facts in ordered] == [VEHICLE_A, VEHICLE_B]
+
+
+# --- the defaults must not drift from operator_config -------------------------
+
+
+def test_cost_weights_defaults_match_the_config_registry() -> None:
+    """`CostWeights()` is a fallback, not a second source of truth.
+
+    The real values come from `operator_config` per operator (CLAUDE.md hard rule 4).
+    These defaults exist so the pure function can be called in a test without a
+    database - which means the day somebody tunes `weight_empty_km` in the registry and
+    not here, every test keeps passing against a number production no longer uses.
+    """
+    from app.domain import config_keys
+
+    registry = config_keys.defaults()
+    defaults = CostWeights()
+
+    for field in CostWeights.__dataclass_fields__:
+        assert field in registry, f"{field} is not a config key; one of the two is wrong"
+        assert float(registry[field]) == pytest.approx(getattr(defaults, field)), (
+            f"{field} drifted: cost.py has {getattr(defaults, field)}, "
+            f"config_keys.py has {registry[field]}"
+        )

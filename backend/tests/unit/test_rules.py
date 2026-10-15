@@ -135,3 +135,20 @@ def test_capacity_is_absent_from_the_rule_set_on_purpose() -> None:
     passenger in a four-seat car stops being a refusal and becomes a judgement call.
     """
     assert not any("capacity" in str(violation) for violation in Violation)
+
+
+def test_every_named_config_key_actually_exists() -> None:
+    """A typo here points a supervisor at a setting that is not there.
+
+    `CONFIG_KEY_FOR` exists so a dropped candidate can say which number excluded it.
+    The string is shown to a human and used to deep-link the admin screen, so a key
+    that does not exist is worse than no key at all - it reads as a real setting
+    nobody can find.
+    """
+    from app.domain import config_keys
+
+    registry = config_keys.defaults()
+    named = {key for key in CONFIG_KEY_FOR.values() if key is not None}
+
+    missing = sorted(key for key in named if key not in registry)
+    assert not missing, f"CONFIG_KEY_FOR names config keys that do not exist: {missing}"
