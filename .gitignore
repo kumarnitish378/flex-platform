@@ -2,6 +2,17 @@
 .env
 .env.*
 !.env.example
+# The staging template is committed; the filled-in infra/.env.staging never is, and is
+# still caught by the `.env.*` rule above.
+!.env.staging.example
+
+# --- prepared map data (task I02b) ------------------------------------------
+# Hundreds of megabytes of OSM extract, OSRM graph and MBTiles, rebuilt monthly by
+# infra/scripts/prepare_maps.sh. infra/maps/README.md records what was built and when,
+# and IS committed.
+infra/maps/data/
+infra/maps/tiles/
+infra/maps/fonts/
 
 # --- Python ----------------------------------------------------------------
 __pycache__/

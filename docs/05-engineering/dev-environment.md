@@ -15,9 +15,16 @@
 | postgres | `postgis/postgis:16-3.4` | 5432 | DB `smartcab` |
 | redis | `redis:7` | 6379 | |
 | mosquitto | `eclipse-mosquitto:2` | 1883 (dev), 8883 (TLS) | config in `infra/mosquitto/` |
-| caddy | `caddy:2` | 80/443 | staging/prod only |
-| prometheus, grafana | official images | 9090, 3000 | optional in dev |
+| caddy | `caddy:2-alpine` | 80/443 | staging/prod only (`docker-compose.staging.yml`) |
+| prometheus, grafana | `prom/prometheus`, `grafana/grafana` | 9090, 3000 | staging/prod; not published, reached through Grafana |
+| loki, promtail | `grafana/loki`, `grafana/promtail` | 3100 | staging/prod; log shipping |
 Verify image tags at setup time and pin them.
+
+The staging and production stack is a **separate, standalone** compose file -
+`infra/docker-compose.staging.yml`, started with `make staging-up`. It is not an overlay
+on the development one, because that one publishes Postgres, Redis and the broker on the
+host so a developer can reach them, and inheriting those would put the database on the
+public internet. The full runbook is `deployment.md`.
 
 Map services are **not** part of the default compose (ADR-0010) — `make up` starts postgres, redis and
 mosquitto only. Routing and tiles come from the public OSM servers via `OSRM_URL` and `TILES_URL`; there is
@@ -82,6 +89,10 @@ time-of-day speed table, flagged approximate.
 | `PUSH_PROVIDER` | `fcm` / `ntfy` / `log` | backend |
 | `FCM_CREDENTIALS_FILE` | path | backend |
 | `SIMCTL_ENABLED` | `true` only when `APP_ENV=sim` | backend |
+| `METRICS_PORT` | `0` (off) in dev; `9101` ingestor, `9102` worker in staging | ingestor, Celery worker |
+| `SITE_ADDRESS` / `MONITORING_ADDRESS` | staging/prod only: the API and Grafana hostnames | Caddy |
+| `ACME_EMAIL` | staging/prod only: where Let's Encrypt sends expiry warnings | Caddy |
+| `GRAFANA_ADMIN_PASSWORD` | staging/prod only | Grafana |
 
 In `dev`, `OTP_PROVIDER=console` prints OTPs to the log, and `PUSH_PROVIDER=log` logs notifications.
 Map URLs are read from config everywhere — never hard-code them in backend, app or simulator code.
@@ -100,6 +111,12 @@ Map URLs are read from config everywhere — never hard-code them in backend, ap
 | `make api-client` | Regenerate Dart client into `app/lib/data/api/` |
 | `make sim-quick` / `make sim-full` | Simulator suites (starts backend with `APP_ENV=sim`, `ROUTING_PROVIDER=approx`) |
 | `make maps` | Optional (self-hosting only): run `prepare_maps.sh` — see §8 |
+| `make up-maps` | Start the self-hosted osrm + tileserver containers (needs `make maps` first) |
+| `make staging-up` / `staging-down` | Start/stop the staging stack on the VM — see `deployment.md` |
+| `make staging-ps` / `staging-logs` | What is running; follow the application logs |
+| `make staging-mqtt-cert` | Re-publish Caddy's certificate to the broker after a renewal |
+| `make backup` / `backup-list` | Take a database dump now; list what exists |
+| `make backup-verify` | Restore a dump into a scratch database and compare row counts (monthly) |
 
 ## 6. Dev seed users (after `make seed`)
 One phone number per role (e.g. `+910000000001` operator_admin … `+910000000006` employee); OTP appears in the backend console.
@@ -122,31 +139,48 @@ Extra compose services (`infra/docker-compose.maps.yml`, started with `make up-m
 | tileserver | `maptiler/tileserver-gl` | 8081 | I02b | serves MBTiles + style |
 | nominatim | `mediagis/nominatim` | 8080 | I02c (optional) | imports NCR extract on first start (slow) |
 
-Map data preparation (one-time, then monthly):
-1. Download India extract from Geofabrik: `india-latest.osm.pbf` (northern-zone extract if available is smaller).
-2. Crop to Delhi NCR bounding box to save RAM:
-   ```
-   osmium extract -b 76.80,28.20,77.75,28.95 india-latest.osm.pbf -o ncr.osm.pbf
-   ```
-3. OSRM (MLD pipeline, car profile):
-   ```
-   docker run -t -v $PWD/data:/data osrm/osrm-backend osrm-extract -p /opt/car.lua /data/ncr.osm.pbf
-   docker run -t -v $PWD/data:/data osrm/osrm-backend osrm-partition /data/ncr.osrm
-   docker run -t -v $PWD/data:/data osrm/osrm-backend osrm-customize /data/ncr.osrm
-   ```
-   Served by compose with `osrm-routed --algorithm mld /data/ncr.osrm`.
-   Later (speed learning): re-run `osrm-customize` with `--segment-speed-file` generated from `road_speed_profile`.
-4. Nominatim: mount `ncr.osm.pbf` and let the container import it (first start can take a while).
-5. Tiles: run Planetiler for the NCR area to produce `ncr.mbtiles` (OpenMapTiles schema), place in `infra/tiles/`, with an OpenMapTiles-compatible style JSON.
-6. Script all steps in `infra/scripts/prepare_maps.sh` and document the data date in `infra/tiles/README.md`.
+Map data preparation is **one command**, and every tool it needs runs in a container —
+the "osmium-tool and Java 21" above is what the tools need, not what you must install:
+
+```
+infra/scripts/prepare_maps.sh all      # ~1 hour: download, crop, OSRM, fonts, tiles
+infra/scripts/prepare_maps.sh status   # what is prepared and how old it is
+make up-maps
+```
+
+What it does, and why:
+
+1. **Download** the Geofabrik *northern-zone* India extract (~214 MB) rather than all of
+   India — a tenth of the size and it contains the whole NCR. Resumable.
+2. **Crop** to the NCR box `76.80,28.20,77.75,28.95` with `osmium` (~35 MB). This is what
+   keeps the OSRM and Planetiler runs inside 16 GB.
+3. **OSRM**, MLD pipeline, car profile. MLD rather than CH because re-running
+   `osrm-customize` with `--segment-speed-file` from `road_speed_profile` then takes
+   minutes rather than hours — which is how learned speeds reach routing.
+4. **Fonts**: the OpenMapTiles Noto Sans glyph PBFs. tileserver-gl rasterises text
+   server-side, so without them every tile comes back correct and silent — roads and
+   water, no street names.
+5. **Tiles**: Planetiler produces `ncr.mbtiles` in the OpenMapTiles schema, and
+   `tileserver-gl` (not `-light`) rasterises it to PNG, because Phase 1 serves **raster**
+   tiles (ADR-0010 §A2). The vector tiles stay available for when MapLibre takes over.
+6. The data date is recorded in `infra/maps/README.md`. The prepared data itself is
+   git-ignored. **Rebuild monthly**: routing data ages faster than it looks — a new
+   flyover or a changed one-way is the difference between an ETA that holds and one that
+   does not.
+
+Nominatim is **not** part of this. Phase 1 ships no geocoding; self-hosting it is the
+separate, optional task I02c.
 
 Then repoint the URLs (and nothing else):
 ```
-OSRM_URL=http://localhost:5000
-TILES_URL=http://localhost:8081
+OSRM_URL=http://localhost:5000        # http://osrm:5000 from another container
+TILES_URL=http://localhost:8081/styles/basic/{z}/{x}/{y}.png
+OSM_RATE_LIMIT_PER_SECOND=50          # your own server; the 1/s budget was theirs
 # only with task I02c:
 GEOCODING_PROVIDER=nominatim
 NOMINATIM_URL=http://localhost:8080
 ```
-The rate limiter and cache still apply but can be relaxed for your own servers
-(`OSM_RATE_LIMIT_PER_SECOND`).
+No application code changes — that is the whole point of the provider interface from I02.
+The rate limiter drops away on its own (`build_rate_limiter` only limits public hosts),
+the cache still applies, and `/health/ready` starts **actually probing** the routing
+server, which it refuses to do against a public one.
