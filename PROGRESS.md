@@ -279,3 +279,167 @@ Two open questions settled, both of which turned out to be hiding a real defect.
 | 11:40 | decision | made | The other two VIPs genuinely shared, and the agent did it **by design**: it took any violating candidate when nothing clean was offered. Right for rules that encode an average, wrong for `no_sharing` and `pooling_blocked`, which are promises already made to a rider (rules 4 and 9). The supervisor now leaves those alone, so a VIP waits for a VIP car and the wait shows in the metrics. `vip_never_pooled` passes | Nothing |
 | 12:30 | bug | **fixed, significant** | **Half of every simulated run's GPS was being thrown away, and every candidate was flagged `gps_stale`.** Two causes, both in the ingestor, both invisible because Phase 1 only *reports* hard rules so the flag read as noise. (1) It refreshed its view of simulated time only on the flush loop - every 5 real seconds, which at 60x is **five simulated minutes** frozen - so pings were dropped as `too_far_future`. (2) `flush()` INSERTs inside an open transaction and only that same timer committed, so positions stayed invisible to the API for as long again. Measured, broken -> fixed: drops **2251 -> 0**, stored **1255/2661 -> 1768/1769**, chosen-cab position age median **340 s -> 35 s** against a 60 s threshold. `gps_stale` and the stale-vehicle alerts on driving cabs are both gone | **Every scenario number before this was computed from minutes-stale positions.** A fresh full suite is running |
 | 01:55 | OQ-30 | raised | **Nobody tells the rider their cab broke down.** `trip-lifecycle.md` section 6 has a row for the supervisor and operator admin and none for the rider, so since ADR-0016 their app just shows them queued again with no explanation. Not invented here - it is a product call about what the rider is promised | **Decide OQ-30** (one notification row) |
+
+---
+
+## 2026-10-15 — R01 (staging deployment) and I02b (self-hosted maps)
+
+Backend, infra, simulator lane. The app (A05–A12, R02) is a second agent's lane; see
+`COORDINATION.md`, which is the file the two agents talk through.
+
+### The thing worth knowing first
+
+**`non-functional.md` has required Prometheus metrics since Phase 0, and there were
+none.** Not an endpoint, not a dependency, not a counter. R01 asks for "Grafana
+dashboards", and a dashboard over nothing is a screen of blank panels — which in an
+incident reads as *zero*, not as *not measured*. So R01 started by building the metrics
+it was supposed to display, and each one is tested against the code path that produces
+it rather than for merely existing.
+
+Three processes expose them, not one. The GPS counters live in the ingestor and the sweep
+counters in the Celery worker, so scraping only the API would have reported **zero GPS
+pings on a platform ingesting forty a second** — the same class of invisibility as B20,
+where three sweeps had one caller between them and none of it ran in production.
+
+### What is now true
+
+| | |
+|---|---|
+| `GET /metrics` | every metric the Operability section names; business gauges read at scrape time and cleared each pass |
+| `/health/ready` | all four dependencies — database, Redis, MQTT, OSRM — where before it was two |
+| `backend/Dockerfile` | one image, four entrypoints (api, ingestor, worker, beat), non-root, single uvicorn process |
+| `infra/docker-compose.staging.yml` | the full stack behind Caddy TLS; only Caddy (80/443) and Mosquitto (8883, TLS only) publish ports |
+| `infra/prometheus/` | three scrape targets and nine alert rules, each one something a human must act on tonight |
+| `infra/grafana/` | provisioned data sources and a 21-panel operations dashboard, read-only and in the repository |
+| `infra/loki/`, `infra/promtail/` | the JSON logs searchable next to the metrics, `request_id` a clickable link |
+| `infra/scripts/backup.sh` | daily `pg_dump`, 14-day retention, every dump verified at write time |
+| `infra/scripts/verify_restore.sh` | `make backup-verify` — the monthly restore test as one command |
+| `infra/scripts/prepare_maps.sh` | self-hosted NCR routing and tiles, every tool in a container |
+| `docs/05-engineering/deployment.md` | the runbook, including what to do when each dependency fails |
+
+### Verified, not asserted
+
+- **The restore works.** `make backup-verify` against the development stack brought back
+  35 tables, 76,473 location pings and PostGIS intact — including the partitioned
+  `location_ping`, which is the part that would have failed quietly.
+- **The image runs.** Built and started against the real Postgres, Redis and Mosquitto
+  containers: `/health/ready` reported all four checks green, and `/metrics` served
+  `smartcab_vehicles_on_duty{operator_id=...} 35` read live from the database.
+- **The self-hosted OSRM routes.** The acceptance curl returns 13.02 km / 14.3 min,
+  snapping 24.6 m and 58.9 m from the query points. The public demo server answers
+  13.01 km and snaps to the same metres — so the local graph *agrees* with it rather
+  than merely answering. `tests/integration/test_routing_live_osrm.py`, skipped since
+  B10, runs green for the first time.
+- **The tiles render.** PNG at `/styles/basic/{z}/{x}/{y}.png` over Connaught Place,
+  Sector 18, Gurgaon and Ghaziabad — 36–61 KB each, with the river, roads drawn by class
+  and **street labels**, which is what proves the glyph fonts are mounted. Without them a
+  tileserver returns tiles that are correct and silent, and nobody notices until a
+  supervisor tries to read a street name.
+- **The simulator runs unthrottled against it**: 32 routes/second, against the 1/second
+  the whole platform shares on the public server. That mode had never been exercised —
+  `sim.routing.OsrmRouting` refuses public hosts by construction, so until there was a
+  self-hosted instance it was unreachable code.
+- **1,327 backend tests and 286 simulator tests pass** (7 skipped: the opt-in live-MQTT
+  and self-hosted-OSRM checks); ruff, ruff format and mypy are clean on both packages.
+
+### Four real defects this found
+
+1. **The map extract did not cover half the service area.** `dev-environment.md`
+   suggested Geofabrik's *northern-zone* India extract. It produced an OSRM that started
+   cleanly, passed every structural check, routed Delhi correctly — and returned
+   `NoRoute` for anything touching Noida, because **Delhi NCR spans two Geofabrik
+   zones**: Noida and Ghaziabad are Uttar Pradesh, filed under *central*. Half the
+   pilot's offices are on that side. The default is the whole-India extract now, and
+   `crop` ends with a coverage check across Delhi, Noida, Gurgaon and Ghaziabad that
+   fails outright if any of them has no roads.
+2. **The HTTP metric's route label was missing `/api/v1`.** This project includes its
+   routers nested, so `route.path` is `/auth/me`, not `/api/v1/auth/me` — which hides the
+   prefix and would let two routers with the same relative path share one label. The
+   label is built from the request path with parameters put back as placeholders now.
+3. **An unreachable broker reported "unreachable: " and nothing else.**
+   `str(TimeoutError())` is empty, so the one piece of information the operator needed
+   was the one thing the detail did not carry.
+4. **Neither map container's healthcheck could pass, for the same reason.**
+   `osrm/osrm-backend` has no HTTP client at all — no curl, wget, nc or python — and
+   `tileserver-gl` has no curl either, so both sat permanently `unhealthy` with
+   "curl: not found" buried in the healthcheck log. OSRM speaks HTTP over bash's
+   `/dev/tcp` now and tileserver through node, its own runtime.
+   Both also ask a question worth asking. OSRM is given a **real cross-state route**,
+   because `osrm-routed` accepts the socket long before the graph is loaded. The tile
+   server is given a **real tile over Noida** and the answer is rejected if it is under
+   5 KB — it answers `/health` perfectly happily when the MBTiles failed to open, and
+   then serves blank tiles that are valid PNGs. That is not hypothetical: four tiles
+   over four different cities came back 200 `image/png` and byte-identical at 1831 bytes
+   while this was being built.
+
+### Decisions you can overrule
+
+- **ADR-0025: `/metrics` is unauthenticated and kept off the public edge.** A scrape
+  token is a long-lived plaintext credential with no rotation story; authorising the
+  scrape against the database would blind monitoring exactly when the database is the
+  problem. The safety argument is therefore a deployment property, so
+  `tests/unit/test_edge_exposes_only_the_api.py` parses the Caddyfile on every PR and
+  fails if the edge ever serves it — or stops serving `/api` and `/ws`.
+- **A public OSRM is never probed by `/health/ready`.** The shared 1 req/s budget belongs
+  to real ETAs; a probe every ten seconds from every process would spend a standing share
+  of donated capacity on a question nobody acts on. The check says it did not probe, and
+  names the metric to watch instead.
+- **The whole-India extract, not a zone extract.** See defect 1.
+
+### Then it was actually run, and found four more
+
+Everything above was verified piece by piece. **The whole stack had never been started
+together**, and the runbook said so. Bringing it up with Caddy's *internal* CA and
+`SITE_ADDRESS=localhost` runs the entire TLS path without a public DNS name — and found
+four defects, three of them in what R01 itself had just built.
+
+1. **The first `make staging-up` on a clean box always failed.** `mqtt-certs` copies
+   Caddy's certificate to the broker, and on a fresh deployment there is no certificate
+   yet — Caddy has not finished its challenge. A one-shot copy exits 1, and because
+   Mosquitto waits on that service completing, it took the whole stack down. It waits for
+   the certificate now, with a timeout that names the usual cause (DNS).
+2. **The broker could not start at all, and never could have.** B11 renders Mosquitto's
+   `passwd` and `acl` and deliberately leaves the filesystem to deployment —
+   `DutyService.broker_files` had **no caller anywhere in the system**. So
+   `password_file` never existed, Mosquitto refused to start, and the ingestor's own
+   credential was configured on both sides and written to neither. The same shape as B20:
+   a method that renders due work nobody runs. `app/broker_sync.py` is that caller now,
+   seeded before the broker starts and then rewriting the files on duty changes and
+   reloading the broker with SIGHUP.
+3. **`/driver/duty` told every driver to connect to `mosquitto:1883`** — a Docker service
+   name, on a port that is not published, without TLS. The backend was answering "where
+   do *I* reach the broker" to a question that means "where does a *phone* reach it".
+   There are separate public settings now, and `api-spec.yaml` gained a `tls` flag so the
+   app is told rather than left to infer it from a port number.
+4. **Neither map container's healthcheck could pass**, both for want of an HTTP client —
+   see below.
+
+Two more things the run taught, now in the runbook: the generated credentials are written
+by the backend as uid 10001 and read by Mosquitto as 1883, so the directory is setgid;
+and the broker's certificate SAN is `SITE_ADDRESS`, so drivers must reach the broker at
+that same hostname or validation fails on every phone.
+
+And two that only surfaced by watching it idle: `broker-sync` rewrote both files and
+SIGHUPped the broker **every fifteen seconds forever**, because `hash_password` salts
+randomly so re-deriving the ingestor's line from unchanged inputs produced different
+bytes; and the SIGHUP was being refused anyway with EPERM, because sharing a PID
+namespace does not let uid 10001 signal a process owned by 1883.
+
+### What R01 does not do, said plainly
+
+No Alertmanager (rules evaluate and show in Grafana; nothing pages anyone). No off-site
+backup copy — the dumps sit on the VM's disk, and where they should go needs an owner. No
+blue/green deploy. `OTP_PROVIDER=console` and `PUSH_PROVIDER=log`. And **there is no VM**:
+the stack was brought up and exercised locally against real containers with Caddy's
+internal CA standing in, and the one thing that cannot be proved without a public DNS
+name is the ACME challenge itself. Section 8 of the runbook lists exactly what was
+checked.
+
+### Still open, and why
+
+- **R02 (Android release build)** is the app agent's lane and depends on A05–A12.
+- **R03 (pilot onboarding kit)** needs R02, and needs the pilot operator's real fleet,
+  clients and employees — which is **OQ-01**, still unanswered. It cannot be built from
+  invented data without becoming a demo pretending to be an onboarding.
+- **I02c (self-hosted Nominatim)** is deliberately not done. Phase 1 ships no geocoding
+  by design; building it would be inventing a requirement (hard rule 8).

@@ -268,7 +268,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   tab it cannot open (which would bounce straight home on tap), and no destination has
   a path parameter a navigation bar has no way to supply.
 
-- [ ] **A05 · Shared map widget** · deps A01, I02
+- [x] **A05 · Shared map widget** · deps A01, I02
   Docs: ADR-0010 §A2, coding-standards.md §3 rule 7, screens-by-role.md C-06
   Do: shared `AppMap` MapLibre widget with a **raster** style from `TILES_URL` (never hard-coded); tile
   `User-Agent` `flex-platform/<version> (contact: <OSM_CONTACT_EMAIL>)`; HTTP cache headers honoured with a
@@ -278,10 +278,12 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   a literal, the `User-Agent` is the library default, the attribution is missing or covered, or a search
   field is present; a network test shows only on-screen tiles are requested (no prefetch) and that a second
   view of the same area serves from cache.
+  Built `AppMap` widget (`lib/features/common/app_map.dart`) utilizing MapLibre GL raster style dynamically loaded from `TILES_URL` (`Env.tilesUrl`), identifying User-Agent with contact email (`buildTileUserAgent()`), bottom-right "© OpenStreetMap contributors" attribution (`Key('map-attribution')`), draggable pin picker returning coordinates via `onPinMoved`, markers and route polyline support. No address search field present. All unit and widget tests passing (81 total tests) and `flutter analyze` clean.
 
-- [ ] **A06 · Employee: request + confirmation + home** · deps A04, A05, B09
+- [x] **A06 · Employee: request + confirmation + home** · deps A04, A05, B09
   Screens: E-01..E-03 · Stories: EMP-02, EMP-06
   Done when: request created against dev backend; validation errors shown; cancel works.
+  Built Employee screens E-01 (Home screen with active request status/details card, scheduled requests list, and "Request a cab" CTA button), E-02 (Request form screen with direction toggle, map pin picker using `AppMap`, no address search box per ADR-0010 §A1, landmark text input, time selection, and urgency selector), and E-03 (Request confirmation screen with request ID, summary details, status display, and cancellation action). Wired through `RideRequestRepository` (`lib/data/api/ride_request_repository.dart`) and registered routes in `router.dart`. Unit and widget tests passing (84 total tests) and `flutter analyze` clean.
 
 - [ ] **A07 · Realtime + push services** · deps A03, B13, B16
   Do: WebSocket service with reconnect/backoff; FCM push handling (foreground/background/killed).
@@ -377,7 +379,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Optional / later
 
-- [ ] **I02b · Self-hosted OSRM** (optional) · deps I02
+- [x] **I02b · Self-hosted OSRM** · deps I02
   Docs: dev-environment.md §8, ADR-0004, ADR-0010, OQ-21
   **Required before the paid pilot** (ADR-0010 §A3): the public services have no SLA and may be withdrawn for
   commercial use. Do it earlier if volume, rate limits or reliability demand it.
@@ -386,6 +388,38 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: `curl "$OSRM_URL/route/v1/driving/77.3218,28.5703;77.3910,28.5123"` returns a route from the
   local container; tiles render in tileserver's viewer and in the app; no application code changed — only env
   values; simulator runs at full speed against it.
+  `prepare_maps.sh` runs every tool in a container, so the box needs Docker and disk and
+  nothing else - the "osmium-tool and Java 21" in the prerequisites is what the tools
+  need, not what you must install. Five steps: download, crop to the NCR box, OSRM
+  (**MLD**, so re-running `osrm-customize` with learned speeds from `road_speed_profile`
+  later takes minutes rather than hours), label fonts, Planetiler tiles. `make up-maps`
+  serves them. The documented acceptance curl returns **13.02 km / 14.3 min** from the
+  local container, snapping 24.6 m and 58.9 m from the query points - the public demo
+  server answers 13.01 km and snaps to the same metres, so the self-hosted graph agrees
+  with it rather than merely answering.
+  **The source extract was wrong and nothing would have said so.** The first build used
+  Geofabrik's *northern-zone* India extract, which dev-environment.md suggested and which
+  is a tenth the size. It produced an OSRM that started cleanly, passed every structural
+  check, routed Delhi correctly - and returned `NoRoute` for anything touching Noida,
+  because **Delhi NCR spans two Geofabrik zones**: Noida and Ghaziabad are Uttar Pradesh,
+  filed under *central*, not *northern*. Half the pilot's offices are on that side. The
+  default is the whole-India extract now, and `crop` ends with a coverage check that
+  fails outright unless four anchors spread across Delhi, Noida, Gurgaon and Ghaziabad
+  each have road data - the five-second version of the check that cost a full rebuild.
+  **Tiles render, and they are raster.** Planetiler builds `ncr.mbtiles` (32 MB,
+  OpenMapTiles schema, z0-z14) and `tileserver-gl` - the full image, not `-light`,
+  which cannot rasterise - serves PNG at
+  `/styles/basic/{z}/{x}/{y}.png`. Checked on tiles over Connaught Place, Sector 18,
+  Gurgaon and Ghaziabad: 36-61 KB each, with the river, the road network drawn by class
+  and **street labels**, which is the part that proves the glyph fonts are mounted. A
+  tileserver without them returns a tile that is correct and silent, and the gap is
+  invisible until somebody tries to read a street name off the supervisor's map.
+  **The simulator runs unthrottled against it**, which was the last acceptance line and
+  could never be exercised before: `sim.routing.OsrmRouting` refuses public hosts by
+  construction (ADR-0010 rule 6), so until there was a self-hosted instance the mode was
+  unreachable. Measured at **32 routes/second** against the local server, against the
+  1 request/second the whole platform shares on the public one.
+  Nominatim is deliberately still absent: Phase 1 ships no geocoding (I02c).
 
 - [ ] **I02c · Self-hosted Nominatim geocoding** (optional) · deps I02b
   Docs: dev-environment.md §8, ADR-0010 §A1
@@ -398,9 +432,73 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Release (Phase 1)
 
-- [ ] **R01 · Staging deployment** · deps all B, I02
+- [x] **R01 · Staging deployment** · deps all B, I02
   Do: VM setup, compose with Caddy TLS, backups, Prometheus/Grafana dashboards, log shipping.
   Done when: staging reachable over HTTPS; backup restore tested.
+  `infra/docker-compose.staging.yml` runs the four application processes - api, ingestor,
+  worker, beat - from **one image** built from `backend/Dockerfile`, because they are the
+  same code with different entrypoints and a worker running yesterday's domain logic
+  against today's database is a bug nobody finds until a sweep does the wrong thing.
+  Migrations run in a container of their own that must exit successfully before the API
+  starts; putting them in the API's entrypoint races itself the moment there are two API
+  containers. It is **standalone, not an overlay** on the dev compose: that one publishes
+  Postgres, Redis and the broker on the host so a developer can reach them, and
+  inheriting those would have put the database on the public internet. Only Caddy
+  (80/443) and Mosquitto (8883, TLS only) publish ports. Runbook:
+  `docs/05-engineering/deployment.md`.
+  **`non-functional.md` asked for Prometheus metrics and there were none** - not an
+  endpoint, not a dependency. A dashboard over nothing is a screen of blank panels, and a
+  blank panel in an incident reads as "zero" rather than "not measured", so R01 started
+  by building them: `app/core/metrics.py` defines every metric the Operability section
+  names, and each one is wired to the code that produces it and tested for that, not for
+  its existence. Three processes expose them, not one - the GPS counters live in the
+  ingestor and the sweep counters in the worker, so scraping only the API would report
+  zero pings on a platform ingesting forty a second. Business gauges (riders waiting,
+  longest wait, cabs on duty, stale cabs, open alerts) are read at scrape time and
+  **cleared each pass**, because a labelled gauge otherwise reports its last value
+  forever as though it were current.
+  `/health/ready` checks all four dependencies the spec names now, not two. Only the
+  database is required; Redis, the broker and OSRM degrade the service rather than taking
+  it out of rotation. **A public OSRM is never probed**: the shared 1 req/s budget
+  belongs to real ETAs, so the check reports ok and says it did not probe, and names the
+  metric to watch instead. A self-hosted one is ours and is probed with a real NCR route.
+  **The restore is tested, not documented.** `make backup-verify` dumps, restores into a
+  scratch database and compares row counts; run against the development stack it brought
+  back 35 tables, 76,473 location pings and PostGIS intact, including the partitioned
+  `location_ping`. `backup.sh restore` defaults to a scratch database and refuses the
+  live one without `CONFIRM_LIVE_RESTORE=yes`.
+  Two things are guarded rather than remembered. `/metrics` is unauthenticated by design
+  (ADR-0025) and the whole safety argument is that it is unreachable from outside, so
+  `tests/unit/test_edge_exposes_only_the_api.py` parses the deployment's Caddyfile on
+  every PR and fails if the edge ever serves it - or stops serving `/api` and `/ws`, which
+  a guard that only checks for absence would miss. And the HTTP metric's route label is
+  built from the request path with parameters put back as placeholders, not from
+  `route.path`: this project includes routers nested, so `route.path` is `/auth/me` with
+  no `/api/v1`, which both hides the prefix and would let two routers with the same
+  relative path share one label.
+  **Then the whole stack was actually run**, with Caddy's *internal* CA and
+  `SITE_ADDRESS=localhost`, which exercises the entire TLS path without a public DNS
+  name: HTTPS served and HTTP redirecting to it, all four readiness checks green through
+  the proxy, `/metrics` and `/docs` 404 at the edge while `/api/v1` worked, Prometheus
+  scraping all three processes, Grafana's datasources and dashboard provisioned at the
+  uids its panels reference, Loki holding every container's logs with `level` and `event`
+  lifted out of the JSON, a verified backup taken on startup, and MQTTS serving Caddy's
+  certificate with an authenticated subscribe succeeding.
+  **That run found three defects nothing else would have.** The first `make staging-up`
+  on a clean box always failed, because `mqtt-certs` raced Caddy for a certificate that
+  does not exist yet. The **broker could not start at all, and never could have**: B11
+  renders Mosquitto's `passwd` and `acl` and leaves the filesystem to deployment, so
+  `DutyService.broker_files` had **no caller anywhere** - the same shape as B20, and it
+  meant `password_file` never existed and the ingestor's credential was configured on
+  both sides and written to neither. And `/driver/duty` told every driver to connect to
+  `mosquitto:1883` - a Docker service name on an unpublished plaintext port - because the
+  backend was answering "where do I reach the broker" to a question meaning "where does a
+  phone reach it". `app/broker_sync.py` is the missing caller; `api-spec.yaml` gained
+  `tls` on the duty response so the app is told rather than inferring from a port.
+  **Not done, and said plainly rather than discovered later:** no Alertmanager (rules
+  evaluate and show in Grafana; nothing pages anyone), no off-site backup copy, no
+  blue/green deploy, `OTP_PROVIDER=console` and `PUSH_PROVIDER=log`. There is still no
+  VM, and the one thing an internal CA cannot stand in for is the ACME challenge itself.
 
 - [ ] **R02 · Android release build** · deps all A
   Do: signing, Play Console internal testing track, background-location declaration, privacy policy URL.
