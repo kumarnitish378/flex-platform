@@ -584,6 +584,87 @@ paths:
           content:
             application/json:
               schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+  /admin/mode-settings:
+    get:
+      tags: [admin]
+      summary: Mode settings for this operator (Phase 2)
+      description: >
+        Which mode governs which requests (`control-model.md` §1–2). Every scoping
+        field is optional and `null` means "any"; a setting that scopes nothing is the
+        operator default. Overlaps are legal - §2 resolves them by update time - and
+        reported in `overlapping` so the screen can warn.
+      responses:
+        '200':
+          description: Settings, oldest first, with any overlapping pairs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ModeSetting'}}
+                  overlapping:
+                    type: array
+                    description: pairs of setting ids at equal specificity that could both match
+                    items:
+                      type: array
+                      items: {type: string, format: uuid}
+    post:
+      tags: [admin]
+      summary: Create a mode setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModeSettingInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeSetting'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /admin/mode-settings/{setting_id}:
+    parameters:
+      - name: setting_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    put:
+      tags: [admin]
+      summary: Replace a mode setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModeSettingInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeSetting'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [admin]
+      summary: Delete a mode setting
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /dispatch/requests/{request_id}/mode:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    get:
+      tags: [dispatch]
+      summary: Which mode governs this request, and why (Phase 2)
+      description: >
+        `control-model.md` §2's eight levels, resolved. `reason` names the level that
+        decided it - a supervisor asking "why is this on manual?" deserves better than
+        the answer "it is".
+      responses:
+        '200':
+          description: The resolved mode
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeResolution'}
   /dispatch/requests/{request_id}/suggestions:
     parameters: [{$ref: '#/components/parameters/RequestId'}]
     get:
@@ -1176,6 +1257,45 @@ components:
         pooling_blocked: {type: boolean}
         mode_used: {type: string, enum: [manual, semi_auto, full_auto, failsafe]}
         stops: {type: array, items: {$ref: '#/components/schemas/TripStop'}}
+    ModeSettingInput:
+      type: object
+      required: [mode]
+      description: Every scoping field is optional; null means "any".
+      properties:
+        mode: {type: string, enum: [manual, semi_auto, full_auto]}
+        client_id: {type: [string, 'null'], format: uuid}
+        zone_id: {type: [string, 'null'], format: uuid}
+        direction: {type: [string, 'null'], enum: [to_office, from_office, null]}
+        weekdays:
+          type: [array, 'null']
+          description: ISO weekdays, Monday = 1 ... Sunday = 7. Null or empty means every day.
+          items: {type: integer, minimum: 1, maximum: 7}
+        start_time: {type: [string, 'null'], description: 'local time, HH:MM'}
+        end_time:
+          type: [string, 'null']
+          description: >
+            Local time, HH:MM. A window needs both ends or neither. May cross midnight
+            (22:00-06:00), in which case the weekday is the day the window opened.
+        note: {type: [string, 'null'], description: why this rule exists, in the operator's words}
+    ModeSetting:
+      allOf:
+        - $ref: '#/components/schemas/ModeSettingInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            updated_at: {type: string, format: date-time}
+    ModeResolution:
+      type: object
+      properties:
+        mode: {type: string, enum: [manual, semi_auto, full_auto]}
+        reason:
+          type: string
+          description: which level of control-model.md section 2 decided it
+          enum: [automation_paused, vip, client_zone_time, client_time, zone_time, client_zone, client, zone, operator_default]
+        setting_id:
+          type: [string, 'null']
+          format: uuid
+          description: null for the pause, the VIP rule and the operator default
     Candidate:
       type: object
       properties:

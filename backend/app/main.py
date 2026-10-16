@@ -47,6 +47,7 @@ from app.modules.dispatch.driver_router import router as driver_trips_router
 from app.modules.dispatch.router import router as dispatch_router
 from app.modules.fleet.duty_router import router as duty_router
 from app.modules.fleet.router import router as fleet_router
+from app.modules.modes.router import router as modes_router
 from app.modules.notifications.push import build_push_sender
 from app.modules.observability import BusinessGaugeCollector
 from app.modules.people.router import router as people_router
@@ -148,6 +149,7 @@ def create_app(
     api = APIRouter(prefix=API_PREFIX)
     api.include_router(auth_router)
     api.include_router(config_router)
+    api.include_router(modes_router)
     api.include_router(fleet_router)
     api.include_router(duty_router)
     api.include_router(tracking_router)

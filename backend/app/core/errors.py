@@ -40,8 +40,29 @@ __all__ = [
 logger = get_logger(__name__)
 
 
+def _json_safe(value: Any) -> Any:
+    """Anything `json.dumps` refuses, rendered as its string form.
+
+    `DomainError.details` is a free-form dict that callers fill with whatever made the
+    error understandable - and a `time`, `date`, `Decimal`, `UUID` or enum in there used
+    to crash the handler itself. The result was a **500 with an unhandled-error
+    traceback in place of the 422 that was already correctly raised**: the client learns
+    nothing, and the log records a server fault for what was a user mistake.
+
+    Found when a mode setting with a half-written time window raised `ValidationFailed`
+    carrying `datetime.time(18, 0)` (B24).
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set | frozenset):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, str | bool | int | float):
+        return value
+    return str(value)
+
+
 def _error_response(status_code: int, payload: dict[str, Any]) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content=payload)
+    return JSONResponse(status_code=status_code, content=_json_safe(payload))
 
 
 def register_error_handlers(app: FastAPI) -> None:

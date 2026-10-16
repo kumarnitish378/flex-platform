@@ -99,7 +99,7 @@ business numbers still come from `operator_config`.
   **Scope carried to B25:** a suggestion going stale between offer and acceptance, and recording who
   accepted or rejected. Both need the offer record.
 
-- [ ] **B24 · Mode settings and precedence** · deps B05, B23
+- [x] **B24 · Mode settings and precedence** · deps B05, B23
   Docs: control-model.md §1–2
   Do: `mode_setting` table (optional `client_id`, `zone_id`, `direction`, `weekdays`, `start_time`,
   `end_time`, `mode`), admin CRUD, and `resolve_mode(request)` implementing the eight-level precedence
@@ -107,6 +107,22 @@ business numbers still come from `operator_config`.
   Done when: a table-driven test walks all eight levels and the tie-break; `automation_paused` beats
   everything; a VIP request resolves per level 2 including the "no VIP vehicle → alert, do not substitute"
   branch (OQ-12); overlapping settings are detected and reported so the admin screen can warn.
+  `domain/modes.py` is pure and takes "now" as an argument, so the simulator can ask at a simulated
+  moment. The window is judged on the **requested** time, not the clock: a rule for "evenings" must govern
+  a ride booked at lunchtime for 19:00, and judging by the clock would govern the morning bookings and
+  miss the evening ones — the exact inverse of what the operator wrote.
+  **§2's list is incomplete and B24 had to choose (OQ-36).** It names five combinations for levels 3–7
+  and omits client+zone-without-a-window, and never ranks `direction` despite it being a column. A time
+  window dominates every combination without one — which is what makes zone+time outrank client, as §2
+  requires — and `direction` is matching plus a final tie-break only, never jumping a documented level.
+  Both readings reproduce §2 exactly where it speaks and extend it only where it is silent.
+  Windows crossing midnight match **the weekday the window opened on**, so "Friday 22:00–06:00" covers
+  Saturday's small hours. A half-written window (one end only) is refused at the API and by a CHECK
+  constraint, rather than guessing midnight for the missing end — which would stop a "from 18:00" rule at
+  midnight, exactly when an evening shift is still running.
+  Overlaps are **reported, not refused**: §2 resolves them deterministically and an overlap is often
+  deliberate mid-migration. Rules that can never both match are not reported, because a warning on every
+  pair of client rules is a warning nobody reads.
 
 - [ ] **B25 · Semi-auto assignment and failsafe** · deps B24
   Docs: control-model.md §1 and §4, ADR-0008

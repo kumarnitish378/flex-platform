@@ -29,6 +29,7 @@ from app.modules.config.models import OperatorConfig, OperatorConfigHistory
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
+from app.modules.modes.models import ModeSetting
 from app.modules.notifications.models import Notification
 from app.modules.people.models import Employee, SavedPlace
 from app.modules.reports.models import TripRating
@@ -99,6 +100,10 @@ TRUNCATION_ORDER = (
     Vehicle,
     Office,
     ClientPolicy,
+    # Before client and zone, which it references. The FKs cascade, so leaving it out
+    # would work - and would make this list quietly wrong, which is worse than broken:
+    # the next person adding a table copies the pattern they see.
+    ModeSetting,
     Client,
     Zone,
     OperatorConfigHistory,

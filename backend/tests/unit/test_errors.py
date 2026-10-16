@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -116,3 +118,56 @@ async def test_unknown_route_uses_the_error_schema(client: AsyncClient) -> None:
     response = await client.get("/does-not-exist")
     assert response.status_code == 404
     assert response.json()["code"] == "not_found"
+
+
+# --- details that are not JSON ------------------------------------------------
+
+
+def test_a_detail_that_json_cannot_encode_still_returns_its_own_status() -> None:
+    """A `time` in `details` used to turn a correct 422 into a 500.
+
+    `DomainError.details` is free-form - callers put whatever made the error
+    understandable in it - so a `time`, `date`, `Decimal`, `UUID` or enum landing there
+    crashed the handler *after* the right error had already been raised. The client got
+    an unhandled-error 500 that said nothing, and the log recorded a server fault for
+    what was a user mistake. Found when a mode setting with a half-written time window
+    raised `ValidationFailed` carrying `datetime.time(18, 0)` (B24).
+    """
+    from datetime import date, time
+    from decimal import Decimal
+
+    from app.core.errors import _json_safe
+
+    payload = {
+        "code": "validation_error",
+        "details": {
+            "start_time": time(18, 0),
+            "on": date(2026, 10, 16),
+            "amount": Decimal("12.50"),
+            "id": uuid.uuid4(),
+            "nested": {"when": time(6, 30)},
+            "many": [time(1, 0), 2, "three", None],
+        },
+    }
+
+    safe = _json_safe(payload)
+
+    # Encodable, which is the whole point.
+    json.dumps(safe)
+    assert safe["details"]["start_time"] == "18:00:00"
+    assert safe["details"]["nested"]["when"] == "06:30:00"
+    assert safe["details"]["many"][1] == 2
+    assert safe["details"]["many"][3] is None
+
+
+def test_json_safe_leaves_ordinary_values_alone() -> None:
+    """Numbers must not become strings; a client parsing them would break."""
+    from app.core.errors import _json_safe
+
+    assert _json_safe({"n": 3, "f": 1.5, "b": True, "s": "x", "none": None}) == {
+        "n": 3,
+        "f": 1.5,
+        "b": True,
+        "s": "x",
+        "none": None,
+    }

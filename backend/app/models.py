@@ -11,6 +11,7 @@ from app.modules.config import models as config_models
 from app.modules.dispatch import models as dispatch_models
 from app.modules.fleet import duty_models as fleet_duty_models
 from app.modules.fleet import models as fleet_models
+from app.modules.modes import models as mode_models
 from app.modules.notifications import models as notification_models
 from app.modules.people import models as people_models
 from app.modules.reports import models as report_models
@@ -25,6 +26,7 @@ __all__ = [
     "dispatch_models",
     "fleet_duty_models",
     "fleet_models",
+    "mode_models",
     "notification_models",
     "people_models",
     "report_models",
