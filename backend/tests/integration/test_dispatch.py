@@ -1136,3 +1136,91 @@ async def test_the_sequence_still_has_no_gaps_or_duplicates_after_an_insertion(
 
     sequences = [stop["sequence"] for stop in trip["stops"]]
     assert sequences == list(range(1, len(sequences) + 1))
+
+
+# --- Phase 2: cost, reasons and suggestions (B22, B23) -----------------------
+
+
+async def test_a_candidate_carries_its_cost_and_its_reasons(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """Phase 1 declared both fields and left them empty. Phase 2 fills them."""
+    request = await make_request(db_session, world, "near")
+
+    items = (
+        await client.get(f"/dispatch/requests/{request.id}/candidates", headers=supervisor)
+    ).json()["items"]
+
+    assert items[0]["cost"] is not None
+    assert items[0]["cost"] > 0
+    # `allocation-rules.md` §5: ETA, seats, and whether it opens a new trip.
+    rendered = " · ".join(items[0]["reasons"])
+    assert "min away" in rendered
+    assert "seats left" in rendered or "seat left" in rendered
+    assert "new trip" in rendered
+
+
+async def test_the_cheapest_candidate_comes_first_not_merely_the_nearest(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """§4 ranks by cost. With both cabs idle, cost still tracks ETA and empty km -
+    so the order holds, and the point is that it is now *computed* rather than assumed."""
+    request = await make_request(db_session, world, "near")
+
+    items = (
+        await client.get(f"/dispatch/requests/{request.id}/candidates", headers=supervisor)
+    ).json()["items"]
+
+    costs = [item["cost"] for item in items]
+    assert costs == sorted(costs), "candidates must be ordered by cost"
+
+
+async def test_suggestions_exclude_anything_that_breaks_a_hard_rule(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """§2: filters, never traded off. Recommending a rule-breaking assignment and
+    letting the human notice is how a supervisor learns to stop reading them."""
+    request = await make_request(db_session, world, "near")
+
+    candidates = (
+        await client.get(f"/dispatch/requests/{request.id}/candidates", headers=supervisor)
+    ).json()["items"]
+    suggestions = (
+        await client.get(f"/dispatch/requests/{request.id}/suggestions", headers=supervisor)
+    ).json()["items"]
+
+    assert any(item["violations"] for item in candidates), (
+        "this world should offer at least one rule-breaking candidate, or the test proves nothing"
+    )
+    assert all(not item["violations"] for item in suggestions)
+
+
+async def test_suggestions_are_capped_at_three_by_default(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    """`control-model.md` §1: "system suggests top 3 with reasons"."""
+    request = await make_request(db_session, world, "near")
+
+    items = (
+        await client.get(f"/dispatch/requests/{request.id}/suggestions", headers=supervisor)
+    ).json()["items"]
+
+    assert len(items) <= 3
+
+
+async def test_suggestions_are_the_best_of_the_candidates(
+    client: AsyncClient, db_session: AsyncSession, world: dict[str, Any], supervisor: dict[str, str]
+) -> None:
+    request = await make_request(db_session, world, "near")
+
+    candidates = (
+        await client.get(f"/dispatch/requests/{request.id}/candidates", headers=supervisor)
+    ).json()["items"]
+    suggestions = (
+        await client.get(f"/dispatch/requests/{request.id}/suggestions", headers=supervisor)
+    ).json()["items"]
+
+    clean = [item for item in candidates if not item["violations"]]
+    assert [item["vehicle_id"] for item in suggestions] == [
+        item["vehicle_id"] for item in clean[: len(suggestions)]
+    ]

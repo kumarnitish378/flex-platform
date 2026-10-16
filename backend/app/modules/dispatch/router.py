@@ -101,6 +101,28 @@ async def list_candidates(
     return {"items": [_candidate_out(candidate) for candidate in candidates]}
 
 
+@router.get(
+    "/requests/{request_id}/suggestions",
+    summary="The system's top recommendations for this request",
+    dependencies=[Depends(require(Permission.assign))],
+)
+async def list_suggestions(
+    request_id: uuid.UUID,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    limit: Annotated[int, Query(ge=1, le=10)] = 3,
+) -> dict[str, list[CandidateOut]]:
+    """Scored candidates that break no hard rule, best first.
+
+    Deliberately not the first three of `/candidates`: that list includes vehicles with
+    violations so a supervisor can see the only cab within reach is over the limit. A
+    suggestion is the system recommending something, and `allocation-rules.md` §2 makes
+    the rules filters there.
+    """
+    suggestions = await service.suggestions(_operator_id(current_user), request_id, limit=limit)
+    return {"items": [_candidate_out(candidate) for candidate in suggestions]}
+
+
 @router.post(
     "/assign",
     summary="Manually assign a request to a vehicle (new trip) or to an existing trip",
@@ -203,6 +225,9 @@ def _candidate_out(candidate: Candidate) -> CandidateOut:
             for request_id, minutes in candidate.added_minutes.items()
         ],
         new_trip=candidate.new_trip,
+        # Phase 1 declared both and left them empty; B22 and B23 fill them.
+        cost=round(candidate.cost, 2) if candidate.cost is not None else None,
+        reasons=candidate.reasons,
         violations=[str(violation) for violation in candidate.violations],
     )
 

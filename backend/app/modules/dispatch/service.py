@@ -40,6 +40,13 @@ from app.core.events import (
 from app.core.geo import coords as _coords
 from app.core.geo import to_point as _point
 from app.core.logging import get_logger
+from app.domain.cost import (
+    CostInput,
+    CostWeights,
+    ExistingRider,
+    assignment_cost,
+    effective_rider,
+)
 from app.domain.dispatch import (
     AssignmentFacts,
     DetourLimits,
@@ -55,10 +62,11 @@ from app.domain.dispatch import (
     stricter,
     widened_candidate_eta_minutes,
 )
-from app.domain.enums import Direction
+from app.domain.enums import Direction, Urgency
 from app.domain.errors import Conflict, NotFound
 from app.domain.geo import LatLng
 from app.domain.notifications import NotificationType
+from app.domain.rules import assignable
 from app.domain.state_machines import (
     Actor,
     RequestContext,
@@ -70,6 +78,8 @@ from app.domain.state_machines import (
     transition_request,
     transition_vehicle,
 )
+from app.domain.suggestions import SuggestionFacts, named_riders
+from app.domain.suggestions import reasons as render_reasons
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import MODE_MANUAL, Trip, TripEvent, TripStop
 from app.modules.fleet.duty_models import DutySession
@@ -126,11 +136,66 @@ class Candidate:
     added_minutes: dict[uuid.UUID, float] = field(default_factory=dict)
     new_trip: bool = True
     violations: list[Violation] = field(default_factory=list)
+    #: Empty kilometres this assignment adds. Only a cab opening a new trip runs empty
+    #: to the pickup; one already carrying riders adds *detour*, which is charged
+    #: through `added_minutes`. Counting both would be the same minutes twice.
+    empty_km_added: float = 0.0
+    #: Minutes-equivalent (`allocation-rules.md` §4). `None` until scored.
+    cost: float | None = None
+    #: The §5 phrases: "8 min away", "2 seats left", "+4 min for Rahul", ...
+    reasons: list[str] = field(default_factory=list)
 
     @property
-    def sort_key(self) -> tuple[int, float]:
-        """Best first: everything clean, then by how soon it can be at the pickup."""
-        return (1 if self.violations else 0, self.eta_to_pickup_seconds)
+    def sort_key(self) -> tuple[int, float, float, str]:
+        """Best first.
+
+        Clean candidates ahead of ones that break a hard rule - Phase 1 behaviour, kept,
+        because a supervisor needs to see the 35-minute cab that is over the limit
+        rather than an empty list (ADR-0011). Within each group **cost** decides, with
+        §4's documented tie-break: lower cost, then sooner, then lower vehicle id.
+
+        Phase 1 ordered by ETA alone. Cost is a better answer to the same question -
+        which cab should I send - because it also weighs the rider's priority, the
+        detour inflicted on people already aboard, and the price of waking an idle cab.
+        """
+        return (
+            1 if self.violations else 0,
+            self.cost if self.cost is not None else self.eta_to_pickup_seconds,
+            self.eta_to_pickup_seconds,
+            str(self.vehicle.id),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AffectedRider:
+    """A rider already aboard whom an insertion would detour."""
+
+    name: str
+    priority: int
+    urgency: str
+
+
+def _wait_minutes(request: RideRequest, candidate: Candidate, now: datetime) -> float:
+    """Minutes from when the rider expected to be collected to when they would be.
+
+    `allocation-rules.md` §4: "minutes from requested time (or now if later) to pickup
+    ETA". A request whose time has already passed waits from now, not from a moment in
+    the past - otherwise an hour-old request scores an hour of wait against every
+    candidate equally and stops discriminating between them.
+    """
+    from_time = max(request.requested_time, now)
+    arrival = now + timedelta(seconds=candidate.eta_to_pickup_seconds)
+    return max((arrival - from_time).total_seconds() / 60.0, 0.0)
+
+
+def _trip_label(trip_id: uuid.UUID | None) -> str | None:
+    """A short handle a human can say out loud, e.g. `T-9F3C`.
+
+    The operator's own trip numbering does not exist yet, and `allocation-rules.md` §5's
+    "T-102" is illustrative. Four hex characters is enough to tell apart the handful of
+    trips live at once and short enough to read down a phone line.
+    """
+    return f"T-{trip_id.hex[-4:].upper()}" if trip_id is not None else None
 
 
 class DispatchService:
@@ -324,11 +389,122 @@ class DispatchService:
                     added_minutes=insertion.added_minutes if insertion else {},
                     new_trip=trip is None,
                     violations=check_hard_rules(facts, insertion, limits, direct),
+                    empty_km_added=(eta.distance_meters / 1000.0) if trip is None else 0.0,
                 )
             )
 
+        await self._score(operator_id, request, employee, candidates, settings, now)
         candidates.sort(key=lambda candidate: candidate.sort_key)
         return candidates
+
+    async def suggestions(
+        self, operator_id: uuid.UUID, request_id: uuid.UUID, limit: int = 3
+    ) -> list[Candidate]:
+        """The best scored candidates that break no hard rule (`control-model.md` §1).
+
+        Not simply the first three of `candidates()`, because the two answer different
+        questions. A candidate list is everything a supervisor *could* choose,
+        violations included, so they can see that the only cab within reach is twenty
+        minutes over the limit. A suggestion is the system **recommending** something,
+        and `allocation-rules.md` §2 is explicit that there hard rules are filters,
+        never traded off against cost.
+
+        An empty list therefore means the opposite of "no cabs": it means none of them
+        is allowed. `candidates()` carries the reasons, each naming the config key that
+        excluded it.
+        """
+        scored = await self.candidates(operator_id, request_id)
+        return [candidate for candidate in scored if assignable(candidate.violations)][:limit]
+
+    # --- scoring ------------------------------------------------------------------
+
+    async def _score(
+        self,
+        operator_id: uuid.UUID,
+        request: RideRequest,
+        employee: Employee,
+        candidates: list[Candidate],
+        settings: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        """Attach §4's cost and §5's phrases to every candidate, in place."""
+        if not candidates:
+            return
+
+        weights = CostWeights(
+            weight_wait=float(settings["weight_wait"]),
+            weight_empty_km=float(settings["weight_empty_km"]),
+            cost_new_vehicle=float(settings["cost_new_vehicle"]),
+            urgency_factor_high=float(settings["urgency_factor_high"]),
+            urgency_factor_medium=float(settings["urgency_factor_medium"]),
+            urgency_factor_low=float(settings["urgency_factor_low"]),
+        )
+        priority, urgency = effective_rider(
+            employee.priority, request.urgency, forced_priority=request.forced_priority
+        )
+        # Named here, not in the domain: the sentence says "+4 min for Rahul", and only
+        # the database knows who Rahul is.
+        others = await self._affected_riders(operator_id, candidates)
+
+        for candidate in candidates:
+            on_board = tuple(
+                ExistingRider(
+                    request_id=rider_id,
+                    priority=others[rider_id].priority,
+                    urgency=Urgency(others[rider_id].urgency),
+                    added_minutes=added,
+                )
+                for rider_id, added in candidate.added_minutes.items()
+                if rider_id in others
+            )
+            breakdown = assignment_cost(
+                CostInput(
+                    priority=priority,
+                    urgency=urgency,
+                    wait_minutes=_wait_minutes(request, candidate, now),
+                    empty_km_added=candidate.empty_km_added,
+                    new_trip=candidate.new_trip,
+                    riders_on_board=on_board,
+                    eta_to_pickup_seconds=candidate.eta_to_pickup_seconds,
+                    vehicle_id=candidate.vehicle.id,
+                ),
+                weights,
+            )
+            candidate.cost = breakdown.total
+            candidate.reasons = render_reasons(
+                SuggestionFacts(
+                    eta_to_pickup_seconds=candidate.eta_to_pickup_seconds,
+                    seats_free_after=candidate.seats_free_after,
+                    empty_km_added=candidate.empty_km_added,
+                    new_trip=candidate.new_trip,
+                    riders=tuple(
+                        named_riders(
+                            {str(key): value for key, value in candidate.added_minutes.items()},
+                            {str(key): rider.name for key, rider in others.items()},
+                        )
+                    ),
+                    trip_label=_trip_label(candidate.trip_id),
+                    eta_approximate=candidate.eta_approximate,
+                )
+            )
+
+    async def _affected_riders(
+        self, operator_id: uuid.UUID, candidates: list[Candidate]
+    ) -> dict[uuid.UUID, AffectedRider]:
+        """Name, priority and urgency of every rider some candidate would detour."""
+        request_ids = {rider_id for candidate in candidates for rider_id in candidate.added_minutes}
+        if not request_ids:
+            return {}
+
+        rows = (
+            await self.session.execute(
+                select(RideRequest.id, Employee.name, Employee.priority, RideRequest.urgency)
+                .join(Employee, Employee.id == RideRequest.employee_id)
+                .where(RideRequest.operator_id == operator_id)
+                .where(RideRequest.id.in_(request_ids))
+            )
+        ).all()
+        return {row[0]: AffectedRider(name=row[1], priority=row[2], urgency=row[3]) for row in rows}
 
     # --- assignment ---------------------------------------------------------------
 

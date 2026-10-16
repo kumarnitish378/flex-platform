@@ -584,6 +584,35 @@ paths:
           content:
             application/json:
               schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+  /dispatch/requests/{request_id}/suggestions:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    get:
+      tags: [dispatch]
+      summary: The system's top recommendations for this request (Phase 2)
+      description: >
+        The best-scored candidates that break **no** hard rule, best first
+        (`allocation-rules.md` §2 and §4). Not the first three of `/candidates`: that
+        list deliberately includes vehicles with violations so a supervisor can see the
+        only cab within reach is over the limit, while a suggestion is the system
+        recommending something and there the rules are filters, never traded off
+        against cost.
+
+
+        An empty array therefore means the opposite of "no cabs": it means none of them
+        is permitted. `/candidates` carries the reasons, each naming the config key that
+        excluded it.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 10, default: 3}
+          description: How many to return. `control-model.md` §1 specifies three.
+      responses:
+        '200':
+          description: Suggestions, best first
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
   /dispatch/assign:
     post:
       tags: [dispatch]

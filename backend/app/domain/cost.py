@@ -109,6 +109,24 @@ def rider_weight(priority: int, urgency: Urgency | str, weights: CostWeights) ->
     return ((11 - priority) / 10) * weights.urgency_factor(urgency)
 
 
+def effective_rider(
+    priority: int, urgency: Urgency | str, *, forced_priority: bool
+) -> tuple[int, Urgency]:
+    """What priority and urgency the cost function should actually use.
+
+    `control-model.md` §3 defines the `force_priority` override as "treat request as
+    priority 1 / high urgency". Phase 1 stored the flag and nothing read it, so a
+    supervisor could force a request to the front of a queue that did not exist yet.
+    Phase 2's cost function is the thing that was missing.
+
+    The stored `priority` and `urgency` are **not** rewritten - the rider's own answer
+    stays the rider's (ADR-0021). This is the view the scorer takes, nothing more.
+    """
+    if forced_priority:
+        return MIN_PRIORITY, Urgency.high
+    return priority, Urgency(urgency)
+
+
 def assignment_cost(facts: CostInput, weights: CostWeights) -> CostBreakdown:
     """Cost of assigning one request to one vehicle, in minutes-equivalent.
 

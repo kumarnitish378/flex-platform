@@ -265,3 +265,36 @@ def test_cost_weights_defaults_match_the_config_registry() -> None:
             f"{field} drifted: cost.py has {getattr(defaults, field)}, "
             f"config_keys.py has {registry[field]}"
         )
+
+
+# --- force_priority, the Phase 1 flag nothing read ---------------------------
+
+
+def test_forcing_priority_scores_the_request_as_top_priority() -> None:
+    """`control-model.md` §3: "treat request as priority 1 / high urgency".
+
+    Phase 1 stored the flag and nothing read it, so a supervisor could force a request
+    to the front of a queue that did not exist yet.
+    """
+    from app.domain.cost import effective_rider
+
+    assert effective_rider(7, Urgency.low, forced_priority=True) == (1, Urgency.high)
+
+
+def test_not_forcing_leaves_the_riders_own_answer_alone() -> None:
+    """ADR-0021: urgency is the rider's answer and the platform never rewrites it."""
+    from app.domain.cost import effective_rider
+
+    assert effective_rider(7, Urgency.low, forced_priority=False) == (7, Urgency.low)
+
+
+def test_a_forced_request_outscores_its_unforced_self() -> None:
+    from app.domain.cost import effective_rider
+
+    plain_priority, plain_urgency = effective_rider(8, Urgency.low, forced_priority=False)
+    forced_priority_, forced_urgency = effective_rider(8, Urgency.low, forced_priority=True)
+
+    plain = rider_weight(plain_priority, plain_urgency, WEIGHTS)
+    forced = rider_weight(forced_priority_, forced_urgency, WEIGHTS)
+
+    assert forced > plain

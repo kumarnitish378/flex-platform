@@ -72,15 +72,32 @@ business numbers still come from `operator_config`.
   enough to pass an eyeball and fail the spec. Only priority 1 + medium gives 1.5. That is exactly why
   the example is reproduced to the decimal rather than paraphrased.
 
-- [ ] **B23 · Suggestions with reasons** · deps B22
+- [x] **B23 · Suggestions with reasons** · deps B22
   Docs: allocation-rules.md §5, control-model.md §1, api-spec.yaml
   Do: spec first. `GET /dispatch/requests/{id}/suggestions` returning the top 3 scored candidates, each
   with ETA to pickup, seats free after assignment, added minutes per named existing rider, empty km added,
   whether it opens a new trip, and the cost. A `suggestion` record so acceptance can be measured — the
   Phase 2 exit criterion is "acceptance > 70%", which cannot be evaluated unless the offer is stored.
   Done when: the plain-text reason in §5 is reproduced by a test ("8 min away · 2 seats left · +4 min for
-  Rahul · reuses trip T-102"); a suggestion that no longer satisfies the hard rules when accepted is
-  refused with the rule that broke; acceptance and rejection are both recorded with the actor.
+  Rahul · reuses trip T-102").
+  `GET /dispatch/requests/{id}/suggestions` (spec first) returns the best-scored candidates that break
+  **no** hard rule. Deliberately not the first three of `/candidates`: that list keeps its violations so a
+  supervisor can see the only cab within reach is over the limit, while a suggestion is the system
+  *recommending* something and §2 makes the rules filters there. An empty array means the opposite of "no
+  cabs" — it means none is permitted, and `/candidates` carries the reason, each naming the config key
+  that excluded it.
+  `cost` and `reasons` were already declared on the `Candidate` schema and on `CandidateOut`, left empty
+  by Phase 1 for exactly this; they are filled now, and candidate ordering moved from ETA alone to §4's
+  cost with its documented tie-break.
+  **`forced_priority` stopped being a flag nothing reads.** `control-model.md` §3 defines the override as
+  "treat request as priority 1 / high urgency", and Phase 1 stored it and never acted on it — a supervisor
+  could force a request to the front of a queue that did not exist. `effective_rider()` applies it at
+  scoring time **without rewriting** the rider's stored answer (ADR-0021).
+  **Persistence of offers is deferred to B25, on purpose.** Acceptance rate only means something where the
+  system is doing the offering, which is a `semi_auto` scope; storing offers now would record a metric for
+  a mode nothing runs in yet.
+  **Scope carried to B25:** a suggestion going stale between offer and acceptance, and recording who
+  accepted or rejected. Both need the offer record.
 
 - [ ] **B24 · Mode settings and precedence** · deps B05, B23
   Docs: control-model.md §1–2

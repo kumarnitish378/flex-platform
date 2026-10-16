@@ -233,11 +233,16 @@ STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.s
 
 
 #: Declared ahead of the code that will read them. Phase 1 reads none of these: the
-#: cost-function weights and rider urgency factors belong to the Phase 2 optimizer
-#: (`allocation-rules.md` section 4), the failsafe pair to semi-auto mode
-#: (`control-model.md`), `batch_window_seconds` to micro-batching, the hold window to
-#: pooling (section 2 rule 6) and the night-safety trio to section 2 rule 11, whose exact
-#: policy is still OQ-10. `night_safety_enabled` is the subtle one: `client_policy` has a
+#: Declared, and still read by nothing. **This list shrinks as the phases land**, and a
+#: guard fails if a key in it acquires a reader - B22 removed the six cost-function
+#: weights and urgency factors the moment `domain/cost.py` began reading them.
+#:
+#: What is left, and what will claim it: the failsafe pair belongs to semi-auto mode
+#: (B25, `control-model.md` section 4), `batch_window_seconds` to micro-batching and the
+#: hold window to pooling (Phase 3, `allocation-rules.md` section 6), and the
+#: night-safety trio to section 2 rule 11 (B28), whose exact policy is still OQ-10.
+#:
+#: `night_safety_enabled` is the subtle one: `client_policy` has a
 #: column of that name, so a loose search for the string finds a "reader" that is really
 #: a different thing - which is why the guard matches quoted lookups only.
 #: Keeping the list here means the next audit does not have to work out which
@@ -246,7 +251,6 @@ STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.s
 PHASE_2_KEYS = frozenset(
     {
         "batch_window_seconds",
-        "cost_new_vehicle",
         "failsafe_action",
         "failsafe_timeout_seconds",
         "hold_window_max_minutes",
@@ -254,11 +258,6 @@ PHASE_2_KEYS = frozenset(
         "night_safety_enabled",
         "night_safety_end",
         "night_safety_start",
-        "urgency_factor_high",
-        "urgency_factor_low",
-        "urgency_factor_medium",
-        "weight_empty_km",
-        "weight_wait",
     }
 )
 
