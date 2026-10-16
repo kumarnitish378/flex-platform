@@ -70,7 +70,7 @@ Unique (trip_id, sequence).
 **road_speed_profile** — `osm_way_id` bigint, `slot` smallint (0–167 = hour of week), `speed_kph`, `samples`, `updated_at`. PK (osm_way_id, slot).
 
 ## Dispatch control
-**mode_setting** — `operator_id`, `client_id` nullable, `zone_id` nullable, `direction` nullable, `weekdays` smallint bitmask nullable, `start_time`/`end_time` nullable, `mode`, `updated_by`.
+**mode_setting** — `operator_id`, `client_id` nullable, `zone_id` nullable, `direction` nullable, `weekdays` smallint array nullable (ISO weekdays, Monday = 1; an array rather than the bitmask first drafted here, because `[1,5]` is readable in `psql` and in a log line and cannot be confused with the Sunday = 0 convention - B24), `start_time`/`end_time` nullable, `mode`, `updated_by`.
 
 **assignment_suggestion** (Phase 2) — `request_id`, `created_at`, `candidates` jsonb (ranked list: vehicle_id, trip_id, cost, eta, reasons), `status` (`open`,`approved`,`rejected`,`expired`,`failsafe_applied`), `chosen_vehicle_id`, `decided_by`, `decided_at`, `failsafe_due_at`.
 

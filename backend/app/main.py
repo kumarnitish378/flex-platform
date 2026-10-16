@@ -59,6 +59,7 @@ from app.modules.requests.router import router as requests_router
 from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
 from app.modules.simctl.router import router as simctl_router
 from app.modules.tracking.router import router as tracking_router
+from app.modules.zones.router import router as zones_router
 
 logger = get_logger(__name__)
 
@@ -154,6 +155,7 @@ def create_app(
     api.include_router(duty_router)
     api.include_router(tracking_router)
     api.include_router(people_router)
+    api.include_router(zones_router)
     api.include_router(requests_router)
     api.include_router(dispatch_router)
     api.include_router(driver_trips_router)

@@ -199,12 +199,38 @@ business numbers still come from `operator_config`.
   cab standing at the pickup the wait is zero and every rider scores identically, which is correct and
   would have made the test pass whatever the override did.
 
-- [ ] **B27 · Zones** · deps B06
+- [x] **B27 · Zones** · deps B06
   Docs: data-model.md, allocation-rules.md §3
   Do: zone polygons (PostGIS), `employee.zone_id` derivation from home location on create, import and
   update — the stub B07 left null — and a backfill for existing rows.
   Done when: a point-in-polygon test fixture covers a home inside, outside and on a boundary; an employee
   whose home moves between zones is re-derived; zone-scoped mode settings resolve.
+  `/admin/zones` CRUD (spec first — zones had a table and no contract), `ZoneService`, and `to_polygon` /
+  `ring` in `core/geo.py` so the lat/lng-versus-x/y flip lives in one place for polygons the way it
+  already did for points. **`zone_id` is never taken from a caller** — not from the API, not from the CSV
+  — it is derived from the home location on every write of one.
+  **Two judgement calls the docs do not make.** A home exactly **on a boundary is inside**: `ST_Contains`
+  says no for a point on the edge, which would drop riders into the crack between two adjacent zones that
+  share one, so the query is `ST_Covers` throughout — including B26's "zones with no available vehicle",
+  which was written with `ST_Contains` a day earlier and is now consistent. And **overlapping zones
+  resolve to the smallest**, ties broken on name: an operator drawing "Sector 62" inside "Noida" is being
+  reasonable, the more specific answer is the useful one, and a deterministic rule means the answer never
+  depends on insertion order. Tested both orders.
+  **Drawing a zone re-derives every employee of the operator**, and so does redrawing, deactivating or
+  deleting one. The alternative — working out which employees a changed polygon could have affected —
+  means comparing the old and new shapes, and getting it wrong leaves a rider silently in the zone they
+  left, where nothing ever notices. A freshly drawn zone reporting zero employees is the kind of wrong
+  that looks like a working feature, so the backfill is a **data migration** rather than a script
+  somebody has to remember: a no-op wherever the `zone` table is empty, which is everywhere today.
+  **Deleting a zone a mode setting is scoped to is refused.** `mode_setting.zone_id` is `ON DELETE SET
+  NULL`, so the database would allow it silently and the rule would widen from one zone to every zone —
+  the opposite of what it says.
+  A self-crossing outline is **refused, not repaired**: `buffer(0)` would return one of the two lobes and
+  which one is a guess about what the operator meant. A ring may be sent open or closed, because a
+  map-drawing tool produces one and a GeoJSON export the other.
+  **This is what made §2's level 6 reachable.** A zone-scoped mode setting could be written from B24
+  onwards and could never match, because every employee's `zone_id` was null; there is now a test that
+  resolves one.
 
 - [ ] **B28 · Client policies** · deps B05, B27
   Docs: allocation-rules.md §2 rules 7 and 11, control-model.md

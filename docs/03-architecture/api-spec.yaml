@@ -337,6 +337,70 @@ paths:
                 client_id: {type: [string, 'null'], format: uuid}
       responses:
         '201': {description: Invited}
+  /admin/zones:
+    get:
+      tags: [admin]
+      summary: Operational zones, with how many employees each covers
+      parameters:
+        - {name: include_inactive, in: query, required: false, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: Zones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Zone'}}
+    post:
+      tags: [admin]
+      summary: Draw a zone
+      description: >
+        Creating a zone re-derives `employee.zone_id` for every employee of the
+        operator, so the answer to "who is in this zone" is correct the moment the zone
+        exists rather than from the next import onwards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ZoneInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Zone'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /admin/zones/{zone_id}:
+    parameters: [{name: zone_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    patch:
+      tags: [admin]
+      summary: Rename, redraw or deactivate a zone
+      description: Re-derives every affected employee, the same way creating one does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ZoneUpdate'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Zone'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [admin]
+      summary: Remove a zone
+      description: >
+        Refused with 409 while a mode setting is scoped to it - deleting would silently
+        widen that rule to every zone, which is the opposite of what it says. Deactivate
+        it instead, or delete the setting first.
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /admin/config:
     get:
       tags: [admin]
@@ -1432,6 +1496,42 @@ components:
         heading_deg: {type: number}
         accuracy_m: {type: number}
         battery_pct: {type: integer}
+    ZoneInput:
+      type: object
+      required: [name, boundary]
+      properties:
+        name: {type: string, maxLength: 200}
+        boundary:
+          type: array
+          minItems: 3
+          items: {$ref: '#/components/schemas/LatLng'}
+          description: >
+            The outer ring, in order. Send it open or closed - the last point is joined
+            to the first either way. A ring that crosses itself is refused with 422
+            rather than being silently repaired, because the repair is a guess about
+            which lobe the operator meant.
+        active: {type: boolean, default: true}
+    ZoneUpdate:
+      type: object
+      description: Every field optional; omitted fields are left alone.
+      properties:
+        name: {type: string, maxLength: 200}
+        boundary:
+          type: array
+          minItems: 3
+          items: {$ref: '#/components/schemas/LatLng'}
+        active: {type: boolean}
+    Zone:
+      allOf:
+        - $ref: '#/components/schemas/ZoneInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            employee_count:
+              type: integer
+              description: >
+                Employees whose home falls in this zone. An inactive zone covers nobody
+                and reports zero - which is the point of deactivating one.
     OverrideInput:
       type: object
       required: [action, reason_code]

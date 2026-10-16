@@ -764,7 +764,9 @@ class OverrideService:
                 )
                 SELECT z.name AS zone_name, l.vehicle_id AS vehicle_id
                 FROM zone z
-                JOIN latest l ON ST_Contains(z.area::geometry, l.location::geometry)
+                -- `ST_Covers`, like the zone derivation: a cab parked on a zone's
+                -- edge is in it, and the two queries must not disagree (B27).
+                JOIN latest l ON ST_Covers(z.area::geometry, l.location::geometry)
                 JOIN vehicle v ON v.id = l.vehicle_id
                 WHERE z.operator_id = :operator_id
                   AND z.active

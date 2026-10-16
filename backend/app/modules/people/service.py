@@ -17,11 +17,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
+from app.core.geo import coords
 from app.core.logging import get_logger
 from app.domain.employee_import import ParsedEmployee, RowError, parse_csv
 from app.domain.errors import Conflict, Forbidden, NotFound
 from app.modules.people.models import Employee
 from app.modules.tenancy.models import Client, Office
+from app.modules.zones.service import ZoneService
 
 logger = get_logger(__name__)
 
@@ -79,6 +81,7 @@ class EmployeeService:
             raise Conflict("An employee with that phone already exists for this client")
 
         employee = Employee(operator_id=operator_id, client_id=client_id, **data)
+        employee.zone_id = await self._zone_of(operator_id, data.get("home_location"))
         self.session.add(employee)
         await self.session.flush()
         return employee
@@ -115,6 +118,11 @@ class EmployeeService:
 
         for field_name, value in changes.items():
             setattr(employee, field_name, value)
+        if "home_location" in changes:
+            # An employee who moves house moves zone. Nothing else re-derives a single
+            # row - the zone endpoints re-derive the whole operator - so if this is
+            # missed the row stays in the zone they left, where nobody notices.
+            employee.zone_id = await self._zone_of(operator_id, changes["home_location"])
         await self.session.flush()
         return employee
 
@@ -193,14 +201,15 @@ class EmployeeService:
                         priority=parsed_employee.priority,
                         is_vip=parsed_employee.is_vip,
                         night_escort_required=parsed_employee.night_escort_required,
-                        # zone_id stays null: zone derivation needs zones to exist, and
-                        # assigning one lands with the zone work, not here.
+                        zone_id=await self._zone_of(operator_id, location),
                     )
                 )
                 report.created += 1
             else:
                 current.name = parsed_employee.name
                 current.office_id = office_id
+                if current.home_location is not location:
+                    current.zone_id = await self._zone_of(operator_id, location)
                 current.home_location = location
                 current.home_landmark = parsed_employee.landmark
                 current.priority = parsed_employee.priority
@@ -219,6 +228,19 @@ class EmployeeService:
         return report
 
     # --- helpers ------------------------------------------------------------
+
+    async def _zone_of(self, operator_id: uuid.UUID, home: Any) -> uuid.UUID | None:
+        """Which zone this home falls in (B27). `None` is an ordinary answer.
+
+        `zone_id` is never taken from a caller - not from the API, not from the CSV. It
+        is derived from the home location every time one is written, so the column can
+        only ever disagree with the polygons if a zone itself changed, which is what
+        `ZoneService.rederive` is for.
+        """
+        if home is None:
+            return None
+        latitude, longitude = coords(home)
+        return await ZoneService(self.session, self.clock).zone_of(operator_id, latitude, longitude)
 
     @staticmethod
     def _check_client_scope(
