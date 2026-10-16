@@ -76,6 +76,11 @@ class Actor(StrEnum):
     client_admin = "client_admin"
     platform_admin = "platform_admin"
     system = "system"
+    #: The semi-auto failsafe assigning because nobody answered (control-model.md §4,
+    #: B25). Distinct from `system` on purpose: a report that cannot tell the platform
+    #: stepping in from the platform doing its ordinary work cannot answer whether
+    #: semi-auto is earning its keep, which is Phase 2's exit criterion.
+    system_failsafe = "system_failsafe"
 
 
 class Recipient(StrEnum):
@@ -323,6 +328,7 @@ _ACTOR_TYPES: dict[Actor, ActorType] = {
     Actor.client_admin: ActorType.supervisor,
     Actor.platform_admin: ActorType.supervisor,
     Actor.system: ActorType.system,
+    Actor.system_failsafe: ActorType.system_failsafe,
 }
 
 

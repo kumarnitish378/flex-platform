@@ -124,7 +124,7 @@ business numbers still come from `operator_config`.
   deliberate mid-migration. Rules that can never both match are not reported, because a warning on every
   pair of client rules is a warning nobody reads.
 
-- [ ] **B25 · Semi-auto assignment and failsafe** · deps B24
+- [x] **B25 · Semi-auto assignment and failsafe** · deps B24
   Docs: control-model.md §1 and §4, ADR-0008
   Do: in a `semi_auto` scope, creating a request generates suggestions and starts a
   `failsafe_timeout_seconds` timer **through the Clock**, so the simulator drives it. On timeout:
@@ -134,6 +134,25 @@ business numbers still come from `operator_config`.
   Done when: every branch is proved by advancing a FakeClock, never by sleeping; a suggestion that has gone
   stale by timeout is not assigned; the Celery beat runs the same sweep the sim clock does, guarded by the
   B20 test that compares the two.
+  One sweep, `run_due_semi_auto`, does both halves: offer to queued requests in a `semi_auto` scope, and
+  fire the timers nobody answered. The `suggestion` table is the offer record B23 deferred — Phase 2's exit
+  criterion is "acceptance > 70%", which cannot be evaluated unless what was offered exists as a row.
+  `/dispatch/suggestions/{id}/decision` was **already specified** with `approve | choose_other | reject`;
+  I implemented that rather than the accept/reject pair I had started adding. `choose_other` is recorded as
+  a **rejection** with the chosen vehicle noted — it is a different ride, and counting it as acceptance
+  would let the metric flatter itself.
+  **Four things the tests found, all of them behaviour rather than typos:**
+  (1) the failsafe refuses to assign a cab that went **GPS-stale** during the timeout — correct, and it
+  meant a fixture pinning one ping while advancing the clock three minutes was testing silence rather than
+  the rule it named; (2) `Actor` had no `system_failsafe` though `ActorType` did, so §4's "log actor
+  `system_failsafe`" could not be honoured — added, with the mapping guard satisfied; (3) a **VIP resolves
+  to `full_auto`** (§2 level 2) and is therefore skipped by semi-auto entirely, so **Phase 2 still assigns
+  no VIP automatically** — they queue for a supervisor exactly as in Phase 1 (OQ-38); (4) `_json_safe` in
+  the error handler, found in B24 and exercised again here.
+  **Carried to a later task:** `supervisor_online` is hard-coded true (OQ-37). §4 shortcuts the timeout when
+  nobody is watching a scope, and this platform has no presence tracking — the WebSocket hub knows its own
+  connections and shares nothing, so two API processes cannot answer the question between them. Answering
+  "yes" is the safe wrong answer: the failsafe waits its full timeout instead of firing at once.
 
 - [ ] **B26 · Full override set with audit** · deps B21
   Docs: control-model.md §3, data-model.md

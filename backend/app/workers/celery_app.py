@@ -49,6 +49,12 @@ EXPIRY_INTERVAL_SECONDS = 60
 STOP_ETA_INTERVAL_SECONDS = 30
 STALE_VEHICLE_INTERVAL_SECONDS = 30
 
+#: `semi_auto` every 15 seconds. Finer than the others because both halves are felt by a
+#: person: a rider waits for the offer to appear on a supervisor's screen, and then waits
+#: again for the failsafe if nobody answers. `failsafe_timeout_seconds` defaults to 180,
+#: so 15 is a twelfth of the shortest thing that depends on it.
+SEMI_AUTO_INTERVAL_SECONDS = 15
+
 
 def create_celery(settings: Settings | None = None) -> Celery:
     """The Celery app. Broker and result backend are the Redis we already run."""
@@ -73,6 +79,10 @@ def create_celery(settings: Settings | None = None) -> Celery:
             "sweep-stale-vehicles": {
                 "task": "smart_cab.sweep_stale_vehicles",
                 "schedule": float(STALE_VEHICLE_INTERVAL_SECONDS),
+            },
+            "run-semi-auto": {
+                "task": "smart_cab.run_semi_auto",
+                "schedule": float(SEMI_AUTO_INTERVAL_SECONDS),
             },
         },
     )
@@ -124,6 +134,31 @@ async def _refresh_stop_etas() -> dict[str, int]:
         result = await EtaRefresher(session, clock, eta).refresh_due()
         await session.commit()
     return {"stops": result.stops}
+
+
+async def _run_semi_auto() -> dict[str, int]:
+    from app.modules.dispatch.semi_auto import SemiAutoService
+    from app.modules.dispatch.service import DispatchService
+    from app.modules.routing import EtaService, build_routing_provider
+
+    settings = get_settings()
+    clock = SystemClock()
+    redis = create_redis(settings)
+    eta = EtaService(build_routing_provider(settings, clock, redis), clock)
+    try:
+        async with _session_factory(settings)() as session:
+            sweep = await SemiAutoService(
+                session, clock, DispatchService(session, clock, eta)
+            ).run_due_semi_auto()
+            await session.commit()
+    finally:
+        await redis.aclose()
+    return {
+        "offered": sweep.offered,
+        "assigned": sweep.assigned,
+        "escalated": sweep.escalated,
+        "superseded": sweep.superseded,
+    }
 
 
 async def _sweep_stale_vehicles() -> dict[str, int]:
@@ -185,6 +220,12 @@ def expire_requests() -> dict[str, int]:
 def refresh_stop_etas() -> dict[str, int]:
     """Keep the ETA a rider is watching honest (B15)."""
     return _run("stop_etas", _refresh_stop_etas)
+
+
+@celery_app.task(name="smart_cab.run_semi_auto")
+def run_semi_auto() -> dict[str, int]:
+    """Offer suggestions in semi-auto scopes, and fire the failsafes nobody answered."""
+    return _run("semi_auto", _run_semi_auto)
 
 
 @celery_app.task(name="smart_cab.sweep_stale_vehicles")

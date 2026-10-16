@@ -237,10 +237,10 @@ STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.s
 #: guard fails if a key in it acquires a reader - B22 removed the six cost-function
 #: weights and urgency factors the moment `domain/cost.py` began reading them.
 #:
-#: What is left, and what will claim it: the failsafe pair belongs to semi-auto mode
-#: (B25, `control-model.md` section 4), `batch_window_seconds` to micro-batching and the
-#: hold window to pooling (Phase 3, `allocation-rules.md` section 6), and the
-#: night-safety trio to section 2 rule 11 (B28), whose exact policy is still OQ-10.
+#: What is left, and what will claim it: `batch_window_seconds` belongs to
+#: micro-batching and the hold window to pooling (Phase 3, `allocation-rules.md`
+#: section 6), and the night-safety trio to section 2 rule 11 (B28), whose exact
+#: policy is still OQ-10. B25 took the failsafe pair.
 #:
 #: `night_safety_enabled` is the subtle one: `client_policy` has a
 #: column of that name, so a loose search for the string finds a "reader" that is really
@@ -251,8 +251,6 @@ STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.s
 PHASE_2_KEYS = frozenset(
     {
         "batch_window_seconds",
-        "failsafe_action",
-        "failsafe_timeout_seconds",
         "hold_window_max_minutes",
         "hold_window_min_minutes",
         "night_safety_enabled",

@@ -807,10 +807,25 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Impact'}
   /dispatch/suggestions/{suggestion_id}/decision:
-    x-phase: 2
     parameters: [{name: suggestion_id, in: path, required: true, schema: {type: string, format: uuid}}]
     post:
       tags: [dispatch]
+      summary: Answer one of the system's suggestions (Phase 2)
+      description: >
+        `control-model.md` §1: in `semi_auto` the supervisor gets "one-tap approve or
+        override". The three decisions are that sentence.
+
+
+        **approve** assigns the vehicle this suggestion named. **choose_other** assigns
+        a different one - still an answer, and recorded as a rejection of what was
+        offered, because that is what it is and the Phase 2 acceptance metric must not
+        flatter itself. **reject** leaves the request queued; the other suggestions for
+        it stay open, since turning down the first choice is not turning down all three.
+
+
+        The hard rules are re-checked before anything is assigned: a supervisor reading
+        a screen two minutes old is looking at the same stale offer the failsafe would
+        have refused.
       requestBody:
         required: true
         content:
@@ -820,30 +835,21 @@ paths:
               required: [decision]
               properties:
                 decision: {type: string, enum: [approve, choose_other, reject]}
-                vehicle_id: {type: [string, 'null'], format: uuid}
+                vehicle_id:
+                  type: [string, 'null']
+                  format: uuid
+                  description: required for `choose_other`, ignored otherwise
                 reason_code: {$ref: '#/components/schemas/ReasonCode'}
-      responses:
-        '200': {$ref: '#/components/responses/TripResponse'}
-  /dispatch/modes:
-    x-phase: 2
-    get:
-      tags: [dispatch]
+                note: {type: string, maxLength: 300, description: free text, kept as Phase 3 tuning data}
       responses:
         '200':
-          description: Mode settings
+          description: Assigned (approve, choose_other) or recorded (reject)
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/ModeSetting'}}
-    post:
-      tags: [dispatch]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/ModeSetting'}
-      responses:
-        '201': {description: Created}
-
+              schema: {$ref: '#/components/schemas/SuggestionDecisionResult'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /alerts:
     get:
       tags: [alerts]
@@ -974,6 +980,21 @@ components:
               lat: {type: number}
               lng: {type: number}
   responses:
+    NotFound:
+      description: No such resource, or not visible to this operator
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ValidationError:
+      description: The request was understood and refused
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: The resource is not in a state that allows this
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
     Error:
       description: Error
       content:
@@ -1257,6 +1278,16 @@ components:
         pooling_blocked: {type: boolean}
         mode_used: {type: string, enum: [manual, semi_auto, full_auto, failsafe]}
         stops: {type: array, items: {$ref: '#/components/schemas/TripStop'}}
+    SuggestionDecisionResult:
+      type: object
+      properties:
+        suggestion_id: {type: string, format: uuid}
+        decision: {type: string, enum: [approve, choose_other, reject]}
+        status: {type: string, enum: [accepted, rejected, superseded, expired, offered]}
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: the trip created or joined; null for `reject`
     ModeSettingInput:
       type: object
       required: [mode]
@@ -1268,14 +1299,29 @@ components:
         direction: {type: [string, 'null'], enum: [to_office, from_office, null]}
         weekdays:
           type: [array, 'null']
-          description: ISO weekdays, Monday = 1 ... Sunday = 7. Null or empty means every day.
+          description: >
+            ISO weekdays, Monday = 1 ... Sunday = 7, matching `isoweekday()`. Null or
+            empty means every day.
+
+
+            An array, not the bitmask an earlier draft of this schema specified: `[1,5]`
+            is readable in `psql` and in a log line, renders without decoding, and
+            cannot be confused with the Sunday=0 convention the other half of the world
+            uses. The bitmask saved four bytes a row on a table with tens of rows.
           items: {type: integer, minimum: 1, maximum: 7}
-        start_time: {type: [string, 'null'], description: 'local time, HH:MM'}
+        start_time:
+          type: [string, 'null']
+          format: time
+          description: 'local time of day, HH:MM:SS'
         end_time:
           type: [string, 'null']
+          format: time
           description: >
-            Local time, HH:MM. A window needs both ends or neither. May cross midnight
-            (22:00-06:00), in which case the weekday is the day the window opened.
+            Local time of day, HH:MM:SS. A window needs both ends or neither - the API
+            and a CHECK constraint both refuse one end alone, because guessing midnight
+            for the missing end would stop a "from 18:00" rule exactly when an evening
+            shift is still running. May cross midnight (22:00-06:00), in which case the
+            weekday matched is the day the window opened.
         note: {type: [string, 'null'], description: why this rule exists, in the operator's words}
     ModeSetting:
       allOf:
@@ -1389,18 +1435,6 @@ components:
       properties:
         override_id: {type: string, format: uuid}
         impact: {$ref: '#/components/schemas/Impact'}
-    ModeSetting:
-      type: object
-      required: [mode]
-      properties:
-        id: {type: string, format: uuid}
-        client_id: {type: [string, 'null'], format: uuid}
-        zone_id: {type: [string, 'null'], format: uuid}
-        direction: {oneOf: [{$ref: '#/components/schemas/Direction'}, {type: 'null'}]}
-        weekdays: {type: [integer, 'null'], description: bitmask Mon=1..Sun=64}
-        start_time: {type: [string, 'null'], pattern: '^[0-2][0-9]:[0-5][0-9]$'}
-        end_time: {type: [string, 'null'], pattern: '^[0-2][0-9]:[0-5][0-9]$'}
-        mode: {type: string, enum: [manual, semi_auto, full_auto]}
     Alert:
       type: object
       properties:

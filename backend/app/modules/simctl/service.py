@@ -27,6 +27,7 @@ from app.modules.alerts.models import Alert
 from app.modules.auth.models import AppUser, Device, OtpChallenge, RefreshToken, UserRole
 from app.modules.config.models import OperatorConfig, OperatorConfigHistory
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.dispatch.suggestion_models import Suggestion
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.modes.models import ModeSetting
@@ -90,6 +91,8 @@ TRUNCATION_ORDER = (
     TripStop,
     Trip,
     RideRequestEvent,
+    # Before the request and the vehicle it names (B25).
+    Suggestion,
     RideRequest,
     SavedPlace,
     Employee,

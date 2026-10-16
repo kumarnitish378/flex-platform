@@ -28,6 +28,11 @@ class SimClockState(Strict):
     stop_etas_refreshed: int = 0
     #: Vehicles that went quiet and were alerted on by the jump (B17).
     stale_vehicle_alerts: int = 0
+    #: Semi-auto (B25). Offers made, failsafes that assigned, and failsafes
+    #: that alerted and gave the supervisor one more timeout.
+    suggestions_offered: int = 0
+    failsafe_assignments: int = 0
+    failsafe_escalations: int = 0
 
 
 class ReleaseRequest(Strict):

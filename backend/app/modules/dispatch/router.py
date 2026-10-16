@@ -6,6 +6,7 @@ import uuid
 from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 
 from app.core.dependencies import (
     ClockDep,
@@ -32,6 +33,7 @@ from app.modules.dispatch.schemas import (
     TripStopOut,
     VehicleLiveOut,
 )
+from app.modules.dispatch.semi_auto import SemiAutoService, SupervisorDecision
 from app.modules.dispatch.service import Candidate, DispatchService, VehicleLive
 from app.modules.notifications.service import NotificationService
 from app.modules.requests.router import _out as _request_out
@@ -121,6 +123,57 @@ async def list_suggestions(
     """
     suggestions = await service.suggestions(_operator_id(current_user), request_id, limit=limit)
     return {"items": [_candidate_out(candidate) for candidate in suggestions]}
+
+
+class SuggestionDecisionBody(BaseModel):
+    decision: SupervisorDecision
+    #: Required for `choose_other`, ignored otherwise.
+    vehicle_id: uuid.UUID | None = None
+    reason_code: str | None = None
+    note: str | None = None
+
+
+class SuggestionDecisionOut(BaseModel):
+    suggestion_id: uuid.UUID
+    decision: SupervisorDecision
+    status: str
+    trip_id: uuid.UUID | None = None
+
+
+@router.post(
+    "/suggestions/{suggestion_id}/decision",
+    summary="Approve, change or reject one of the system's suggestions",
+    dependencies=[Depends(require(Permission.assign))],
+)
+async def decide_on_suggestion(
+    suggestion_id: uuid.UUID,
+    body: SuggestionDecisionBody,
+    service: ServiceDep,
+    session: SessionDep,
+    clock: ClockDep,
+    current_user: CurrentUserDep,
+) -> SuggestionDecisionOut:
+    """`control-model.md` §1's "one-tap approve or override", as three decisions.
+
+    `choose_other` is recorded as a rejection of what was offered, with the chosen
+    vehicle noted - it is a different ride, and counting it as acceptance would let the
+    Phase 2 metric flatter itself.
+    """
+    result = await SemiAutoService(session, clock, service).decide_on(
+        operator_id=_operator_id(current_user),
+        suggestion_id=suggestion_id,
+        decision=body.decision,
+        actor=Actor(str(current_user.active_role)),
+        actor_user_id=current_user.claims.user_id,
+        vehicle_id=body.vehicle_id,
+        note=body.note,
+    )
+    return SuggestionDecisionOut(
+        suggestion_id=result.suggestion_id,
+        decision=result.decision,
+        status=str(result.status),
+        trip_id=result.trip_id,
+    )
 
 
 @router.post(

@@ -25,6 +25,8 @@ from app.domain.errors import Conflict, ValidationFailed
 from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
 from app.modules.dispatch.eta_refresh import EtaRefresher
+from app.modules.dispatch.semi_auto import SemiAutoService
+from app.modules.dispatch.service import DispatchService
 from app.modules.requests.service import RideRequestService
 from app.modules.simctl.schemas import (
     ReleaseRequest,
@@ -98,12 +100,21 @@ async def set_clock(
     # stop ETAs before returning (`architecture.md` section 3.2 step 4).
     refreshed = await EtaRefresher(session, fake, request.app.state.eta).refresh_due()
     stale = await AlertService(session, fake).sweep_stale_vehicles()
+    # Semi-auto is due work twice over: a queued request in such a scope needs an offer,
+    # and an offer nobody answered needs its failsafe. Both move with the clock, so a
+    # scenario that jumps an hour must see an hour's worth of both (B25).
+    semi_auto = await SemiAutoService(
+        session, fake, DispatchService(session, fake, request.app.state.eta)
+    ).run_due_semi_auto()
     return SimClockState(
         now=fake.now(),
         expired=sweep.expired,
         near_expiry_alerts=sweep.warned,
         stop_etas_refreshed=refreshed.stops,
         stale_vehicle_alerts=stale.raised,
+        suggestions_offered=semi_auto.offered,
+        failsafe_assignments=semi_auto.assigned,
+        failsafe_escalations=semi_auto.escalated,
     )
 
 
