@@ -70,6 +70,12 @@ class Trip(TenantEntity):
         Enum(TripStatus, native_enum=False, length=20), nullable=False, default=TripStatus.planned
     )
     pooling_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: When the supervisor's `block_pooling` override lapses (`control-model.md` §3
+    #: rule 5, B26). NULL means the block was not set by an override - a VIP or a
+    #: `no_sharing` rider closes a trip for the whole of its life - or was set with no
+    #: end. Read through `still_applies`, never compared by hand: the expiry has to
+    #: take effect with nothing running.
+    override_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: All from the injected Clock, never the database default (CLAUDE.md hard rule 2).
     planned_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

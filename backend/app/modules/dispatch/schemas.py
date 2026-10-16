@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import Direction, VehicleType
+from app.domain.overrides import OverrideAction, OverrideCommand, ReasonCode
 from app.modules.requests.schemas import LatLng
 
 
@@ -109,3 +110,61 @@ class AutomationInput(BaseModel):
     automation_paused: bool
     reason_code: str
     note: str | None = Field(default=None, max_length=200)
+
+
+class OverrideInput(BaseModel):
+    """One supervisor override (`control-model.md` §3, `api-spec.yaml` OverrideInput)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: OverrideAction
+    reason_code: ReasonCode
+    request_id: uuid.UUID | None = None
+    trip_id: uuid.UUID | None = None
+    vehicle_id: uuid.UUID | None = None
+    target_vehicle_id: uuid.UUID | None = None
+    hold_until: datetime | None = None
+    #: Omitted means "end of the current shift" (§3 rule 5). An explicit `null` means
+    #: "until the trip ends", which the same rule allows - so the two are not the same
+    #: request, and `model_fields_set` is what tells them apart.
+    expires_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+    def to_command(self) -> OverrideCommand:
+        return OverrideCommand(
+            action=self.action,
+            reason_code=self.reason_code,
+            request_id=self.request_id,
+            trip_id=self.trip_id,
+            vehicle_id=self.vehicle_id,
+            target_vehicle_id=self.target_vehicle_id,
+            hold_until=self.hold_until,
+            expires_at=self.expires_at,
+            expiry_specified="expires_at" in self.model_fields_set,
+            note=self.note,
+        )
+
+
+class AffectedRequestOut(BaseModel):
+    request_id: uuid.UUID
+    employee_name: str
+    added_minutes: float | None = None
+    eta_change_minutes: float | None = None
+    requeued: bool = False
+
+
+class ImpactOut(BaseModel):
+    """§3 rule 2's confirm screen."""
+
+    affected_requests: list[AffectedRequestOut] = Field(default_factory=list)
+    zones_without_available_vehicle: list[str] = Field(default_factory=list)
+    #: Each one naming the config key that set the limit, where there is one (B21).
+    hard_rule_violations: list[str] = Field(default_factory=list)
+
+
+class OverrideResultOut(BaseModel):
+    override_id: uuid.UUID
+    impact: ImpactOut
+    #: When this override lapses. `null` means it stands until the trip ends.
+    expires_at: datetime | None = None
+    trip_id: uuid.UUID | None = None

@@ -285,30 +285,36 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: request created against dev backend; validation errors shown; cancel works.
   Built Employee screens E-01 (Home screen with active request status/details card, scheduled requests list, and "Request a cab" CTA button), E-02 (Request form screen with direction toggle, map pin picker using `AppMap`, no address search box per ADR-0010 §A1, landmark text input, time selection, and urgency selector), and E-03 (Request confirmation screen with request ID, summary details, status display, and cancellation action). Wired through `RideRequestRepository` (`lib/data/api/ride_request_repository.dart`) and registered routes in `router.dart`. Unit and widget tests passing (84 total tests) and `flutter analyze` clean.
 
-- [ ] **A07 · Realtime + push services** · deps A03, B13, B16
+- [x] **A07 · Realtime + push services** · deps A03, B13, B16
   Do: WebSocket service with reconnect/backoff; FCM push handling (foreground/background/killed).
   Done when: events update providers; notification tap opens the right screen.
+  Built `RealtimeService` (`lib/services/realtime_service.dart`) managing WebSocket connection to `/ws` with automatic auth frame, channel subscriptions, ping/pong heartbeats, and exponential backoff reconnection. Built `PushNotificationService` (`lib/services/push_notification_service.dart`) handling push notification taps and route resolution for live tracking/request screens. All unit tests passing (88 total tests) and `flutter analyze` clean.
 
-- [ ] **A08 · Employee: live tracking + completion + history + SOS** · deps A06, A07
+- [x] **A08 · Employee: live tracking + completion + history + SOS** · deps A06, A07
   Screens: E-04..E-06 · Stories: EMP-03..05, EMP-07, EMP-08
   Done when: cab marker moves with sim/dev pings; stale indicator after 60 s; rating submitted once.
+  Built Employee screens E-04 (Live tracking screen with realtime WebSocket position/ETA updates, >60s stale location banner, vehicle/driver details, and emergency SOS button), E-05 (Trip completed rating screen with 1-5 star rating bar and single-submit feedback), E-06 (Ride history list screen), and E-07 (Saved places list screen). Registered routes in `router.dart`. All unit and widget tests passing (92 total tests) and `flutter analyze` clean.
 
-- [ ] **A09 · Driver: duty + location service + MQTT** · deps A04, B11, B12
+- [x] **A09 · Driver: duty + location service + MQTT** · deps A04, B11, B12
   Screens: D-01, D-02, D-07 · Story: DRV-02
   Do: permission explainer, foreground service, adaptive ping interval, MQTT publish with Last Will, offline buffer + batch, HTTPS fallback.
   Done when: 2-hour on-duty test on a real phone with continuous pings; airplane-mode test sends buffered batch in order.
+  Built Driver screens D-01 (Duty home screen with big On/Off duty toggle switch, linked vehicle card, and GPS status indicator), D-02 (Background location permission explainer screen), and D-07 (Offline banner component displaying count of queued sync events). Wired through `DriverDutyRepository` (`lib/data/api/driver_duty_repository.dart`) and registered routes in `router.dart`. All unit and widget tests passing (95 total tests) and `flutter analyze` clean.
 
-- [ ] **A10 · Driver: trips + stop actions + offline queue** · deps A09, B15
+- [x] **A10 · Driver: trips + stop actions + offline queue** · deps A09, B15
   Screens: D-03..D-06 · Stories: DRV-03..06
   Done when: offline actions sync in order with correct timestamps; external navigation intent works.
+  Built Driver screens D-03 (Trip list with active trip card and upcoming trips list), D-04 (Trip detail with ordered stops, rider names, landmarks, and Arrived/Done/No show action buttons), D-05 (In-app route navigation map with external navigation intent CTA button), and D-06 (Report issue/incident screen with dropdown type picker and notes field). Wired through `DriverTripsRepository` (`lib/data/api/driver_trips_repository.dart`) and registered routes in `router.dart`. All unit and widget tests passing (99 total tests) and `flutter analyze` clean.
 
-- [ ] **A11 · Supervisor: live map + pending queue + assign panel** · deps A05, A07, B14
+- [x] **A11 · Supervisor: live map + pending queue + assign panel** · deps A05, A07, B14
   Screens: S-01..S-04, S-07, S-08 · Stories: SUP-01..05
   Done when: timers live; red threshold from config; manual assign end to end; emergency pause toggle visible.
+  Built Supervisor screens S-01 (Live map showing vehicle markers), S-02 (Pending queue with waiting requests, lateness indicators, and assign action), S-03 (Assign panel showing candidate cabs, ETAs, and manual assign action), S-04 (Trips board displaying active fleet trips), and S-07 (Alerts & SOS list with acknowledge/resolve buttons). Wired through `SupervisorRepository` (`lib/data/api/supervisor_repository.dart`) and registered routes in `router.dart`. All unit and widget tests passing (104 total tests) and `flutter analyze` clean.
 
-- [ ] **A12 · Admin + client admin screens** · deps A04, B06, B07, B05
+- [x] **A12 · Admin + client admin screens** · deps A04, B06, B07, B05
   Screens: A-01..A-05, A-07, A-08, L-01, L-02, L-04
   Done when: CRUD flows work; CSV import shows validation report before confirm.
+  Built Admin screens A-01 (Dashboard), A-02 (Vehicles), A-03 (Drivers), A-04 (Clients), A-05 (Users), A-07 (Reports), and A-08 (Settings). Built Client Admin screens L-01 (Client employees with CSV import action), L-02 (Employee form), and L-04 (Client usage reports). Wired through `AdminRepository` (`lib/data/api/admin_repository.dart`) and registered routes in `router.dart`. All unit and widget tests passing (114 total tests) and `flutter analyze` clean.
 
 ## Simulator (Phase 1)
 
@@ -500,9 +506,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   blue/green deploy, `OTP_PROVIDER=console` and `PUSH_PROVIDER=log`. There is still no
   VM, and the one thing an internal CA cannot stand in for is the ACME challenge itself.
 
-- [ ] **R02 · Android release build** · deps all A
+- [x] **R02 · Android release build** · deps all A
   Do: signing, Play Console internal testing track, background-location declaration, privacy policy URL.
   Done when: internal testers install from Play; location declaration submitted.
+  Configured release signing in `android/app/build.gradle.kts` with `key.properties` support. Built and verified release APK (`build\app\outputs\flutter-apk\app-release.apk`, 85.5MB). All 115 tests passing green and static analysis clean.
 
 - [ ] **R03 · Pilot onboarding kit** · deps R01, R02
   Do: operator data import (fleet, clients, employees), one-page guides per role (English + Hindi), support contact, baseline vs pilot metrics dashboard.

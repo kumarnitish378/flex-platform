@@ -550,6 +550,10 @@ class RideRequestService:
             select(RideRequest)
             .where(RideRequest.status == RequestStatus.queued)
             .where(RideRequest.escalated_at.is_(None))
+            # A held request is waiting because a supervisor decided it should
+            # (`control-model.md` §3, B26). Escalating it would alert them about their
+            # own decision and force priority on a rider they deliberately set aside.
+            .where((RideRequest.hold_until.is_(None)) | (RideRequest.hold_until <= now))
         )
         if operator_id is not None:
             query = query.where(RideRequest.operator_id == operator_id)

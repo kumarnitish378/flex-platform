@@ -137,7 +137,17 @@ class SemiAutoService:
 
     async def _offer_due(self, operator_id: uuid.UUID | None) -> tuple[int, int]:
         """Suggest vehicles for queued requests in a `semi_auto` scope."""
-        query = select(RideRequest).where(RideRequest.status.in_(OFFERABLE_STATUSES))
+        now = self.clock.now()
+        query = (
+            select(RideRequest)
+            .where(RideRequest.status.in_(OFFERABLE_STATUSES))
+            .where(
+                # A held request waits where the supervisor put it (`control-model.md` §3,
+                # B26). This is the automatic path the hold exists to stop: without it the
+                # sweep offers a cab the next time it runs and the hold means nothing.
+                (RideRequest.hold_until.is_(None)) | (RideRequest.hold_until <= now)
+            )
+        )
         if operator_id is not None:
             query = query.where(RideRequest.operator_id == operator_id)
         requests = list((await self.session.execute(query)).scalars().all())

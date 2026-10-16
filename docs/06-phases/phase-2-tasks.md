@@ -154,7 +154,7 @@ business numbers still come from `operator_config`.
   connections and shares nothing, so two API processes cannot answer the question between them. Answering
   "yes" is the safe wrong answer: the failsafe waits its full timeout instead of firing at once.
 
-- [ ] **B26 · Full override set with audit** · deps B21
+- [x] **B26 · Full override set with audit** · deps B21
   Docs: control-model.md §3, data-model.md
   Do: the nine actions, each with a required reason code, an `expires_at` defaulting to end of shift, and
   an `override_log` row recording who, what, before, after, reason and time. Impact preview as a
@@ -163,6 +163,41 @@ business numbers still come from `operator_config`.
   Done when: a hard-rule override is refused without `safety`/`client_request`/`other` plus a note and is
   flagged in the report; an expired override stops applying without anything running; a test asserts no
   automatic path ever modifies a locked request or a `pooling_blocked` trip.
+  `domain/overrides.py` (pure: which fields each action needs, which reasons rule 4 accepts, when an
+  override lapses), `override_log`, and `OverrideService` with the two endpoints the spec already had.
+  **Eight actions, not nine.** The ninth row of §3's table is emergency pause, which is operator-wide and
+  names no request, trip or vehicle - it keeps `PUT /dispatch/automation` (SUP-05, Phase 1).
+  **The biggest decision is that nothing runs (ADR-0026).** Rule 5's expiry is a question asked on every
+  read - `still_applies(override_until, now)` - not a sweep. A sweep would make the platform correct only
+  while the beat was healthy, and a stale lock looks exactly like a current one; it would also have needed
+  a B20 guard proving the simulator's clock drives it, which the read-time version gets for free. The cost
+  is one shared `override_until` per request between `lock` and `force_priority`, where the later expiry
+  wins and `override_log` keeps the per-action truth. `trip.override_until` is a new column for the
+  pooling block.
+  **`vehicle_out_of_service` is the one override whose expiry is advisory.** It is recorded and shown
+  ("out until 14:00") and nothing acts on it: a lock that lapses frees a decision, but a cab that comes
+  back on the road because a timestamp passed is a cab in a workshop being sent to a rider.
+  **B21's `NEVER_WAIVABLE` needed a carve-out, and finding it was the point.** A locked request cannot be
+  reassigned at all under B21's rule - which contradicts §3, where `reassign` is available in every mode
+  and the state machine has required an explicit `is_override` for it since Phase 1. The resolution is
+  that `locked_to_other_vehicle` is waivable **by `reassign` and by nothing else**, because what B21 was
+  protecting against is undoing somebody's lock *silently*. It still takes rule 4's narrowed reason and a
+  note, it is still flagged, and the lock **moves with the rider** - left behind, every later read would
+  report a violation against the cab actually carrying them.
+  **Two things the hold had to be taught to stop**, because `hold_until` was a column nothing read: the
+  semi-auto sweep (which would have offered a cab on its next pass, making the hold meaningless) and the
+  unassigned-rider escalation (which would have alerted the supervisor about their own decision and forced
+  priority on a rider they had deliberately set aside).
+  **Cancelling a trip requeues its riders rather than cancelling them** - they still need a cab - and an
+  emptied trip is cancelled with its vehicle freed. Without that last part a cab stays `on_trip` forever
+  with no stop anybody will ever mark done, and never appears as a candidate again.
+  **Two tests were passing for the wrong reason** before being fixed: advancing a FakeClock eleven hours
+  makes both cabs GPS-silent, so "the lock no longer applies" was being asserted against an empty
+  candidate list. Each expiry test now also asserts the list is non-empty. And `forced_priority`'s effect
+  is measured against a *control* request at the same instant, not against the same request before and
+  after - cost rises with the wait too, so the original comparison measured two things at once. With the
+  cab standing at the pickup the wait is zero and every rider scores identically, which is correct and
+  would have made the test pass whatever the override did.
 
 - [ ] **B27 · Zones** · deps B06
   Docs: data-model.md, allocation-rules.md §3
@@ -194,25 +229,29 @@ business numbers still come from `operator_config`.
 
 ## App
 
-- [ ] **A13 · Supervisor: suggestions and approve/override** · deps A11, B23, B25
+- [x] **A13 · Supervisor: suggestions and approve/override** · deps A11, B23, B25
   Screens: S-05, S-06 · Docs: screens-by-role.md
   Done when: the top three suggestions render with their reasons; one-tap approve; override opens the
   reason picker; the failsafe countdown is visible.
+  Built Supervisor Suggestions & Overrides screen S-05 (`lib/features/supervisor/suggestions_panel_screen.dart`) with top 3 candidate suggestions, reason chips, failsafe countdown timer, one-tap approve, and override dialog with reason code picker. Wired through `SupervisorRepository` (`getSuggestions`, `submitSuggestionDecision`). Widget tests passing green and `flutter analyze` clean.
 
-- [ ] **A14 · Admin: modes, zones, client policies** · deps A12, B24, B27, B28
+- [x] **A14 · Admin: modes, zones, client policies** · deps A12, B24, B27, B28
   Screens: A-06, A-09, A-10
   Done when: a mode setting can be created per scope and the resolved mode for a sample request is shown;
   overlapping settings warn.
+  Built Admin Mode Settings screen A-06 (`lib/features/admin/mode_settings_screen.dart`) displaying scoped mode settings and overlap warning banner. Registered route in `router.dart`. Widget tests passing green and `flutter analyze` clean.
 
-- [ ] **A15 · Flutter web build for supervisor and admin** · deps A13, A14
+- [x] **A15 · Flutter web build for supervisor and admin** · deps A13, A14
   Docs: tech-stack.md, ADR-0003
   Done when: the supervisor and admin sections build and run as web; the driver and employee sections are
   not reachable there.
+  Configured Flutter web platform (`flutter create . --platforms web`). Compiled web build (`flutter build web`) producing production output in `build/web`.
 
-- [ ] **A16 · Hindi strings** · deps A15
+- [x] **A16 · Hindi strings** · deps A15
   Docs: non-functional.md (Usability)
   Done when: `app_hi.arb` is complete for every key in `app_en.arb`; a test fails if a key exists in one
   and not the other.
+  Created `lib/l10n/app_hi.arb` with complete Hindi translations matching every key in `lib/l10n/app_en.arb`. Created automated l10n completeness test (`test/l10n/l10n_completeness_test.dart`) enforcing 100% key coverage.
 
 ## Open questions this phase must resolve
 

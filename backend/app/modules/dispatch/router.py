@@ -23,12 +23,17 @@ from app.domain.state_machines import Actor
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
 from app.modules.dispatch.models import Trip, TripStop
+from app.modules.dispatch.override_service import Impact, OverrideService
 from app.modules.dispatch.schemas import (
     AddedMinutes,
+    AffectedRequestOut,
     AssignInput,
     AutomationInput,
     AutomationOut,
     CandidateOut,
+    ImpactOut,
+    OverrideInput,
+    OverrideResultOut,
     TripOut,
     TripStopOut,
     VehicleLiveOut,
@@ -195,6 +200,55 @@ async def assign(body: AssignInput, service: ServiceDep, current_user: CurrentUs
     return await _trip_out(service, trip)
 
 
+@router.post(
+    "/overrides",
+    summary="Apply one of the override actions (control-model.md §3)",
+    dependencies=[Depends(require(Permission.override))],
+)
+async def apply_override(
+    body: OverrideInput,
+    service: ServiceDep,
+    session: SessionDep,
+    clock: ClockDep,
+    current_user: CurrentUserDep,
+) -> OverrideResultOut:
+    """Every override carries a reason, an expiry and an `override_log` row (§3 rules 3, 5, 6).
+
+    The impact is computed before anything changes, because rule 4 cannot decide which
+    reason codes are allowed until it knows whether a hard rule is being waived.
+    """
+    result = await OverrideService(session, clock, service).apply(
+        operator_id=_operator_id(current_user),
+        command=body.to_command(),
+        actor=Actor(str(current_user.active_role)),
+        actor_user_id=current_user.claims.user_id,
+    )
+    return OverrideResultOut(
+        override_id=result.override_id,
+        impact=_impact_out(result.impact),
+        expires_at=result.expires_at,
+        trip_id=result.trip_id,
+    )
+
+
+@router.post(
+    "/overrides/preview",
+    summary="What an override would do, without doing it (§3 rule 2)",
+    dependencies=[Depends(require(Permission.override))],
+)
+async def preview_override(
+    body: OverrideInput,
+    service: ServiceDep,
+    session: SessionDep,
+    clock: ClockDep,
+    current_user: CurrentUserDep,
+) -> ImpactOut:
+    impact = await OverrideService(session, clock, service).preview(
+        operator_id=_operator_id(current_user), command=body.to_command()
+    )
+    return _impact_out(impact)
+
+
 @router.get(
     "/trips",
     summary="Every trip for the operator, with stops - one read for a whole board",
@@ -237,6 +291,23 @@ async def set_automation(
 
 
 # --- serialisation -------------------------------------------------------------------
+
+
+def _impact_out(impact: Impact) -> ImpactOut:
+    return ImpactOut(
+        affected_requests=[
+            AffectedRequestOut(
+                request_id=affected.request_id,
+                employee_name=affected.employee_name,
+                added_minutes=affected.added_minutes,
+                eta_change_minutes=affected.eta_change_minutes,
+                requeued=affected.requeued,
+            )
+            for affected in impact.affected_requests
+        ],
+        zones_without_available_vehicle=impact.zones_without_available_vehicle,
+        hard_rule_violations=[breach.summary for breach in impact.hard_rule_violations],
+    )
 
 
 def _latlng(location: object) -> LatLng:

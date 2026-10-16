@@ -775,10 +775,21 @@ paths:
       responses:
         '200': {description: Updated}
   /dispatch/overrides:
-    x-phase: 2
     post:
       tags: [dispatch]
       summary: Apply an override action
+      description: >
+        `control-model.md` section 3. Every override carries a reason code, gets an
+        `expires_at`, and writes an `override_log` row holding who, what, before,
+        after, reason and time.
+
+
+        Refused with 422 when the action does not name what it would change (`reassign`
+        without `target_vehicle_id`), when `reason_code` is `other` without a note, or
+        when the override waives a hard rule without `safety`, `client_request` or
+        `other` **and** a note - rule 4, and those are the overrides reports flag.
+        Refused with 409 when it would waive a rule nobody may waive: a cab with no
+        driver, or another supervisor's lock.
       requestBody:
         required: true
         content:
@@ -790,11 +801,25 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OverrideResult'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /dispatch/overrides/preview:
-    x-phase: 2
     post:
       tags: [dispatch]
       summary: Impact preview without applying
+      description: >
+        Section 3 rule 2's confirm screen: added minutes for riders already aboard, the
+        ETA change for the rider being moved, the riders a cancellation would put back
+        in the queue, and any zone whose only available cab this would take off the
+        road.
+
+
+        A dry run - nothing is written. It is the same computation the apply path runs,
+        so the screen a supervisor confirms is not a different answer from the one they
+        get. An empty impact is a real answer: `lock`, `unlock`, `force_priority`,
+        `block_pooling` and `hold` change what the platform may do next, not where any
+        cab is going now.
       requestBody:
         required: true
         content:
@@ -806,6 +831,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Impact'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /dispatch/suggestions/{suggestion_id}/decision:
     parameters: [{name: suggestion_id, in: path, required: true, schema: {type: string, format: uuid}}]
     post:
@@ -1408,18 +1435,60 @@ components:
     OverrideInput:
       type: object
       required: [action, reason_code]
+      description: >
+        The override set of `control-model.md` section 3. The ninth row of that table,
+        emergency pause, is `PUT /dispatch/automation` instead: it is operator-wide and
+        names no request, trip or vehicle.
       properties:
         action: {type: string, enum: [reassign, lock, unlock, force_priority, block_pooling, hold, cancel, vehicle_out_of_service]}
-        request_id: {type: [string, 'null'], format: uuid}
-        trip_id: {type: [string, 'null'], format: uuid}
-        vehicle_id: {type: [string, 'null'], format: uuid}
-        target_vehicle_id: {type: [string, 'null'], format: uuid}
-        hold_until: {type: [string, 'null'], format: date-time}
-        expires_at: {type: [string, 'null'], format: date-time}
+        request_id:
+          type: [string, 'null']
+          format: uuid
+          description: Required by every action except block_pooling and vehicle_out_of_service.
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: >
+            The subject of `block_pooling`, and of a `cancel` that cancels a whole trip
+            rather than one rider - send exactly one of `request_id` or `trip_id` with
+            `cancel`. On `reassign` it names the existing trip to join, if any.
+        vehicle_id:
+          type: [string, 'null']
+          format: uuid
+          description: >
+            The subject of `vehicle_out_of_service`, and the cab to pin to on `lock`
+            (defaulting to the one the request is already on).
+        target_vehicle_id:
+          type: [string, 'null']
+          format: uuid
+          description: Required by reassign - the cab to move the rider to.
+        hold_until:
+          type: [string, 'null']
+          format: date-time
+          description: Required by hold. For a hold with no fixed end, send expires_at as null.
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            Section 3 rule 5. **Omit** the field for the default, which is the end of
+            the current shift in the operator's own timezone. Send it explicitly as
+            `null` for "until the trip ends". The two are different requests, so an app
+            that always sends the field - with `null` when the user picked nothing -
+            makes every override open-ended, which is the failure rule 5 exists to
+            prevent.
+
+
+            Ignored by the actions that happen once and are over: reassign, unlock and
+            cancel. Recorded but advisory for vehicle_out_of_service - a cab comes back
+            on the road when somebody says so, never because a timestamp passed.
         reason_code: {$ref: '#/components/schemas/ReasonCode'}
-        note: {type: string}
+        note:
+          type: string
+          maxLength: 500
+          description: Required with `other`, and with any override that waives a hard rule (rule 4).
     Impact:
       type: object
+      description: Section 3 rule 2's confirm screen. Every field may be empty - that is an answer.
       properties:
         affected_requests:
           type: array
@@ -1427,14 +1496,49 @@ components:
             type: object
             properties:
               request_id: {type: string, format: uuid}
-              eta_change_minutes: {type: number}
-        zones_without_available_vehicle: {type: array, items: {type: string}}
-        hard_rule_violations: {type: array, items: {type: string}}
+              employee_name: {type: string}
+              added_minutes:
+                type: [number, 'null']
+                description: >
+                  Extra minutes aboard for a rider already on the vehicle. Null when
+                  this rider is not being detoured.
+              eta_change_minutes:
+                type: [number, 'null']
+                description: >
+                  Later (positive) or sooner (negative) for the rider being moved. Null
+                  when there is no before to compare with.
+              requeued:
+                type: boolean
+                description: >
+                  Back to the queue needing another cab. Their new ETA is unknown until
+                  somebody assigns them, so none is offered here.
+        zones_without_available_vehicle:
+          type: array
+          items: {type: string}
+          description: >
+            Zones whose only available cab this override would take off the road. A
+            zone that was already uncovered is not listed - that is not something this
+            override did, and listing it would bury the one that is.
+        hard_rule_violations:
+          type: array
+          items: {type: string}
+          description: >
+            Each naming the config key that set the limit where there is one, for
+            example `eta_over_candidate_limit (candidate_max_eta_minutes)`. Non-empty
+            means the apply call will require rule 4's narrowed reasons and a note.
     OverrideResult:
       type: object
       properties:
         override_id: {type: string, format: uuid}
         impact: {$ref: '#/components/schemas/Impact'}
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: When this override lapses. Null means it stands until the trip ends.
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: The trip the request ended up on, for reassign.
     Alert:
       type: object
       properties:

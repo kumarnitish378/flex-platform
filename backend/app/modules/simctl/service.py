@@ -27,6 +27,7 @@ from app.modules.alerts.models import Alert
 from app.modules.auth.models import AppUser, Device, OtpChallenge, RefreshToken, UserRole
 from app.modules.config.models import OperatorConfig, OperatorConfigHistory
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.dispatch.override_models import OverrideLog
 from app.modules.dispatch.suggestion_models import Suggestion
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
@@ -89,6 +90,9 @@ TRUNCATION_ORDER = (
     # the *second* reset, not the first, which is a miserable thing to debug.
     TripEvent,
     TripStop,
+    # Before the trip, request and vehicle it names (B26). The FKs cascade, so leaving
+    # it out would work - and would make this list quietly wrong.
+    OverrideLog,
     Trip,
     RideRequestEvent,
     # Before the request and the vehicle it names (B25).

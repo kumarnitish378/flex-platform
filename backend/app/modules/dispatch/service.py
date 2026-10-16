@@ -66,6 +66,7 @@ from app.domain.enums import Direction, Urgency
 from app.domain.errors import Conflict, NotFound
 from app.domain.geo import LatLng
 from app.domain.notifications import NotificationType
+from app.domain.overrides import still_applies
 from app.domain.rules import assignable
 from app.domain.state_machines import (
     Actor,
@@ -440,7 +441,11 @@ class DispatchService:
             urgency_factor_low=float(settings["urgency_factor_low"]),
         )
         priority, urgency = effective_rider(
-            employee.priority, request.urgency, forced_priority=request.forced_priority
+            employee.priority,
+            request.urgency,
+            # Expired overrides stop weighing (B26): a request forced to the front of
+            # the queue for this morning's crisis must not still be there tomorrow.
+            forced_priority=request.forced_priority and still_applies(request.override_until, now),
         )
         # Named here, not in the domain: the sentence says "+4 min for Rahul", and only
         # the database knows who Rahul is.
@@ -518,6 +523,7 @@ class DispatchService:
         trip_id: uuid.UUID | None = None,
         reason_code: str | None = None,
         note: str | None = None,
+        is_override: bool = False,
     ) -> Trip:
         """Put a request on a vehicle: a new trip, or a seat on an existing one (SUP-03).
 
@@ -604,7 +610,15 @@ class DispatchService:
         event = transition_request(
             RequestStatus(request.status),
             RequestStatus.assigned,
-            RequestContext(actor=actor, is_locked=request.is_locked, changes_vehicle=True),
+            RequestContext(
+                actor=actor,
+                is_locked=request.is_locked,
+                changes_vehicle=True,
+                # A locked request moves only through an explicit override, and only
+                # one carrying a reason - the state machine has enforced that since
+                # Phase 1, and B26 is the first caller able to say yes.
+                is_override=is_override,
+            ),
         )
         request.status = event.to_status
         request.trip_id = trip.id
@@ -632,7 +646,7 @@ class DispatchService:
             )
             vehicle.status = vehicle_event.to_status
 
-        self._record_trip_event(
+        self.record_trip_event(
             trip,
             from_status=None if created else trip.status,
             to_status=trip.status,
@@ -946,10 +960,21 @@ class DispatchService:
             office_id=request.office_id,
             employee_is_vip=employee.is_vip,
             request_no_sharing=request.no_sharing,
-            lock_vehicle_id=request.lock_vehicle_id,
+            # Gated on expiry, never read raw: `control-model.md` §3 rule 5 requires an
+            # override to stop applying with **nothing running**, so the question is
+            # asked here on every read rather than by a sweep that flips the column
+            # back (B26). `override_until` NULL means the flag was not set by an
+            # override, or was set without an end - either way it still applies.
+            lock_vehicle_id=(
+                request.lock_vehicle_id if still_applies(request.override_until, now) else None
+            ),
             trip_direction=Direction(trip.direction) if trip is not None else None,
             trip_office_id=trip.office_id if trip is not None else None,
-            trip_pooling_blocked=trip.pooling_blocked if trip is not None else False,
+            trip_pooling_blocked=(
+                trip.pooling_blocked and still_applies(trip.override_until, now)
+                if trip is not None
+                else False
+            ),
             trip_has_other_riders=other_riders,
         )
 
@@ -1114,7 +1139,7 @@ class DispatchService:
         )
         return user_id
 
-    def _record_trip_event(
+    def record_trip_event(
         self,
         trip: Trip,
         from_status: str | None,

@@ -57,7 +57,7 @@ Indexes: (operator_id, status), (employee_id, requested_time), GIST(location).
 
 **ride_request_event** — `request_id`, `from_status`, `to_status`, `actor_type` (`employee`,`driver`,`supervisor`,`system`,`system_failsafe`,`optimizer`), `actor_user_id`, `reason`, `at`, `data` jsonb.
 
-**trip** — `operator_id`, `vehicle_id`, `driver_id`, `direction`, `office_id`, `status`, `pooling_blocked` bool, `planned_start`, `started_at`, `completed_at`, `planned_distance_m`, `actual_distance_m`, `empty_distance_m`, `mode_used` (`manual`,`semi_auto`,`full_auto`,`failsafe`), `route_geometry` linestring (nullable).
+**trip** — `operator_id`, `vehicle_id`, `driver_id`, `direction`, `office_id`, `status`, `pooling_blocked` bool, `override_until` nullable (when a `block_pooling` override lapses - control-model.md §3 rule 5; null means the block was not set by an override, as for a VIP or a `no_sharing` rider, or was set open-ended), `planned_start`, `started_at`, `completed_at`, `planned_distance_m`, `actual_distance_m`, `empty_distance_m`, `mode_used` (`manual`,`semi_auto`,`full_auto`,`failsafe`), `route_geometry` linestring (nullable).
 
 **trip_stop** — `trip_id`, `sequence` smallint, `stop_type` (`pickup`,`drop`), `request_id`, `location`, `status` (`pending`,`en_route`,`arrived`,`done`,`skipped`), `planned_eta`, `latest_eta`, `arrived_at`, `done_at`, `event_location` point.
 Unique (trip_id, sequence).
@@ -74,7 +74,9 @@ Unique (trip_id, sequence).
 
 **assignment_suggestion** (Phase 2) — `request_id`, `created_at`, `candidates` jsonb (ranked list: vehicle_id, trip_id, cost, eta, reasons), `status` (`open`,`approved`,`rejected`,`expired`,`failsafe_applied`), `chosen_vehicle_id`, `decided_by`, `decided_at`, `failsafe_due_at`.
 
-**override_log** — `operator_id`, `action`, `request_id`, `trip_id`, `vehicle_id`, `before` jsonb, `after` jsonb, `reason_code`, `note`, `expires_at`, `user_id`, `at`.
+**override_log** — `operator_id`, `action`, `request_id`, `trip_id`, `vehicle_id`, `before` jsonb, `after` jsonb, `reason_code`, `note`, `waived_violations` jsonb (the hard rules this override set aside, each naming the config key behind it - control-model.md §3 rule 4 requires these to be flagged in reports, and a `jsonb` predicate is not something a report should have to know about), `expires_at` (null = until the trip ends; set to the moment of release when the inverse action closes the row), `user_id`, `at`.
+
+`before` and `after` hold only the fields the action touched, not a whole-row snapshot: a snapshot would bury the one value that changed and would copy a rider's home location into a table nobody thinks of as holding personal data.
 
 **operator_config** — `operator_id`, `key`, `value` jsonb, `updated_by`, `version`. Unique (operator_id, key). History in `operator_config_history`.
 
