@@ -16,6 +16,7 @@ Two rules shape the design:
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,12 @@ Process = Generator[simpy.Event, Any, Any]
 #: Default length for an event whose scenario entry gives no `duration_min`.
 DEFAULT_DURATION_MINUTES = 60
 
+#: How long `lock_requests` keeps watching for riders to lock, and how often it looks.
+#: An hour is long enough to catch a morning peak arriving and short enough that the
+#: locks are all placed before the run is half over.
+LOCK_WINDOW_SECONDS = 60 * 60
+LOCK_POLL_SECONDS = 20
+
 #: What each type does, for validation and error messages.
 SUPPORTED = (
     "rain",
@@ -44,13 +51,15 @@ SUPPORTED = (
     "offline",
     "supervisor_absent",
     "vip_burst",
+    "lock_requests",
 )
 
 #: Listed in section 7 but not implementable yet, with the reason. Refused loudly so a
 #: scenario cannot quietly measure something other than what it claims to.
 NOT_YET = {
     "optimizer_down": (
-        "there is no optimizer to take down in Phase 1; automatic mode arrives in Phase 2"
+        "the optimizer that Phase 3 runs does not exist yet; Phase 2's automatic path is"
+        " the semi-auto sweep, and taking it down is not the same experiment"
     ),
 }
 
@@ -261,6 +270,78 @@ class EventInjector:
         return pool[int(self._rng.integers(len(pool)))]
 
     # --- people -----------------------------------------------------------------------
+
+    def _on_lock_requests(self, event: Event) -> Process:
+        """A supervisor pins waiting requests to a cab (`control-model.md` §3, S09).
+
+        Locked to a cab **they choose**, not the one the system would have picked -
+        otherwise "the optimizer never moved it" would be indistinguishable from "the
+        optimizer agreed", which is the thing S09 exists to tell apart.
+        """
+        platform = self.engine.platform
+        supervisor = self.engine.supervisor
+        if platform is None or supervisor is None:
+            self.record.errors.append("lock_requests: this run has no supervisor")
+            return
+
+        wanted = event.count or 10
+        # Polled rather than done in one glance. The queue at any given instant is
+        # nearly empty - in `semi_auto` the sweep offers a cab within seconds and the
+        # supervisor answers - so a single look lands either before the demand or
+        # between two riders, and locks nothing. The first live run did exactly that,
+        # and `locks_respected` failed rather than passing, which is the point of
+        # failing a check that measured nothing.
+        deadline = self.engine.env.now + LOCK_WINDOW_SECONDS
+        locked = 0
+        while locked < wanted and self.engine.env.now < deadline:
+            try:
+                queued = platform.pending_requests(supervisor.token, status="queued")
+            except Exception as exc:  # noqa: BLE001
+                self.record.errors.append(f"lock_requests: {type(exc).__name__}")
+                return
+
+            for request in queued:
+                if locked >= wanted:
+                    break
+                request_id = uuid.UUID(request["id"])
+                if request_id in self.engine.locks:
+                    continue
+                vehicle_id = self._second_choice(request_id)
+                if vehicle_id is None:
+                    continue
+                try:
+                    platform.apply_override(
+                        supervisor.token,
+                        action="lock",
+                        reason_code="local_knowledge",
+                        note="scenario lock",
+                        request_id=request_id,
+                        vehicle_id=vehicle_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 - a refused lock is data
+                    self.record.errors.append(f"lock: {exc}")
+                    continue
+                self.engine.locks[request_id] = vehicle_id
+                locked += 1
+
+            yield self.engine.env.timeout(LOCK_POLL_SECONDS)
+
+        self.engine.record(f"supervisor locked {locked} request(s)")
+
+    def _second_choice(self, request_id: uuid.UUID) -> uuid.UUID | None:
+        """A cab that is permitted but is **not** the system's first pick."""
+        platform = self.engine.platform
+        supervisor = self.engine.supervisor
+        assert platform is not None and supervisor is not None
+        try:
+            options = platform.suggestions(supervisor.token, request_id)
+        except Exception as exc:  # noqa: BLE001
+            self.record.errors.append(f"lock candidates: {type(exc).__name__}")
+            return None
+        if not options:
+            return None
+        chosen = options[1] if len(options) > 1 else options[0]
+        return uuid.UUID(str(chosen["vehicle_id"]))
 
     def _on_supervisor_absent(self, event: Event) -> Process:
         """The supervisor steps away. Requests pile up; S08's failsafe is Phase 2."""

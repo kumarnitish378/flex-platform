@@ -644,8 +644,16 @@ class DispatchService:
             RequestStatus.assigned,
             RequestContext(
                 actor=actor,
-                is_locked=request.is_locked,
-                changes_vehicle=True,
+                # Gated on expiry like every other read of the lock (B26): an override
+                # that has lapsed must not still be refusing transitions.
+                is_locked=request.is_locked and still_applies(request.override_until, now),
+                # **Only** when this is a different cab from the one the request is
+                # pinned to. Found by S09: with this hardcoded True, a lock refused the
+                # very assignment it existed to force - the failsafe offered the locked
+                # vehicle, the state machine refused it as "a locked request can only
+                # change vehicle through a supervisor override", and the request could
+                # then never be assigned by anybody, by hand or otherwise.
+                changes_vehicle=request.lock_vehicle_id != vehicle_id,
                 # A locked request moves only through an explicit override, and only
                 # one carrying a reason - the state machine has enforced that since
                 # Phase 1, and B26 is the first caller able to say yes.

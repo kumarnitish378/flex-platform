@@ -27,7 +27,7 @@ from app.core.geo import to_point
 from app.core.settings import Settings
 from app.domain.dispatch import Violation
 from app.domain.enums import Direction, Urgency, VehicleType
-from app.domain.errors import Conflict, ValidationFailed
+from app.domain.errors import Conflict, InvalidTransition, ValidationFailed
 from app.domain.modes import Mode
 from app.domain.overrides import OverrideAction, OverrideCommand, ReasonCode
 from app.domain.state_machines import Actor, RequestStatus, TripStatus, VehicleStatus
@@ -828,3 +828,56 @@ async def test_no_automatic_path_moves_a_locked_request_or_pools_a_blocked_trip(
     await db_session.refresh(locked)
     assert locked.status == str(RequestStatus.queued)
     assert locked.trip_id is None
+
+
+async def test_a_lock_does_not_block_the_cab_it_pins_the_rider_to(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    dispatch: DispatchService,
+    overrides: OverrideService,
+) -> None:
+    """Found by S09, against a live backend.
+
+    `assign` declared `changes_vehicle=True` unconditionally, so the state machine
+    refused "a locked request can only change vehicle through a supervisor override"
+    even when the vehicle being assigned **was** the locked one. A locked queued
+    request could then never be assigned at all - not by the failsafe, not by a
+    supervisor pressing the button, not by anybody - which is the exact opposite of
+    what locking it was for.
+    """
+    request = await queued_request(db_session, world)
+    await apply(
+        overrides,
+        world,
+        OverrideAction.lock,
+        request_id=request.id,
+        vehicle_id=world["vehicle"].id,
+    )
+
+    trip = await dispatch.assign(
+        world["operator"].id, request.id, world["vehicle"].id, Actor.supervisor, None
+    )
+    assert trip.vehicle_id == world["vehicle"].id
+    assert request.status == str(RequestStatus.assigned)
+
+
+async def test_a_lock_still_blocks_a_different_cab_without_an_override(
+    db_session: AsyncSession,
+    world: dict[str, Any],
+    dispatch: DispatchService,
+    overrides: OverrideService,
+) -> None:
+    """The other half of the same fix: the guard must still guard."""
+    request = await queued_request(db_session, world)
+    await apply(
+        overrides,
+        world,
+        OverrideAction.lock,
+        request_id=request.id,
+        vehicle_id=world["vehicle"].id,
+    )
+
+    with pytest.raises(InvalidTransition):
+        await dispatch.assign(
+            world["operator"].id, request.id, world["other_vehicle"].id, Actor.supervisor, None
+        )

@@ -1,0 +1,77 @@
+# S08 supervisor_absent_semi_auto (scenarios.md): the failsafe covers for a human.
+#
+# A `semi_auto` scope offers a cab for every queued request and waits
+# `failsafe_timeout_seconds` for a supervisor to answer. This run takes the supervisor
+# away for thirty minutes in the middle of the morning peak and asks whether anybody
+# still gets a cab.
+#
+# The supervisor is `approve_all` rather than `absent`, deliberately. A run with nobody
+# watching at all would prove the failsafe fires, and would prove nothing about the
+# difference between a covered gap and an uncovered one - which is the question an
+# operator is actually asking before they turn semi-auto on. Here the same person is
+# answering offers before and after the gap, so what the failsafe did is visible
+# against what a human did either side of it.
+#
+# Not part of `make sim-quick` - it needs a live backend.
+name: supervisor_absent_semi_auto
+version: 1
+seed: 808
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 4
+speed_factor: 60
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    # Three minutes, the documented default, stated out loud because the whole run is
+    # about what happens when it elapses.
+    failsafe_timeout_seconds: 180
+    failsafe_action: auto_assign
+    alert_wait_minutes: 20
+    request_expiry_minutes: 90
+
+modes:
+  # The point of the run. Until M09 this block was read by nothing and the scenario
+  # ran in manual.
+  - {mode: semi_auto}
+
+fleet:
+  - {type: sedan_4, count: 10, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 40
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0                 # a VIP resolves to full_auto and is skipped (OQ-38)
+      priority_dist: {3: 0.5, 5: 0.5}
+      shifts:
+        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+
+supervisor:
+  policy: approve_all
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # Half an hour away, starting while the morning demand is still arriving.
+  - {at_ist: "07:30", type: supervisor_absent, duration_min: 30}
+
+assertions:
+  # The run is only about the failsafe if the failsafe actually fired. Without this a
+  # semi-auto scope that never engaged would pass everything else by doing nothing.
+  failsafe_assignments_min: 1
+  # Nobody is left holding an open request when the run ends: the gap was covered.
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

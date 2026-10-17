@@ -12,8 +12,21 @@ Policies (section 5.3):
 * `absent` - never respond. Tests what happens when nobody is watching: in Phase 1 the
   requests simply expire, and in Phase 2 the failsafe should fire.
 
-`approve_all` and `mixed` are Phase 2 and are refused rather than quietly treated as
-`manual_nearest`, which would make a Phase 2 scenario silently measure the wrong thing.
+* `approve_all` - in a `semi_auto` scope, take whatever the system offered, after the
+  same reaction delay. The optimistic bound: what the platform achieves when the human
+  never disagrees.
+* `mixed` - approve a configurable share and override the rest with a cab of their own
+  choosing. The realistic one, and the only policy that makes the Phase 2 exit
+  criterion mean anything: acceptance is measured against offers that could have been
+  rejected.
+
+**`approve_all` and `mixed` answer offers; `manual_nearest` makes assignments.** That
+is not a detail of implementation - it is the difference the scenarios exist to
+measure. A manual supervisor reads the queue, asks for candidates and presses assign;
+a semi-auto one reads what the system has already proposed and answers yes or no. The
+second is a smaller amount of work per request, which is the Phase 2 claim ("supervisor
+time per request reduced vs Phase 1"), and it is only true if the agent really does the
+smaller thing.
 """
 
 from __future__ import annotations
@@ -36,8 +49,17 @@ Process = Generator[simpy.Event, Any, Any]
 #: How often to glance at the queue when it is empty. Simulated seconds.
 IDLE_POLL_SECONDS = 30
 
-#: Policies this task implements. The rest are Phase 2.
-SUPPORTED = (SupervisorPolicy.manual_nearest, SupervisorPolicy.absent)
+#: Every policy `simulator-spec.md` section 5.3 names. All four are implemented;
+#: `approve_all` and `mixed` arrived with M09.
+SUPPORTED = (
+    SupervisorPolicy.manual_nearest,
+    SupervisorPolicy.absent,
+    SupervisorPolicy.approve_all,
+    SupervisorPolicy.mixed,
+)
+
+#: Policies that answer the system's offers rather than assigning from scratch.
+ANSWERING = (SupervisorPolicy.approve_all, SupervisorPolicy.mixed)
 
 
 class UnsupportedPolicyError(RuntimeError):
@@ -54,6 +76,13 @@ class SupervisorRecord:
     refusals: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
+    #: Semi-auto (M09). Offers answered, and how. `overrides` are `choose_other`: a
+    #: rejection of what was offered **followed by a manual choice**, which is what
+    #: makes an acceptance rate a measurement rather than an assumption.
+    offers_seen: int = 0
+    approvals: int = 0
+    overrides: int = 0
+    rejections: int = 0
     #: Which rules, and how often. A bare count says "every assignment broke something"
     #: without saying what, which is the difference between a finding and a mystery: a
     #: surge where every cab is too far away is a fleet problem, one where every cab is
@@ -96,6 +125,7 @@ class SupervisorAgent:
         token: str,
         policy: SupervisorPolicy = SupervisorPolicy.manual_nearest,
         reaction_delay_seconds: tuple[int, int] = (20, 120),
+        accept_rate: float = 0.7,
     ) -> None:
         if policy not in SUPPORTED:
             raise UnsupportedPolicyError(
@@ -107,6 +137,14 @@ class SupervisorAgent:
         self.policy = policy
         self.record = SupervisorRecord(policy=str(policy))
         self._delay = reaction_delay_seconds
+        #: `mixed` only. The share of offers this supervisor approves; the rest are
+        #: overridden with a cab they pick themselves.
+        self._accept_rate = accept_rate
+        #: Offers the backend refused. A supervisor does not press the same dead
+        #: button forty times; without this, one stale offer starves the queue for the
+        #: rest of the run, which is exactly what S08's first live run did (39 of its
+        #: 43 refusals were one offer).
+        self._unanswerable: set[str] = set()
         #: True while the supervisor has stepped away (M07 `supervisor_absent`). Distinct
         #: from the `absent` policy, which means nobody was ever watching.
         self.away = False
@@ -128,6 +166,20 @@ class SupervisorAgent:
         while self.engine.now() < self.engine.scenario.end:
             if self.away:
                 yield self.engine.env.timeout(IDLE_POLL_SECONDS)
+                continue
+
+            if self.policy in ANSWERING:
+                offer = self._oldest_offer()
+                if offer is None:
+                    yield self.engine.env.timeout(IDLE_POLL_SECONDS)
+                    continue
+                # The same reaction delay, deliberately: the Phase 2 claim is that a
+                # supervisor spends *less* time per request, and giving the answering
+                # policies a shorter delay would assume the conclusion. What changes is
+                # how many requests one person can get through, which falls out of
+                # doing one call instead of three.
+                yield self.engine.env.timeout(self._reaction_seconds())
+                self._answer(offer)
                 continue
 
             request = self._oldest_waiting()
@@ -152,6 +204,106 @@ class SupervisorAgent:
 
         self.record.looks += 1
         return queued[0] if queued else None
+
+    def _oldest_offer(self) -> dict[str, Any] | None:
+        """The offer that has been waiting longest for an answer (M09).
+
+        One per pass, like the manual queue: a supervisor with forty pending offers
+        still answers them one at a time, and the whole point of measuring semi-auto is
+        how far that one person gets.
+        """
+        platform = self.engine.platform
+        if platform is None:
+            return None
+        try:
+            offers = platform.open_offers(self.token)
+        except Exception as exc:  # noqa: BLE001 - a failed glance is not a crash
+            self.record.errors.append(f"offers: {type(exc).__name__}")
+            return None
+
+        self.record.looks += 1
+        fresh = [item for item in offers if str(item.get("id")) not in self._unanswerable]
+        if not fresh:
+            return None
+        # Rank 1 is the system's first choice; the siblings are closed with it.
+        first = [item for item in fresh if item.get("rank") == 1] or fresh
+        return min(first, key=lambda item: str(item.get("offered_at")))
+
+    def _answer(self, offer: dict[str, Any]) -> None:
+        """Approve the offer, or override it with a cab of our own choosing."""
+        platform = self.engine.platform
+        assert platform is not None
+
+        self.record.offers_seen += 1
+        suggestion_id = uuid.UUID(offer["id"])
+        request_id = uuid.UUID(offer["request_id"])
+
+        if self.policy is SupervisorPolicy.approve_all or self._approves():
+            self._decide(suggestion_id, "approve")
+            return
+
+        # `mixed` rejecting: a rejection on its own leaves the rider exactly where they
+        # were, so a supervisor who rejects always has somewhere else in mind. The
+        # override is `choose_other`, which the backend records as a rejection of what
+        # was offered **and** assigns the cab actually chosen - one call, which is what
+        # the supervisor's screen does.
+        alternative = self._alternative_to(request_id, offer)
+        if alternative is None:
+            # Nothing else is permitted, so the offer is the only option there is.
+            # Approving it is what a supervisor would do, and counting this as a
+            # rejection would make the acceptance rate a measure of fleet size.
+            self._decide(suggestion_id, "approve")
+            return
+        self._decide(suggestion_id, "choose_other", vehicle_id=alternative)
+
+    def _decide(
+        self, suggestion_id: uuid.UUID, decision: str, vehicle_id: uuid.UUID | None = None
+    ) -> None:
+        platform = self.engine.platform
+        assert platform is not None
+        try:
+            platform.decide_suggestion(
+                self.token,
+                suggestion_id=suggestion_id,
+                decision=decision,
+                vehicle_id=vehicle_id,
+                note="simulated supervisor" if decision != "approve" else None,
+            )
+        except Exception as exc:  # noqa: BLE001 - a refused decision is data, not a crash
+            self.record.refusals += 1
+            self.record.errors.append(f"decision: {exc}")
+            self.engine.record(f"supervisor could not answer {suggestion_id}: {exc}")
+            self._unanswerable.add(str(suggestion_id))
+            return
+
+        if decision == "approve":
+            self.record.approvals += 1
+            self.record.assignments += 1
+        elif decision == "choose_other":
+            self.record.overrides += 1
+            self.record.assignments += 1
+        else:
+            self.record.rejections += 1
+        self.engine.record(f"supervisor {decision} on offer {suggestion_id}")
+
+    def _alternative_to(self, request_id: uuid.UUID, offer: dict[str, Any]) -> uuid.UUID | None:
+        """A cab this supervisor would send instead of the one offered."""
+        platform = self.engine.platform
+        assert platform is not None
+        try:
+            candidates = platform.suggestions(self.token, request_id)
+        except Exception as exc:  # noqa: BLE001
+            self.record.errors.append(f"suggestions: {type(exc).__name__}")
+            return None
+
+        offered = str(offer.get("vehicle_id"))
+        others = [item for item in candidates if str(item.get("vehicle_id")) != offered]
+        choice = self._choose(others)
+        return uuid.UUID(choice["vehicle_id"]) if choice else None
+
+    def _approves(self) -> bool:
+        """`mixed`: approve this share of offers, from the run's seeded generator."""
+        return bool(self._rng.random() < self._accept_rate)
 
     # --- picking a cab -----------------------------------------------------------------
 
@@ -241,6 +393,15 @@ class DispatchSummary:
     violations_by_rule: dict[str, int] = field(default_factory=dict)
     gps_age_seconds_median: float | None = None
     gps_age_seconds_max: float | None = None
+    #: Semi-auto (M09). `acceptance_rate` is the Phase 2 exit criterion: approvals over
+    #: offers the supervisor actually answered. Overrides and rejections are both
+    #: counted against it, and offers the **failsafe** closed are not counted at all -
+    #: nobody accepted those, and counting them would score an absent supervisor 100%.
+    offers_seen: int = 0
+    approvals: int = 0
+    overrides: int = 0
+    rejections: int = 0
+    acceptance_rate: float | None = None
     errors: int = 0
 
 
@@ -256,8 +417,23 @@ def summarise(record: SupervisorRecord | None) -> DispatchSummary:
         violations_by_rule=dict(record.violations_by_rule),
         gps_age_seconds_median=_median(record.gps_age_seconds),
         gps_age_seconds_max=max(record.gps_age_seconds, default=None),
+        offers_seen=record.offers_seen,
+        approvals=record.approvals,
+        overrides=record.overrides,
+        rejections=record.rejections,
+        acceptance_rate=_rate(record),
         errors=len(record.errors),
     )
+
+
+def _rate(record: SupervisorRecord) -> float | None:
+    """Approvals over answered offers, or `None` when none were answered.
+
+    `None` rather than 0.0: a manual run answers no offers at all, and reporting it as
+    0% acceptance would put a figure on the board for something that did not happen.
+    """
+    answered = record.approvals + record.overrides + record.rejections
+    return record.approvals / answered if answered else None
 
 
 def _median(values: list[float]) -> float | None:

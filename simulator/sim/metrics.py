@@ -113,6 +113,23 @@ class DispatchMetrics:
     #: time-compression artefact.
     gps_age_seconds_median: float | None = None
     gps_age_seconds_max: float | None = None
+    #: Semi-auto (M09). `acceptance_rate` is Phase 2's exit criterion - approvals over
+    #: the offers a **human** answered. `None` in a manual run, where no offer was
+    #: answered at all: reporting 0% there would put a figure on the board for
+    #: something that never happened.
+    offers_seen: int = 0
+    approvals: int = 0
+    overrides: int = 0
+    rejections: int = 0
+    acceptance_rate: float | None = None
+    #: Offers the failsafe closed because nobody answered in time (`control-model.md`
+    #: §4). Deliberately **not** counted as acceptances - an absent supervisor would
+    #: otherwise score 100%.
+    failsafe_assignments: int = 0
+    #: S09. Requests a supervisor pinned to a cab, and how many ended up somewhere
+    #: else. The second number must be zero: CLAUDE.md hard rule 6.
+    locks_placed: int = 0
+    locks_broken: int = 0
     errors: int = 0
 
 

@@ -283,6 +283,84 @@ class PlatformClient:
         items: list[dict[str, Any]] = body.get("items", [])
         return items
 
+    def suggestions(self, token: str, request_id: uuid.UUID) -> list[dict[str, Any]]:
+        """What the system *recommends* for one request (B23).
+
+        Not the same list as `candidates`: suggestions are filtered by the hard rules,
+        candidates are not. A supervisor policy that approves what it is shown has to
+        read this one.
+        """
+        body = self._get(f"/dispatch/requests/{request_id}/suggestions", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def open_offers(self, token: str, request_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+        """Offers a `semi_auto` scope is waiting for an answer to (B25).
+
+        Carries the `id` the decision endpoint needs and the `failsafe_due_at` the
+        countdown is measured against - neither of which the recomputed suggestion list
+        has, because that list is not a record of anything.
+        """
+        query = "?status=offered" + (f"&request_id={request_id}" if request_id else "")
+        body = self._get(f"/dispatch/suggestions{query}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def offers_with_status(self, token: str, status: str) -> list[dict[str, Any]]:
+        """Offers in one terminal state, for the end-of-run count (S08)."""
+        body = self._get(f"/dispatch/suggestions?status={status}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def apply_override(
+        self,
+        token: str,
+        action: str,
+        reason_code: str = "local_knowledge",
+        note: str | None = None,
+        **targets: Any,
+    ) -> dict[str, Any]:
+        """One of the override actions (`control-model.md` §3, B26)."""
+        payload: dict[str, Any] = {"action": action, "reason_code": reason_code}
+        if note is not None:
+            payload["note"] = note
+        payload.update(
+            {key: (str(value) if value is not None else None) for key, value in targets.items()}
+        )
+        return self._post("/dispatch/overrides", json=payload, token=token)
+
+    def decide_suggestion(
+        self,
+        token: str,
+        suggestion_id: uuid.UUID,
+        decision: str,
+        vehicle_id: uuid.UUID | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """`approve`, `choose_other` or `reject` (`control-model.md` §1)."""
+        return self._post(
+            f"/dispatch/suggestions/{suggestion_id}/decision",
+            json={
+                "decision": decision,
+                "vehicle_id": str(vehicle_id) if vehicle_id else None,
+                "note": note,
+            },
+            token=token,
+        )
+
+    def set_mode(self, token: str, mode: str, note: str | None = None) -> dict[str, Any]:
+        """Put the whole operator into one mode (`POST /admin/mode-settings`, B24).
+
+        The catch-all setting - no client, no zone, no window - which `control-model.md`
+        §2 resolves at level 8. A scenario says `modes: [{mode: semi_auto}]` and means
+        "this operator runs in semi-auto", not "some corner of it does".
+        """
+        return self._post(
+            "/admin/mode-settings",
+            json={"mode": mode, "note": note or "scenario mode"},
+            token=token,
+        )
+
     def assign(
         self,
         token: str,

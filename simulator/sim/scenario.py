@@ -119,6 +119,11 @@ class Client(Strict):
 class Supervisor(Strict):
     policy: SupervisorPolicy = SupervisorPolicy.manual_nearest
     reaction_delay_s: list[int] = Field(default=[20, 120], min_length=2, max_length=2)
+    #: `mixed` only: the share of the system's offers this supervisor approves. The
+    #: rest are overridden with a cab of their own choosing, which is what makes the
+    #: Phase 2 acceptance rate a measurement - an offer that could not have been
+    #: rejected tells you nothing about whether the suggestions are any good.
+    accept_rate: float = Field(default=0.7, ge=0.0, le=1.0)
 
     @field_validator("reaction_delay_s")
     @classmethod
@@ -183,6 +188,16 @@ class Assertions(Strict):
     #: S07: a VIP is never pooled with another rider (`allocation-rules.md` section 2
     #: rule 4). Checked from the trips the drivers actually drove, not from intent.
     vip_never_pooled: bool | None = None
+    #: S08: the failsafe actually fired. Without this a semi-auto run that never
+    #: engaged passes every other assertion by doing nothing.
+    failsafe_assignments_min: int | None = None
+    #: S09: no locked request rode in a cab other than the one it was pinned to
+    #: (`control-model.md` §3 rule 1, CLAUDE.md hard rule 6). Fails if no lock was
+    #: placed at all - a check that measured nothing has not been satisfied.
+    locks_respected: bool | None = None
+    #: Phase 2's exit criterion, as a scenario assertion. Approvals over the offers a
+    #: human answered; failsafe assignments are not acceptances.
+    acceptance_rate_min: float | None = None
 
 
 class Scenario(Strict):

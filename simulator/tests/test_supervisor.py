@@ -39,6 +39,10 @@ class FakeDispatch:
         self.candidate_calls = 0
         self.fail_on: set[str] = set()
         self.refuse_assign = False
+        #: Semi-auto (M09). Offers waiting for an answer, and the answers given.
+        self.offers: list[dict[str, Any]] = []
+        self.decisions: list[tuple[uuid.UUID, str, uuid.UUID | None]] = []
+        self.refuse_decision = False
 
     def pending_requests(self, token: str, status: str = "queued") -> list[dict[str, Any]]:
         if "queue" in self.fail_on:
@@ -64,6 +68,35 @@ class FakeDispatch:
         self.assigned.append((request_id, vehicle_id))
         # A served request leaves the queue, exactly as the real board behaves.
         self.queued = [item for item in self.queued if item["id"] != str(request_id)]
+        return {}
+
+    # --- semi-auto (M09) ---------------------------------------------------------
+
+    def open_offers(
+        self, token: str, request_id: uuid.UUID | None = None
+    ) -> list[dict[str, Any]]:
+        if "offers" in self.fail_on:
+            raise RuntimeError("backend said no")
+        return self.offers
+
+    def suggestions(self, token: str, request_id: uuid.UUID) -> list[dict[str, Any]]:
+        if "suggestions" in self.fail_on:
+            raise RuntimeError("backend said no")
+        return self._candidates
+
+    def decide_suggestion(
+        self,
+        token: str,
+        suggestion_id: uuid.UUID,
+        decision: str,
+        vehicle_id: uuid.UUID | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        if self.refuse_decision:
+            raise RuntimeError("409: that offer is no longer open")
+        self.decisions.append((suggestion_id, decision, vehicle_id))
+        # An answered offer leaves the board, as the real one does.
+        self.offers = [item for item in self.offers if item["id"] != str(suggestion_id)]
         return {}
 
     def set_clock(self, now: Any) -> Any:
@@ -96,10 +129,15 @@ def supervisor_for(
     platform: FakeDispatch,
     policy: SupervisorPolicy = SupervisorPolicy.manual_nearest,
     delay: tuple[int, int] = (20, 120),
+    accept_rate: float = 0.7,
 ) -> SupervisorAgent:
     engine.platform = platform  # type: ignore[assignment]
     agent = SupervisorAgent(
-        engine, token="supervisor-token", policy=policy, reaction_delay_seconds=delay
+        engine,
+        token="supervisor-token",
+        policy=policy,
+        reaction_delay_seconds=delay,
+        accept_rate=accept_rate,
     )
     engine.supervisor = agent
     engine.spawn(agent.watch)
@@ -337,13 +375,126 @@ def test_an_absent_supervisor_never_assigns(engine: Engine) -> None:
     assert agent.record.looks == 0
 
 
-@pytest.mark.parametrize("policy", [SupervisorPolicy.approve_all, SupervisorPolicy.mixed])
-def test_a_phase_two_policy_is_refused_not_silently_downgraded(
-    engine: Engine, policy: SupervisorPolicy
-) -> None:
-    """Treating it as `manual_nearest` would make a Phase 2 scenario measure the wrong thing."""
-    with pytest.raises(UnsupportedPolicyError, match="Phase 2"):
-        SupervisorAgent(engine, token="t", policy=policy)
+def test_an_unknown_policy_is_refused_not_silently_downgraded(engine: Engine) -> None:
+    """All four documented policies are implemented since M09; anything else must still
+    fail loudly rather than quietly becoming `manual_nearest`."""
+    with pytest.raises(UnsupportedPolicyError):
+        SupervisorAgent(engine, token="t", policy="telepathy")  # type: ignore[arg-type]
+
+
+# --- semi-auto: answering offers rather than making assignments (M09) ----------------
+
+
+def offer_row(vehicle_id: str | None = None, rank: int = 1) -> dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "request_id": str(uuid.uuid4()),
+        "vehicle_id": vehicle_id or str(uuid.uuid4()),
+        "rank": rank,
+        "offered_at": "2026-10-05T01:00:00Z",
+        "failsafe_due_at": "2026-10-05T01:03:00Z",
+    }
+
+
+def test_approve_all_answers_the_offer_it_was_shown(engine: Engine) -> None:
+    """The semi-auto half of the shift: one call, not three."""
+    offered = offer_row()
+    platform = FakeDispatch([], [candidate(eta=60)])
+    platform.offers = [offered]
+    agent = supervisor_for(engine, platform, policy=SupervisorPolicy.approve_all)
+
+    engine.run()
+
+    assert [decision for _, decision, _ in platform.decisions] == ["approve"]
+    assert platform.decisions[0][0] == uuid.UUID(offered["id"])
+    # It answered the offer; it did not go and assign something itself.
+    assert platform.assigned == []
+    assert agent.record.approvals == 1
+    assert agent.record.offers_seen == 1
+
+
+def test_approve_all_answers_one_offer_at_a_time(engine: Engine) -> None:
+    """The human bottleneck does not disappear in semi-auto - it gets cheaper per
+    request, which is the Phase 2 claim and a different thing."""
+    platform = FakeDispatch([], [candidate(eta=60)])
+    platform.offers = [offer_row() for _ in range(3)]
+    supervisor_for(engine, platform, policy=SupervisorPolicy.approve_all)
+
+    engine.run()
+
+    assert len(platform.decisions) == 3
+    assert platform.offers == []
+
+
+def test_mixed_overrides_the_share_it_does_not_approve(engine: Engine) -> None:
+    """`choose_other`, not `reject`: a rejection on its own leaves the rider where they
+    were, and a supervisor who turns an offer down has somewhere else in mind."""
+    other = str(uuid.uuid4())
+    platform = FakeDispatch([], [candidate(eta=60, vehicle_id=other)])
+    platform.offers = [offer_row() for _ in range(20)]
+    agent = supervisor_for(
+        engine, platform, policy=SupervisorPolicy.mixed, accept_rate=0.0
+    )
+
+    engine.run()
+
+    assert {decision for _, decision, _ in platform.decisions} == {"choose_other"}
+    assert all(chosen == uuid.UUID(other) for _, _, chosen in platform.decisions)
+    assert agent.record.overrides == len(platform.decisions)
+    assert agent.record.approvals == 0
+
+
+def test_mixed_approves_when_there_is_nothing_else_to_choose(engine: Engine) -> None:
+    """Counting "the only permitted cab" as a rejection would make the acceptance rate
+    a measure of fleet size."""
+    only = str(uuid.uuid4())
+    offered = offer_row(vehicle_id=only)
+    platform = FakeDispatch([], [candidate(eta=60, vehicle_id=only)])
+    platform.offers = [offered]
+    agent = supervisor_for(
+        engine, platform, policy=SupervisorPolicy.mixed, accept_rate=0.0
+    )
+
+    engine.run()
+
+    assert [decision for _, decision, _ in platform.decisions] == ["approve"]
+    assert agent.record.approvals == 1
+
+
+def test_the_acceptance_rate_counts_only_answered_offers(engine: Engine) -> None:
+    """Phase 2's exit criterion. A manual run answers none and reports `None` rather
+    than 0%, which would be a figure for something that never happened."""
+    manual = SupervisorRecord(policy="manual_nearest", assignments=4)
+    assert summarise_dispatch(manual).acceptance_rate is None
+
+    answered = SupervisorRecord(
+        policy="mixed", offers_seen=10, approvals=7, overrides=2, rejections=1
+    )
+    assert summarise_dispatch(answered).acceptance_rate == pytest.approx(0.7)
+
+
+def test_a_refused_decision_is_recorded_not_fatal(engine: Engine) -> None:
+    platform = FakeDispatch([], [candidate(eta=60)])
+    platform.offers = [offer_row()]
+    platform.refuse_decision = True
+    agent = supervisor_for(engine, platform, policy=SupervisorPolicy.approve_all)
+
+    engine.run()
+
+    assert agent.record.refusals > 0
+    assert agent.record.approvals == 0
+
+
+def test_an_absent_supervisor_answers_no_offers(engine: Engine) -> None:
+    """S08 depends on this: the failsafe only matters if nobody answered."""
+    platform = FakeDispatch([], [candidate(eta=60)])
+    platform.offers = [offer_row()]
+    agent = supervisor_for(engine, platform, policy=SupervisorPolicy.absent)
+
+    engine.run()
+
+    assert platform.decisions == []
+    assert agent.record.offers_seen == 0
 
 
 # --- when the backend says no --------------------------------------------------------------------

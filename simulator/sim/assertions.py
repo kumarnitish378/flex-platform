@@ -45,6 +45,45 @@ def evaluate(assertions: Assertions, metrics: RunMetrics) -> list[Failure]:
                 )
             )
 
+    if assertions.failsafe_assignments_min is not None:
+        fired = metrics.dispatch.failsafe_assignments
+        if fired < assertions.failsafe_assignments_min:
+            failures.append(
+                Failure(
+                    "failsafe_assignments_min",
+                    f"the failsafe assigned {fired} time(s), expected at least "
+                    f"{assertions.failsafe_assignments_min} - a semi-auto run that never "
+                    "engaged passes everything else by doing nothing",
+                )
+            )
+
+    if assertions.locks_respected:
+        placed = metrics.dispatch.locks_placed
+        broken = metrics.dispatch.locks_broken
+        if placed == 0:
+            failures.append(
+                Failure("locks_respected", "no request was locked, so nothing was checked")
+            )
+        elif broken > 0:
+            failures.append(
+                Failure(
+                    "locks_respected",
+                    f"{broken} of {placed} locked request(s) rode in a different cab",
+                )
+            )
+
+    if assertions.acceptance_rate_min is not None:
+        rate = metrics.dispatch.acceptance_rate
+        if rate is None:
+            failures.append(Failure("acceptance_rate_min", "no offer was answered by a supervisor"))
+        elif rate < assertions.acceptance_rate_min:
+            failures.append(
+                Failure(
+                    "acceptance_rate_min",
+                    f"acceptance was {rate:.0%}, floor {assertions.acceptance_rate_min:.0%}",
+                )
+            )
+
     if assertions.all_requests_terminal:
         unresolved = metrics.demand.unresolved
         if unresolved is None:

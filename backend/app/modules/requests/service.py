@@ -32,6 +32,7 @@ from app.domain.enums import (
     Urgency,
 )
 from app.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from app.domain.failsafe import SuggestionStatus
 from app.domain.notifications import NotificationType
 from app.domain.state_machines import (
     Actor,
@@ -46,6 +47,7 @@ from app.domain.state_machines import (
 )
 from app.modules.alerts.models import Alert
 from app.modules.config.service import ConfigService
+from app.modules.dispatch.semi_auto import close_offers_for
 from app.modules.notifications.service import Audience, NotificationService
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest, RideRequestEvent
@@ -369,6 +371,11 @@ class RideRequestService:
         request.cancel_reason = effective_reason
         self._apply(request, event, actor_user_id)
         await self._release_the_trip(request, actor_user_id)
+        # An offer for a ride that no longer exists is not an open offer (M09). Left
+        # alone it stays on the supervisor's board and answers 409 forever.
+        await close_offers_for(
+            self.session, request.id, SuggestionStatus.superseded, self.clock.now()
+        )
         await self.session.flush()
 
         # `trip-lifecycle.md` section 6 splits this by who cancelled: the employee
@@ -496,6 +503,7 @@ class RideRequestService:
                 ),
                 actor_user_id=None,
             )
+            await close_offers_for(self.session, request.id, SuggestionStatus.expired, now)
             count += 1
 
         if count:

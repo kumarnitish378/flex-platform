@@ -43,6 +43,11 @@ FULL_SUITE = (
     "vip_burst",
     "breakdown_with_riders",
     "gps_loss",
+    # The two Phase 2 runs (M10). Four simulated hours each, so they sit above the
+    # sixteen-hour days and below nothing - a broken failsafe or a broken override
+    # reports in a few minutes rather than at the end of the night.
+    "supervisor_absent_semi_auto",
+    "override_respected",
     "evening_surge",
     "normal_weekday",
     "rain_day",

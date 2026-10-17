@@ -41,7 +41,7 @@ from sim.pings import MemoryPingSink
 from sim.platform import DutyCredentials, PlatformClient, PlatformError, SeededWorld
 from sim.rng import RngFactory
 from sim.routing import RoutingClient, build_routing
-from sim.scenario import LatLngModel, Scenario
+from sim.scenario import LatLngModel, OperatorMode, Scenario
 from sim.traffic import TrafficModel
 
 # A SimPy process is a generator yielding events.
@@ -103,6 +103,10 @@ class Engine:
         self.drivers: list[DriverAgent] = []
         #: One person watching the queue (M06). None until a platform run spawns them.
         self.supervisor: SupervisorAgent | None = None
+        #: Requests a supervisor pinned to a cab, and to which (S09, M09). Kept here
+        #: rather than on the injector because the check happens at the end of the run,
+        #: long after the event that placed them.
+        self.locks: dict[uuid.UUID, uuid.UUID] = {}
         #: One shared read of the request board, so riders do not each poll (OQ-26).
         self.board: StatusBoard | None = None
         #: The same for the drivers' trips. None means every driver polls for itself,
@@ -335,8 +339,56 @@ class Engine:
             violations_by_rule=summary.violations_by_rule,
             gps_age_seconds_median=summary.gps_age_seconds_median,
             gps_age_seconds_max=summary.gps_age_seconds_max,
+            offers_seen=summary.offers_seen,
+            approvals=summary.approvals,
+            overrides=summary.overrides,
+            rejections=summary.rejections,
+            acceptance_rate=summary.acceptance_rate,
+            failsafe_assignments=self._failsafe_assignments(),
+            locks_placed=len(self.locks),
+            locks_broken=self._locks_broken(),
             errors=summary.errors,
         )
+
+    def _failsafe_assignments(self) -> int:
+        """Offers the failsafe closed because nobody answered (`control-model.md` §4).
+
+        Read from the platform at the end rather than counted as they happen: the
+        failsafe is the *platform* acting, and a simulator that counted its own
+        expectation would pass whether or not the backend did anything.
+        """
+        if self.platform is None or self.supervisor is None:
+            return 0
+        try:
+            return len(self.platform.offers_with_status(self.supervisor.token, "failsafe_assigned"))
+        except Exception as exc:  # noqa: BLE001 - a failed read is not a crash
+            self.record(f"could not read failsafe assignments: {type(exc).__name__}")
+            return 0
+
+    def _locks_broken(self) -> int:
+        """Locked requests that ended up on a different cab (S09).
+
+        Zero is the only passing answer (CLAUDE.md hard rule 6). Checked against the
+        cab the rider **actually rode in**, read from the drivers' own records the way
+        `_vip_pooled` is, not against `lock_vehicle_id`: the claim is that no automatic
+        path moved them, and the column would still read correctly if one had.
+        """
+        if not self.locks:
+            return 0
+
+        carried: dict[str, str] = {}
+        for driver in self.drivers:
+            for riders in driver.record.riders_per_trip.values():
+                for request_id in riders:
+                    carried[request_id] = str(driver.vehicle.vehicle_id)
+
+        broken = 0
+        for locked_request, vehicle_id in self.locks.items():
+            rode_in = carried.get(str(locked_request))
+            if rode_in is not None and rode_in != str(vehicle_id):
+                self.record(f"lock broken: {locked_request} rode in {rode_in}, not {vehicle_id}")
+                broken += 1
+        return broken
 
     def _agent_errors(self) -> int:
         """Every API call an agent could not make. Counted, never fatal."""
@@ -473,6 +525,18 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
             overrides.get("no_show_wait_minutes", DEFAULT_NO_SHOW_WAIT_MINUTES)
         )
 
+    # The scenario's `modes:` block, which until M09 was declared and read by nothing -
+    # so a scenario saying `semi_auto` ran in manual and measured the wrong thing. The
+    # same family of bug as the fleet composition (M08) and `alert_wait_minutes`
+    # (ADR-0023): stated in good faith, silently ignored.
+    for entry in engine.scenario.modes:
+        if entry.mode is OperatorMode.manual:
+            # Manual is the operator default (`control-model.md` §2 level 8); writing a
+            # setting for it would be a no-op row in every scenario.
+            continue
+        platform.set_mode(world.token_for("operator_admin"), str(entry.mode))
+        engine.record(f"operator mode set to {entry.mode}")
+
     tokens = world.tokens_for("driver")
     if not tokens:
         raise PlatformError("The reset fixture seeded no driver logins")
@@ -601,6 +665,7 @@ def _spawn_supervisor(engine: Engine, world: SeededWorld) -> None:
         token=world.token_for("supervisor"),
         policy=settings.policy,
         reaction_delay_seconds=(low, high),
+        accept_rate=settings.accept_rate,
     )
     engine.supervisor = supervisor
     engine.spawn(supervisor.watch)

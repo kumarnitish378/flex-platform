@@ -281,16 +281,56 @@ business numbers still come from `operator_config`.
 
 ## Simulator
 
-- [ ] **M09 · Supervisor policies for semi-auto** · deps B25
+- [x] **M09 · Supervisor policies for semi-auto** · deps B25
   Docs: simulator-spec.md, control-model.md §4
   Do: the `approve_all` and `mixed` policies M06 deliberately left raising — a supervisor who accepts every
   suggestion, and one who accepts a configurable share and overrides the rest. Reaction delays as M06.
   Done when: S08 and S09 run; a rejected suggestion is followed by a manual choice, so acceptance rate is
   measurable rather than assumed.
+  The two policies **answer offers**; `manual_nearest` makes assignments. That is the difference the
+  scenarios exist to measure, so the agent really does the smaller thing — one call instead of three —
+  while keeping the same reaction delay, because giving semi-auto a shorter one would assume Phase 2's
+  conclusion. A `mixed` rejection is `choose_other`: a rejection on its own leaves the rider where they
+  were, and a supervisor who turns an offer down has somewhere else in mind.
+  **Three things were declared and read by nothing until this task touched them.** `scenario.modes` —
+  a scenario saying `semi_auto` ran in **manual**, the same family of bug as the fleet composition (M08)
+  and `alert_wait_minutes` (ADR-0023). The `suggestion` table's id — `/suggestions/{id}/decision` needed
+  a `suggestion_id` that no endpoint returned, so the decision endpoint was uncallable by any client,
+  app included (`GET /dispatch/suggestions` now returns it, with the `failsafe_due_at` A13's countdown
+  needs). And a **failsafe assignment was stored as `accepted`**, which would have let a scope nobody
+  watched score 100% on Phase 2's acceptance criterion — it has its own status now.
+  **What the acceptance rate can and cannot mean is OQ-39.** The simulator measures its own
+  configuration, not whether the suggestions are good: `approve_all` is 1.0 by construction and `mixed`
+  returns roughly its `accept_rate` (S09 configured 0.7, measured 0.9 — the gap is offers where no
+  alternative cab existed, where approving is the only honest answer). The criterion needs pilot data,
+  and the `suggestion` table is already recording what it will be computed from.
 
-- [ ] **M10 · Scenarios S08–S09** · deps M09
+- [x] **M10 · Scenarios S08–S09** · deps M09
   Docs: scenarios.md
   Done when: both run in `make sim-full` and their assertions are evaluated against a live backend.
+  Both run, both pass live, and both are in `FULL_SUITE` ahead of the sixteen-hour days so a broken
+  failsafe reports in minutes. S08 takes an `approve_all` supervisor away for thirty minutes rather than
+  using the `absent` policy: a run with nobody watching at all proves the failsafe fires and proves
+  nothing about the difference between a covered gap and an uncovered one, which is the question an
+  operator asks before turning semi-auto on. S09 locks ten requests to the **second**-best suggestion,
+  because locking a rider to the cab the optimizer already wanted makes "never moved it" and "agreed with
+  it" indistinguishable.
+  **Both scenarios found real bugs on their first live run, which is what they are for.**
+  (1) *A cancelled request left its offers open.* A rider gave up, their request was cancelled, and the
+  offers already made for it stayed `offered` — the sweep supersedes a stale offer but only the rank-1
+  one and only when its timer comes due, so the second and third choices sat open for the rest of the
+  run. On the simulator's board that was 39 identical 409s from one dead offer; on a real supervisor's
+  board it is a row that cannot be cleared. Cancelling or expiring a request now closes its offers, and
+  the agent stops pressing a button the backend has refused.
+  (2) *A lock blocked the cab it pinned the rider to.* `assign` declared `changes_vehicle=True`
+  unconditionally, so the state machine refused "a locked request can only change vehicle through a
+  supervisor override" **even when the vehicle was the locked one** — a locked queued request could then
+  never be assigned by anybody, by hand or by the failsafe, which is the exact opposite of what locking
+  it was for. This is a Phase 2 bug that B26's own tests missed because they locked requests that were
+  already assigned. Two regression tests now cover both halves: the locked cab is allowed, any other cab
+  still needs an override.
+  S09's final run: **10 locks placed, 0 broken**, with the supervisor actively overriding offers
+  throughout — hard rule 6 proved end to end rather than asserted in a unit test.
 
 ## App
 

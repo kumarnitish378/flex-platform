@@ -25,8 +25,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
@@ -88,6 +89,35 @@ class SemiAutoSweep:
     #: rejections: the supervisor never turned these down, the world moved.
     superseded: int = 0
     no_candidate: int = 0
+
+
+async def close_offers_for(
+    session: AsyncSession,
+    request_id: uuid.UUID,
+    status: SuggestionStatus,
+    now: datetime,
+) -> int:
+    """Close every open offer for a request that can no longer be assigned (M09).
+
+    A free function rather than a method, so the request service can call it without
+    building a `DispatchService` it has no use for.
+
+    Found by S08. A rider gave up, their request was cancelled, and the offers already
+    made for it stayed `offered` - so the supervisor's board kept showing an offer for
+    a ride that no longer existed, and answering it returned 409 every time. The sweep
+    does supersede a stale offer, but only the **rank 1** one and only when its
+    failsafe timer comes due; the second and third choices sat open for the rest of the
+    run. In the simulator that was 39 identical refusals. On a real board it is a row
+    that cannot be cleared.
+    """
+    result = await session.execute(
+        update(Suggestion)
+        .where(Suggestion.request_id == request_id)
+        .where(Suggestion.status == str(SuggestionStatus.offered))
+        .values(status=str(status), decided_at=now)
+    )
+    # `rowcount` lives on the cursor result; the typed facade does not declare it.
+    return int(cast("CursorResult[Any]", result).rowcount or 0)
 
 
 class SemiAutoService:
