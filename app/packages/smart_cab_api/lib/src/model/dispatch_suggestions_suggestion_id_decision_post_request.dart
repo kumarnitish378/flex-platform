@@ -14,20 +14,26 @@ part 'dispatch_suggestions_suggestion_id_decision_post_request.g.dart';
 ///
 /// Properties:
 /// * [decision] 
-/// * [vehicleId] 
+/// * [vehicleId] - required for `choose_other`, ignored otherwise
 /// * [reasonCode] 
+/// * [note] - free text
 @BuiltValue()
 abstract class DispatchSuggestionsSuggestionIdDecisionPostRequest implements Built<DispatchSuggestionsSuggestionIdDecisionPostRequest, DispatchSuggestionsSuggestionIdDecisionPostRequestBuilder> {
   @BuiltValueField(wireName: r'decision')
   DispatchSuggestionsSuggestionIdDecisionPostRequestDecisionEnum get decision;
   // enum decisionEnum {  approve,  choose_other,  reject,  };
 
+  /// required for `choose_other`, ignored otherwise
   @BuiltValueField(wireName: r'vehicle_id')
   String? get vehicleId;
 
   @BuiltValueField(wireName: r'reason_code')
   ReasonCode? get reasonCode;
   // enum reasonCodeEnum {  driver_issue,  local_knowledge,  client_request,  traffic,  vehicle_issue,  safety,  other,  };
+
+  /// free text
+  @BuiltValueField(wireName: r'note')
+  String? get note;
 
   DispatchSuggestionsSuggestionIdDecisionPostRequest._();
 
@@ -69,6 +75,13 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequestSerializer implements 
       yield serializers.serialize(
         object.reasonCode,
         specifiedType: const FullType(ReasonCode),
+      );
+    }
+    if (object.note != null) {
+      yield r'note';
+      yield serializers.serialize(
+        object.note,
+        specifiedType: const FullType(String),
       );
     }
   }
@@ -115,6 +128,13 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequestSerializer implements 
             specifiedType: const FullType(ReasonCode),
           ) as ReasonCode;
           result.reasonCode = valueDes;
+          break;
+        case r'note':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.note = valueDes;
           break;
         default:
           unhandled.add(key);

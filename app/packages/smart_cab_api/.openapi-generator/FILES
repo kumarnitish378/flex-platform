@@ -21,6 +21,7 @@ lib/src/auth/oauth.dart
 lib/src/date_serializer.dart
 lib/src/model/admin_clients_client_id_employees_get200_response.dart
 lib/src/model/admin_drivers_get200_response.dart
+lib/src/model/admin_mode_settings_get200_response.dart
 lib/src/model/admin_users_invite_post_request.dart
 lib/src/model/admin_vehicles_get200_response.dart
 lib/src/model/alert.dart
@@ -55,7 +56,9 @@ lib/src/model/lat_lng.dart
 lib/src/model/location_ping.dart
 lib/src/model/me.dart
 lib/src/model/me_roles_inner.dart
+lib/src/model/mode_resolution.dart
 lib/src/model/mode_setting.dart
+lib/src/model/mode_setting_input.dart
 lib/src/model/office.dart
 lib/src/model/office_input.dart
 lib/src/model/otp_request.dart
@@ -77,6 +80,7 @@ lib/src/model/simctl_release_post_request.dart
 lib/src/model/simctl_reset_post_request.dart
 lib/src/model/sos_post_request.dart
 lib/src/model/stop_status.dart
+lib/src/model/suggestion_decision_result.dart
 lib/src/model/token_pair.dart
 lib/src/model/tracker_type.dart
 lib/src/model/trip.dart

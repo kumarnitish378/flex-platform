@@ -33,8 +33,32 @@ final BuiltSet<ModeSettingModeEnum> _$modeSettingModeEnumValues =
   _$modeSettingModeEnum_fullAuto,
 ]);
 
+const ModeSettingDirectionEnum _$modeSettingDirectionEnum_toOffice =
+    const ModeSettingDirectionEnum._('toOffice');
+const ModeSettingDirectionEnum _$modeSettingDirectionEnum_fromOffice =
+    const ModeSettingDirectionEnum._('fromOffice');
+
+ModeSettingDirectionEnum _$modeSettingDirectionEnumValueOf(String name) {
+  switch (name) {
+    case 'toOffice':
+      return _$modeSettingDirectionEnum_toOffice;
+    case 'fromOffice':
+      return _$modeSettingDirectionEnum_fromOffice;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<ModeSettingDirectionEnum> _$modeSettingDirectionEnumValues =
+    BuiltSet<ModeSettingDirectionEnum>(const <ModeSettingDirectionEnum>[
+  _$modeSettingDirectionEnum_toOffice,
+  _$modeSettingDirectionEnum_fromOffice,
+]);
+
 Serializer<ModeSettingModeEnum> _$modeSettingModeEnumSerializer =
     _$ModeSettingModeEnumSerializer();
+Serializer<ModeSettingDirectionEnum> _$modeSettingDirectionEnumSerializer =
+    _$ModeSettingDirectionEnumSerializer();
 
 class _$ModeSettingModeEnumSerializer
     implements PrimitiveSerializer<ModeSettingModeEnum> {
@@ -66,36 +90,71 @@ class _$ModeSettingModeEnumSerializer
           _fromWire[serialized] ?? (serialized is String ? serialized : ''));
 }
 
+class _$ModeSettingDirectionEnumSerializer
+    implements PrimitiveSerializer<ModeSettingDirectionEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'toOffice': 'to_office',
+    'fromOffice': 'from_office',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'to_office': 'toOffice',
+    'from_office': 'fromOffice',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[ModeSettingDirectionEnum];
+  @override
+  final String wireName = 'ModeSettingDirectionEnum';
+
+  @override
+  Object serialize(Serializers serializers, ModeSettingDirectionEnum object,
+          {FullType specifiedType = FullType.unspecified}) =>
+      _toWire[object.name] ?? object.name;
+
+  @override
+  ModeSettingDirectionEnum deserialize(
+          Serializers serializers, Object serialized,
+          {FullType specifiedType = FullType.unspecified}) =>
+      ModeSettingDirectionEnum.valueOf(
+          _fromWire[serialized] ?? (serialized is String ? serialized : ''));
+}
+
 class _$ModeSetting extends ModeSetting {
   @override
   final String? id;
+  @override
+  final DateTime? updatedAt;
+  @override
+  final ModeSettingInputModeEnum mode;
   @override
   final String? clientId;
   @override
   final String? zoneId;
   @override
-  final Direction? direction;
+  final ModeSettingInputDirectionEnum? direction;
   @override
-  final int? weekdays;
+  final BuiltList<int>? weekdays;
   @override
   final String? startTime;
   @override
   final String? endTime;
   @override
-  final ModeSettingModeEnum mode;
+  final String? note;
 
   factory _$ModeSetting([void Function(ModeSettingBuilder)? updates]) =>
       (ModeSettingBuilder()..update(updates))._build();
 
   _$ModeSetting._(
       {this.id,
+      this.updatedAt,
+      required this.mode,
       this.clientId,
       this.zoneId,
       this.direction,
       this.weekdays,
       this.startTime,
       this.endTime,
-      required this.mode})
+      this.note})
       : super._();
   @override
   ModeSetting rebuild(void Function(ModeSettingBuilder) updates) =>
@@ -109,26 +168,30 @@ class _$ModeSetting extends ModeSetting {
     if (identical(other, this)) return true;
     return other is ModeSetting &&
         id == other.id &&
+        updatedAt == other.updatedAt &&
+        mode == other.mode &&
         clientId == other.clientId &&
         zoneId == other.zoneId &&
         direction == other.direction &&
         weekdays == other.weekdays &&
         startTime == other.startTime &&
         endTime == other.endTime &&
-        mode == other.mode;
+        note == other.note;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, id.hashCode);
+    _$hash = $jc(_$hash, updatedAt.hashCode);
+    _$hash = $jc(_$hash, mode.hashCode);
     _$hash = $jc(_$hash, clientId.hashCode);
     _$hash = $jc(_$hash, zoneId.hashCode);
     _$hash = $jc(_$hash, direction.hashCode);
     _$hash = $jc(_$hash, weekdays.hashCode);
     _$hash = $jc(_$hash, startTime.hashCode);
     _$hash = $jc(_$hash, endTime.hashCode);
-    _$hash = $jc(_$hash, mode.hashCode);
+    _$hash = $jc(_$hash, note.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -137,51 +200,66 @@ class _$ModeSetting extends ModeSetting {
   String toString() {
     return (newBuiltValueToStringHelper(r'ModeSetting')
           ..add('id', id)
+          ..add('updatedAt', updatedAt)
+          ..add('mode', mode)
           ..add('clientId', clientId)
           ..add('zoneId', zoneId)
           ..add('direction', direction)
           ..add('weekdays', weekdays)
           ..add('startTime', startTime)
           ..add('endTime', endTime)
-          ..add('mode', mode))
+          ..add('note', note))
         .toString();
   }
 }
 
-class ModeSettingBuilder implements Builder<ModeSetting, ModeSettingBuilder> {
+class ModeSettingBuilder
+    implements
+        Builder<ModeSetting, ModeSettingBuilder>,
+        ModeSettingInputBuilder {
   _$ModeSetting? _$v;
 
   String? _id;
   String? get id => _$this._id;
-  set id(String? id) => _$this._id = id;
+  set id(covariant String? id) => _$this._id = id;
+
+  DateTime? _updatedAt;
+  DateTime? get updatedAt => _$this._updatedAt;
+  set updatedAt(covariant DateTime? updatedAt) => _$this._updatedAt = updatedAt;
+
+  ModeSettingInputModeEnum? _mode;
+  ModeSettingInputModeEnum? get mode => _$this._mode;
+  set mode(covariant ModeSettingInputModeEnum? mode) => _$this._mode = mode;
 
   String? _clientId;
   String? get clientId => _$this._clientId;
-  set clientId(String? clientId) => _$this._clientId = clientId;
+  set clientId(covariant String? clientId) => _$this._clientId = clientId;
 
   String? _zoneId;
   String? get zoneId => _$this._zoneId;
-  set zoneId(String? zoneId) => _$this._zoneId = zoneId;
+  set zoneId(covariant String? zoneId) => _$this._zoneId = zoneId;
 
-  Direction? _direction;
-  Direction? get direction => _$this._direction;
-  set direction(Direction? direction) => _$this._direction = direction;
+  ModeSettingInputDirectionEnum? _direction;
+  ModeSettingInputDirectionEnum? get direction => _$this._direction;
+  set direction(covariant ModeSettingInputDirectionEnum? direction) =>
+      _$this._direction = direction;
 
-  int? _weekdays;
-  int? get weekdays => _$this._weekdays;
-  set weekdays(int? weekdays) => _$this._weekdays = weekdays;
+  ListBuilder<int>? _weekdays;
+  ListBuilder<int> get weekdays => _$this._weekdays ??= ListBuilder<int>();
+  set weekdays(covariant ListBuilder<int>? weekdays) =>
+      _$this._weekdays = weekdays;
 
   String? _startTime;
   String? get startTime => _$this._startTime;
-  set startTime(String? startTime) => _$this._startTime = startTime;
+  set startTime(covariant String? startTime) => _$this._startTime = startTime;
 
   String? _endTime;
   String? get endTime => _$this._endTime;
-  set endTime(String? endTime) => _$this._endTime = endTime;
+  set endTime(covariant String? endTime) => _$this._endTime = endTime;
 
-  ModeSettingModeEnum? _mode;
-  ModeSettingModeEnum? get mode => _$this._mode;
-  set mode(ModeSettingModeEnum? mode) => _$this._mode = mode;
+  String? _note;
+  String? get note => _$this._note;
+  set note(covariant String? note) => _$this._note = note;
 
   ModeSettingBuilder() {
     ModeSetting._defaults(this);
@@ -191,20 +269,22 @@ class ModeSettingBuilder implements Builder<ModeSetting, ModeSettingBuilder> {
     final $v = _$v;
     if ($v != null) {
       _id = $v.id;
+      _updatedAt = $v.updatedAt;
+      _mode = $v.mode;
       _clientId = $v.clientId;
       _zoneId = $v.zoneId;
       _direction = $v.direction;
-      _weekdays = $v.weekdays;
+      _weekdays = $v.weekdays?.toBuilder();
       _startTime = $v.startTime;
       _endTime = $v.endTime;
-      _mode = $v.mode;
+      _note = $v.note;
       _$v = null;
     }
     return this;
   }
 
   @override
-  void replace(ModeSetting other) {
+  void replace(covariant ModeSetting other) {
     _$v = other as _$ModeSetting;
   }
 
@@ -217,18 +297,33 @@ class ModeSettingBuilder implements Builder<ModeSetting, ModeSettingBuilder> {
   ModeSetting build() => _build();
 
   _$ModeSetting _build() {
-    final _$result = _$v ??
-        _$ModeSetting._(
-          id: id,
-          clientId: clientId,
-          zoneId: zoneId,
-          direction: direction,
-          weekdays: weekdays,
-          startTime: startTime,
-          endTime: endTime,
-          mode: BuiltValueNullFieldError.checkNotNull(
-              mode, r'ModeSetting', 'mode'),
-        );
+    _$ModeSetting _$result;
+    try {
+      _$result = _$v ??
+          _$ModeSetting._(
+            id: id,
+            updatedAt: updatedAt,
+            mode: BuiltValueNullFieldError.checkNotNull(
+                mode, r'ModeSetting', 'mode'),
+            clientId: clientId,
+            zoneId: zoneId,
+            direction: direction,
+            weekdays: _weekdays?.build(),
+            startTime: startTime,
+            endTime: endTime,
+            note: note,
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'weekdays';
+        _weekdays?.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+            r'ModeSetting', _$failedField, e.toString());
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

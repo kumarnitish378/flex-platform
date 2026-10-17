@@ -89,6 +89,10 @@ Class | Method | HTTP request | Description
 [*AdminApi*](doc/AdminApi.md) | [**adminDriversGet**](doc/AdminApi.md#admindriversget) | **GET** /admin/drivers | 
 [*AdminApi*](doc/AdminApi.md) | [**adminDriversPost**](doc/AdminApi.md#admindriverspost) | **POST** /admin/drivers | 
 [*AdminApi*](doc/AdminApi.md) | [**adminEmployeesEmployeeIdPatch**](doc/AdminApi.md#adminemployeesemployeeidpatch) | **PATCH** /admin/employees/{employee_id} | 
+[*AdminApi*](doc/AdminApi.md) | [**adminModeSettingsGet**](doc/AdminApi.md#adminmodesettingsget) | **GET** /admin/mode-settings | Mode settings for this operator (Phase 2)
+[*AdminApi*](doc/AdminApi.md) | [**adminModeSettingsPost**](doc/AdminApi.md#adminmodesettingspost) | **POST** /admin/mode-settings | Create a mode setting
+[*AdminApi*](doc/AdminApi.md) | [**adminModeSettingsSettingIdDelete**](doc/AdminApi.md#adminmodesettingssettingiddelete) | **DELETE** /admin/mode-settings/{setting_id} | Delete a mode setting
+[*AdminApi*](doc/AdminApi.md) | [**adminModeSettingsSettingIdPut**](doc/AdminApi.md#adminmodesettingssettingidput) | **PUT** /admin/mode-settings/{setting_id} | Replace a mode setting
 [*AdminApi*](doc/AdminApi.md) | [**adminUsersInvitePost**](doc/AdminApi.md#adminusersinvitepost) | **POST** /admin/users/invite | Invite supervisor or client_admin by phone
 [*AdminApi*](doc/AdminApi.md) | [**adminVehiclesGet**](doc/AdminApi.md#adminvehiclesget) | **GET** /admin/vehicles | 
 [*AdminApi*](doc/AdminApi.md) | [**adminVehiclesPost**](doc/AdminApi.md#adminvehiclespost) | **POST** /admin/vehicles | 
@@ -104,13 +108,13 @@ Class | Method | HTTP request | Description
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAssignPost**](doc/DispatchApi.md#dispatchassignpost) | **POST** /dispatch/assign | Manual assign a request to a vehicle (new trip) or existing trip
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAutomationGet**](doc/DispatchApi.md#dispatchautomationget) | **GET** /dispatch/automation | 
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAutomationPut**](doc/DispatchApi.md#dispatchautomationput) | **PUT** /dispatch/automation | 
-[*DispatchApi*](doc/DispatchApi.md) | [**dispatchModesGet**](doc/DispatchApi.md#dispatchmodesget) | **GET** /dispatch/modes | 
-[*DispatchApi*](doc/DispatchApi.md) | [**dispatchModesPost**](doc/DispatchApi.md#dispatchmodespost) | **POST** /dispatch/modes | 
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchOverridesPost**](doc/DispatchApi.md#dispatchoverridespost) | **POST** /dispatch/overrides | Apply an override action
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchOverridesPreviewPost**](doc/DispatchApi.md#dispatchoverridespreviewpost) | **POST** /dispatch/overrides/preview | Impact preview without applying
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsGet**](doc/DispatchApi.md#dispatchrequestsget) | **GET** /dispatch/requests | Pending and active requests for the operator
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsRequestIdCandidatesGet**](doc/DispatchApi.md#dispatchrequestsrequestidcandidatesget) | **GET** /dispatch/requests/{request_id}/candidates | Candidate vehicles with ETA and load (Phase 1); with cost and reasons (Phase 2)
-[*DispatchApi*](doc/DispatchApi.md) | [**dispatchSuggestionsSuggestionIdDecisionPost**](doc/DispatchApi.md#dispatchsuggestionssuggestioniddecisionpost) | **POST** /dispatch/suggestions/{suggestion_id}/decision | 
+[*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsRequestIdModeGet**](doc/DispatchApi.md#dispatchrequestsrequestidmodeget) | **GET** /dispatch/requests/{request_id}/mode | Which mode governs this request, and why (Phase 2)
+[*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsRequestIdSuggestionsGet**](doc/DispatchApi.md#dispatchrequestsrequestidsuggestionsget) | **GET** /dispatch/requests/{request_id}/suggestions | The system&#39;s top recommendations for this request (Phase 2)
+[*DispatchApi*](doc/DispatchApi.md) | [**dispatchSuggestionsSuggestionIdDecisionPost**](doc/DispatchApi.md#dispatchsuggestionssuggestioniddecisionpost) | **POST** /dispatch/suggestions/{suggestion_id}/decision | Answer one of the system&#39;s suggestions (Phase 2)
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchTripsGet**](doc/DispatchApi.md#dispatchtripsget) | **GET** /dispatch/trips | Every trip for the operator, with stops - one read for a whole board
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchVehiclesGet**](doc/DispatchApi.md#dispatchvehiclesget) | **GET** /dispatch/vehicles | Snapshot of vehicles with live position and state
 [*DriverApi*](doc/DriverApi.md) | [**driverDutyGet**](doc/DriverApi.md#driverdutyget) | **GET** /driver/duty | Whether this driver is on duty, and in which cab
@@ -139,6 +143,7 @@ Class | Method | HTTP request | Description
 
  - [AdminClientsClientIdEmployeesGet200Response](doc/AdminClientsClientIdEmployeesGet200Response.md)
  - [AdminDriversGet200Response](doc/AdminDriversGet200Response.md)
+ - [AdminModeSettingsGet200Response](doc/AdminModeSettingsGet200Response.md)
  - [AdminUsersInvitePostRequest](doc/AdminUsersInvitePostRequest.md)
  - [AdminVehiclesGet200Response](doc/AdminVehiclesGet200Response.md)
  - [Alert](doc/Alert.md)
@@ -172,7 +177,9 @@ Class | Method | HTTP request | Description
  - [LocationPing](doc/LocationPing.md)
  - [Me](doc/Me.md)
  - [MeRolesInner](doc/MeRolesInner.md)
+ - [ModeResolution](doc/ModeResolution.md)
  - [ModeSetting](doc/ModeSetting.md)
+ - [ModeSettingInput](doc/ModeSettingInput.md)
  - [Office](doc/Office.md)
  - [OfficeInput](doc/OfficeInput.md)
  - [OtpRequest](doc/OtpRequest.md)
@@ -194,6 +201,7 @@ Class | Method | HTTP request | Description
  - [SimctlResetPostRequest](doc/SimctlResetPostRequest.md)
  - [SosPostRequest](doc/SosPostRequest.md)
  - [StopStatus](doc/StopStatus.md)
+ - [SuggestionDecisionResult](doc/SuggestionDecisionResult.md)
  - [TokenPair](doc/TokenPair.md)
  - [TrackerType](doc/TrackerType.md)
  - [Trip](doc/Trip.md)

@@ -92,6 +92,8 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequest
   final String? vehicleId;
   @override
   final ReasonCode? reasonCode;
+  @override
+  final String? note;
 
   factory _$DispatchSuggestionsSuggestionIdDecisionPostRequest(
           [void Function(
@@ -102,7 +104,7 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequest
           ._build();
 
   _$DispatchSuggestionsSuggestionIdDecisionPostRequest._(
-      {required this.decision, this.vehicleId, this.reasonCode})
+      {required this.decision, this.vehicleId, this.reasonCode, this.note})
       : super._();
   @override
   DispatchSuggestionsSuggestionIdDecisionPostRequest rebuild(
@@ -122,7 +124,8 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequest
     return other is DispatchSuggestionsSuggestionIdDecisionPostRequest &&
         decision == other.decision &&
         vehicleId == other.vehicleId &&
-        reasonCode == other.reasonCode;
+        reasonCode == other.reasonCode &&
+        note == other.note;
   }
 
   @override
@@ -131,6 +134,7 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequest
     _$hash = $jc(_$hash, decision.hashCode);
     _$hash = $jc(_$hash, vehicleId.hashCode);
     _$hash = $jc(_$hash, reasonCode.hashCode);
+    _$hash = $jc(_$hash, note.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -141,7 +145,8 @@ class _$DispatchSuggestionsSuggestionIdDecisionPostRequest
             r'DispatchSuggestionsSuggestionIdDecisionPostRequest')
           ..add('decision', decision)
           ..add('vehicleId', vehicleId)
-          ..add('reasonCode', reasonCode))
+          ..add('reasonCode', reasonCode)
+          ..add('note', note))
         .toString();
   }
 }
@@ -168,6 +173,10 @@ class DispatchSuggestionsSuggestionIdDecisionPostRequestBuilder
   ReasonCode? get reasonCode => _$this._reasonCode;
   set reasonCode(ReasonCode? reasonCode) => _$this._reasonCode = reasonCode;
 
+  String? _note;
+  String? get note => _$this._note;
+  set note(String? note) => _$this._note = note;
+
   DispatchSuggestionsSuggestionIdDecisionPostRequestBuilder() {
     DispatchSuggestionsSuggestionIdDecisionPostRequest._defaults(this);
   }
@@ -178,6 +187,7 @@ class DispatchSuggestionsSuggestionIdDecisionPostRequestBuilder
       _decision = $v.decision;
       _vehicleId = $v.vehicleId;
       _reasonCode = $v.reasonCode;
+      _note = $v.note;
       _$v = null;
     }
     return this;
@@ -207,6 +217,7 @@ class DispatchSuggestionsSuggestionIdDecisionPostRequestBuilder
               'decision'),
           vehicleId: vehicleId,
           reasonCode: reasonCode,
+          note: note,
         );
     replace(_$result);
     return _$result;

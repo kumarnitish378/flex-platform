@@ -8,21 +8,27 @@ import 'package:built_value/serializer.dart';
 
 part 'duty_state_mqtt.g.dart';
 
-/// DutyStateMqtt
+/// Where this device should connect, which is not where the backend connects: the server reaches the broker inside its own network, the phone reaches it across the internet. These are the public values.
 ///
 /// Properties:
-/// * [host] 
+/// * [host] - publicly resolvable hostname
 /// * [port] 
+/// * [tls] - connect over TLS; true everywhere except local development
 /// * [username] 
 /// * [password] 
 /// * [topicPrefix] 
 @BuiltValue()
 abstract class DutyStateMqtt implements Built<DutyStateMqtt, DutyStateMqttBuilder> {
+  /// publicly resolvable hostname
   @BuiltValueField(wireName: r'host')
   String? get host;
 
   @BuiltValueField(wireName: r'port')
   int? get port;
+
+  /// connect over TLS; true everywhere except local development
+  @BuiltValueField(wireName: r'tls')
+  bool? get tls;
 
   @BuiltValueField(wireName: r'username')
   String? get username;
@@ -68,6 +74,13 @@ class _$DutyStateMqttSerializer implements PrimitiveSerializer<DutyStateMqtt> {
       yield serializers.serialize(
         object.port,
         specifiedType: const FullType(int),
+      );
+    }
+    if (object.tls != null) {
+      yield r'tls';
+      yield serializers.serialize(
+        object.tls,
+        specifiedType: const FullType(bool),
       );
     }
     if (object.username != null) {
@@ -127,6 +140,13 @@ class _$DutyStateMqttSerializer implements PrimitiveSerializer<DutyStateMqtt> {
             specifiedType: const FullType(int),
           ) as int;
           result.port = valueDes;
+          break;
+        case r'tls':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(bool),
+          ) as bool;
+          result.tls = valueDes;
           break;
         case r'username':
           final valueDes = serializers.deserialize(

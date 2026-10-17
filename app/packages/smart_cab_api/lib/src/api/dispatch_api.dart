@@ -18,11 +18,12 @@ import 'package:smart_cab_api/src/model/dispatch_suggestions_suggestion_id_decis
 import 'package:smart_cab_api/src/model/dispatch_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/error.dart';
 import 'package:smart_cab_api/src/model/impact.dart';
-import 'package:smart_cab_api/src/model/mode_setting.dart';
+import 'package:smart_cab_api/src/model/mode_resolution.dart';
 import 'package:smart_cab_api/src/model/override_input.dart';
 import 'package:smart_cab_api/src/model/override_result.dart';
 import 'package:smart_cab_api/src/model/request_status.dart';
 import 'package:smart_cab_api/src/model/ride_request.dart';
+import 'package:smart_cab_api/src/model/suggestion_decision_result.dart';
 import 'package:smart_cab_api/src/model/trip.dart';
 import 'package:smart_cab_api/src/model/trip_status.dart';
 import 'package:smart_cab_api/src/model/vehicle_live.dart';
@@ -263,158 +264,6 @@ class DispatchApi {
     try {
       const _type = FullType(DispatchAutomationPutRequest);
       _bodyData = _serializers.serialize(dispatchAutomationPutRequest, specifiedType: _type);
-
-    } catch(error, stackTrace) {
-      throw DioException(
-         requestOptions: _options.compose(
-          _dio.options,
-          _path,
-        ),
-        type: DioExceptionType.unknown,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    final _response = await _dio.request<Object>(
-      _path,
-      data: _bodyData,
-      options: _options,
-      cancelToken: cancelToken,
-      onSendProgress: onSendProgress,
-      onReceiveProgress: onReceiveProgress,
-    );
-
-    return _response;
-  }
-
-  /// dispatchModesGet
-  /// 
-  ///
-  /// Parameters:
-  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
-  /// * [headers] - Can be used to add additional headers to the request
-  /// * [extras] - Can be used to add flags to the request
-  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
-  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
-  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
-  ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<ModeSetting>] as data
-  /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<ModeSetting>>> dispatchModesGet({ 
-    CancelToken? cancelToken,
-    Map<String, dynamic>? headers,
-    Map<String, dynamic>? extra,
-    ValidateStatus? validateStatus,
-    ProgressCallback? onSendProgress,
-    ProgressCallback? onReceiveProgress,
-  }) async {
-    final _path = r'/dispatch/modes';
-    final _options = Options(
-      method: r'GET',
-      headers: <String, dynamic>{
-        ...?headers,
-      },
-      extra: <String, dynamic>{
-        'secure': <Map<String, String>>[
-          {
-            'type': 'http',
-            'scheme': 'bearer',
-            'name': 'bearerAuth',
-          },
-        ],
-        ...?extra,
-      },
-      validateStatus: validateStatus,
-    );
-
-    final _response = await _dio.request<Object>(
-      _path,
-      options: _options,
-      cancelToken: cancelToken,
-      onSendProgress: onSendProgress,
-      onReceiveProgress: onReceiveProgress,
-    );
-
-    BuiltList<ModeSetting>? _responseData;
-
-    try {
-      final rawResponse = _response.data;
-      _responseData = rawResponse == null ? null : _serializers.deserialize(
-        rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(ModeSetting)]),
-      ) as BuiltList<ModeSetting>;
-
-    } catch (error, stackTrace) {
-      throw DioException(
-        requestOptions: _response.requestOptions,
-        response: _response,
-        type: DioExceptionType.unknown,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    return Response<BuiltList<ModeSetting>>(
-      data: _responseData,
-      headers: _response.headers,
-      isRedirect: _response.isRedirect,
-      requestOptions: _response.requestOptions,
-      redirects: _response.redirects,
-      statusCode: _response.statusCode,
-      statusMessage: _response.statusMessage,
-      extra: _response.extra,
-    );
-  }
-
-  /// dispatchModesPost
-  /// 
-  ///
-  /// Parameters:
-  /// * [modeSetting] 
-  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
-  /// * [headers] - Can be used to add additional headers to the request
-  /// * [extras] - Can be used to add flags to the request
-  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
-  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
-  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
-  ///
-  /// Returns a [Future]
-  /// Throws [DioException] if API call or serialization fails
-  Future<Response<void>> dispatchModesPost({ 
-    required ModeSetting modeSetting,
-    CancelToken? cancelToken,
-    Map<String, dynamic>? headers,
-    Map<String, dynamic>? extra,
-    ValidateStatus? validateStatus,
-    ProgressCallback? onSendProgress,
-    ProgressCallback? onReceiveProgress,
-  }) async {
-    final _path = r'/dispatch/modes';
-    final _options = Options(
-      method: r'POST',
-      headers: <String, dynamic>{
-        ...?headers,
-      },
-      extra: <String, dynamic>{
-        'secure': <Map<String, String>>[
-          {
-            'type': 'http',
-            'scheme': 'bearer',
-            'name': 'bearerAuth',
-          },
-        ],
-        ...?extra,
-      },
-      contentType: 'application/json',
-      validateStatus: validateStatus,
-    );
-
-    dynamic _bodyData;
-
-    try {
-      const _type = FullType(ModeSetting);
-      _bodyData = _serializers.serialize(modeSetting, specifiedType: _type);
 
     } catch(error, stackTrace) {
       throw DioException(
@@ -812,8 +661,177 @@ class DispatchApi {
     );
   }
 
-  /// dispatchSuggestionsSuggestionIdDecisionPost
-  /// 
+  /// Which mode governs this request, and why (Phase 2)
+  /// &#x60;control-model.md&#x60; §2&#39;s eight levels, resolved. &#x60;reason&#x60; names the level that decided it - a supervisor asking \&quot;why is this on manual?\&quot; deserves better than the answer \&quot;it is\&quot;. 
+  ///
+  /// Parameters:
+  /// * [requestId] 
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [ModeResolution] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<ModeResolution>> dispatchRequestsRequestIdModeGet({ 
+    required String requestId,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/dispatch/requests/{request_id}/mode'.replaceAll('{' r'request_id' '}', encodeQueryParameter(_serializers, requestId, const FullType(String)).toString());
+    final _options = Options(
+      method: r'GET',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'http',
+            'scheme': 'bearer',
+            'name': 'bearerAuth',
+          },
+        ],
+        ...?extra,
+      },
+      validateStatus: validateStatus,
+    );
+
+    final _response = await _dio.request<Object>(
+      _path,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    ModeResolution? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(ModeResolution),
+      ) as ModeResolution;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<ModeResolution>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// The system&#39;s top recommendations for this request (Phase 2)
+  /// The best-scored candidates that break **no** hard rule, best first (&#x60;allocation-rules.md&#x60; §2 and §4). Not the first three of &#x60;/candidates&#x60;: that list deliberately includes vehicles with violations so a supervisor can see the only cab within reach is over the limit, while a suggestion is the system recommending something and there the rules are filters, never traded off against cost.  An empty array therefore means the opposite of \&quot;no cabs\&quot;: it means none of them is permitted. &#x60;/candidates&#x60; carries the reasons, each naming the config key that excluded it. 
+  ///
+  /// Parameters:
+  /// * [requestId] 
+  /// * [limit] - How many to return. `control-model.md` §1 specifies three.
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [BuiltList<Candidate>] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<BuiltList<Candidate>>> dispatchRequestsRequestIdSuggestionsGet({ 
+    required String requestId,
+    int? limit = 3,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/dispatch/requests/{request_id}/suggestions'.replaceAll('{' r'request_id' '}', encodeQueryParameter(_serializers, requestId, const FullType(String)).toString());
+    final _options = Options(
+      method: r'GET',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'http',
+            'scheme': 'bearer',
+            'name': 'bearerAuth',
+          },
+        ],
+        ...?extra,
+      },
+      validateStatus: validateStatus,
+    );
+
+    final _queryParameters = <String, dynamic>{
+      if (limit != null) r'limit': encodeQueryParameter(_serializers, limit, const FullType(int)),
+    };
+
+    final _response = await _dio.request<Object>(
+      _path,
+      options: _options,
+      queryParameters: _queryParameters,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    BuiltList<Candidate>? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(BuiltList, [FullType(Candidate)]),
+      ) as BuiltList<Candidate>;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<BuiltList<Candidate>>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// Answer one of the system&#39;s suggestions (Phase 2)
+  /// &#x60;control-model.md&#x60; §1: in &#x60;semi_auto&#x60; the supervisor gets \&quot;one-tap approve or override\&quot;. The three decisions are that sentence.  **approve** assigns the vehicle this suggestion named. **choose_other** assigns a different one - still an answer, and recorded as a rejection of what was offered, because that is what it is and the Phase 2 acceptance metric must not flatter itself. **reject** leaves the request queued; the other suggestions for it stay open, since turning down the first choice is not turning down all three.  The hard rules are re-checked before anything is assigned: a supervisor reading a screen two minutes old is looking at the same stale offer the failsafe would have refused. 
   ///
   /// Parameters:
   /// * [suggestionId] 
@@ -825,9 +843,9 @@ class DispatchApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [Trip] as data
+  /// Returns a [Future] containing a [Response] with a [SuggestionDecisionResult] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<Trip>> dispatchSuggestionsSuggestionIdDecisionPost({ 
+  Future<Response<SuggestionDecisionResult>> dispatchSuggestionsSuggestionIdDecisionPost({ 
     required String suggestionId,
     required DispatchSuggestionsSuggestionIdDecisionPostRequest dispatchSuggestionsSuggestionIdDecisionPostRequest,
     CancelToken? cancelToken,
@@ -884,14 +902,14 @@ class DispatchApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    Trip? _responseData;
+    SuggestionDecisionResult? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(Trip),
-      ) as Trip;
+        specifiedType: const FullType(SuggestionDecisionResult),
+      ) as SuggestionDecisionResult;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -903,7 +921,7 @@ class DispatchApi {
       );
     }
 
-    return Response<Trip>(
+    return Response<SuggestionDecisionResult>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

@@ -178,6 +178,13 @@ enum AppScreen {
     Icons.person_add_alt,
     'A11',
   ),
+  suggestionsPanel(
+    'S-05',
+    '/supervisor/suggestions/:requestId',
+    AppSection.supervisor,
+    Icons.auto_awesome,
+    'A13',
+  ),
 
   adminDashboard('A-01', '/admin', AppSection.admin, Icons.insights_outlined, 'A12'),
   adminVehicles(
@@ -210,6 +217,7 @@ enum AppScreen {
     'A12',
   ),
   adminSettings('A-08', '/admin/settings', AppSection.admin, Icons.tune, 'A12'),
+  adminModeSettings('A-06', '/admin/modes', AppSection.admin, Icons.toggle_off_outlined, 'A14'),
 
   clientEmployees('L-01', '/client', AppSection.client, Icons.groups_outlined, 'A12'),
   clientEmployeeForm(
@@ -355,6 +363,7 @@ extension AppScreenLabel on AppScreen {
       AppScreen.tripsBoard => text.navTripsBoard,
       AppScreen.alerts => text.navAlerts,
       AppScreen.requestOnBehalf => text.navRequestOnBehalf,
+      AppScreen.suggestionsPanel => 'Suggestions',
       AppScreen.adminDashboard => text.navDashboard,
       AppScreen.adminVehicles => text.navVehicles,
       AppScreen.adminDrivers => text.navDrivers,
@@ -362,6 +371,7 @@ extension AppScreenLabel on AppScreen {
       AppScreen.adminUsers => text.navUsers,
       AppScreen.adminReports => text.navReports,
       AppScreen.adminSettings => text.navSettings,
+      AppScreen.adminModeSettings => 'Mode Settings',
       AppScreen.clientEmployees => text.navEmployees,
       AppScreen.clientEmployeeForm => text.navEmployeeForm,
       AppScreen.clientReports => text.navReports,

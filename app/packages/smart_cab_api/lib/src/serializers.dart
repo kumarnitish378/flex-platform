@@ -16,6 +16,7 @@ import 'package:smart_cab_api/src/model/date.dart';
 
 import 'package:smart_cab_api/src/model/admin_clients_client_id_employees_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_drivers_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_mode_settings_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_users_invite_post_request.dart';
 import 'package:smart_cab_api/src/model/admin_vehicles_get200_response.dart';
 import 'package:smart_cab_api/src/model/alert.dart';
@@ -49,7 +50,9 @@ import 'package:smart_cab_api/src/model/lat_lng.dart';
 import 'package:smart_cab_api/src/model/location_ping.dart';
 import 'package:smart_cab_api/src/model/me.dart';
 import 'package:smart_cab_api/src/model/me_roles_inner.dart';
+import 'package:smart_cab_api/src/model/mode_resolution.dart';
 import 'package:smart_cab_api/src/model/mode_setting.dart';
+import 'package:smart_cab_api/src/model/mode_setting_input.dart';
 import 'package:smart_cab_api/src/model/office.dart';
 import 'package:smart_cab_api/src/model/office_input.dart';
 import 'package:smart_cab_api/src/model/otp_request.dart';
@@ -71,6 +74,7 @@ import 'package:smart_cab_api/src/model/simctl_release_post_request.dart';
 import 'package:smart_cab_api/src/model/simctl_reset_post_request.dart';
 import 'package:smart_cab_api/src/model/sos_post_request.dart';
 import 'package:smart_cab_api/src/model/stop_status.dart';
+import 'package:smart_cab_api/src/model/suggestion_decision_result.dart';
 import 'package:smart_cab_api/src/model/token_pair.dart';
 import 'package:smart_cab_api/src/model/tracker_type.dart';
 import 'package:smart_cab_api/src/model/trip.dart';
@@ -89,6 +93,7 @@ part 'serializers.g.dart';
 @SerializersFor([
   AdminClientsClientIdEmployeesGet200Response,
   AdminDriversGet200Response,
+  AdminModeSettingsGet200Response,
   AdminUsersInvitePostRequest,
   AdminVehiclesGet200Response,
   Alert,
@@ -122,7 +127,9 @@ part 'serializers.g.dart';
   LocationPing,
   Me,
   MeRolesInner,
+  ModeResolution,
   ModeSetting,
+  ModeSettingInput,$ModeSettingInput,
   Office,
   OfficeInput,$OfficeInput,
   OtpRequest,
@@ -144,6 +151,7 @@ part 'serializers.g.dart';
   SimctlResetPostRequest,
   SosPostRequest,
   StopStatus,
+  SuggestionDecisionResult,
   TokenPair,
   TrackerType,
   Trip,
@@ -159,8 +167,16 @@ part 'serializers.g.dart';
 ])
 Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(Client)]),
+        () => ListBuilder<Client>(),
+      )
+      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(RequestStatus)]),
         () => ListBuilder<RequestStatus>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(Alert)]),
+        () => ListBuilder<Alert>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(RideRequest)]),
@@ -171,30 +187,6 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<TripStatus>(),
       )
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(VehicleLive)]),
-        () => ListBuilder<VehicleLive>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Office)]),
-        () => ListBuilder<Office>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(LocationPing)]),
-        () => ListBuilder<LocationPing>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(ModeSetting)]),
-        () => ListBuilder<ModeSetting>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Client)]),
-        () => ListBuilder<Client>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Alert)]),
-        () => ListBuilder<Alert>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltMap, [FullType(String), FullType.nullable(JsonObject)]),
         () => MapBuilder<String, JsonObject>(),
       )
@@ -203,8 +195,20 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<Trip>(),
       )
       ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(VehicleLive)]),
+        () => ListBuilder<VehicleLive>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(Office)]),
+        () => ListBuilder<Office>(),
+      )
+      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(Candidate)]),
         () => ListBuilder<Candidate>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(LocationPing)]),
+        () => ListBuilder<LocationPing>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltMap, [FullType(String), FullType(JsonObject)]),
@@ -213,6 +217,7 @@ Serializers serializers = (_$serializers.toBuilder()
       ..add(ClientInput.serializer)
       ..add(DriverInput.serializer)
       ..add(EmployeeInput.serializer)
+      ..add(ModeSettingInput.serializer)
       ..add(OfficeInput.serializer)
       ..add(Vehicle.serializer)
       ..add(VehicleInput.serializer)

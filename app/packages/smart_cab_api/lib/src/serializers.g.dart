@@ -10,11 +10,13 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add($ClientInput.serializer)
       ..add($DriverInput.serializer)
       ..add($EmployeeInput.serializer)
+      ..add($ModeSettingInput.serializer)
       ..add($OfficeInput.serializer)
       ..add($Vehicle.serializer)
       ..add($VehicleInput.serializer)
       ..add(AdminClientsClientIdEmployeesGet200Response.serializer)
       ..add(AdminDriversGet200Response.serializer)
+      ..add(AdminModeSettingsGet200Response.serializer)
       ..add(AdminUsersInvitePostRequest.serializer)
       ..add(AdminUsersInvitePostRequestRoleEnum.serializer)
       ..add(AdminVehiclesGet200Response.serializer)
@@ -53,8 +55,12 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(LocationPing.serializer)
       ..add(Me.serializer)
       ..add(MeRolesInner.serializer)
+      ..add(ModeResolution.serializer)
+      ..add(ModeResolutionModeEnum.serializer)
+      ..add(ModeResolutionReasonEnum.serializer)
       ..add(ModeSetting.serializer)
-      ..add(ModeSettingModeEnum.serializer)
+      ..add(ModeSettingInputDirectionEnum.serializer)
+      ..add(ModeSettingInputModeEnum.serializer)
       ..add(Office.serializer)
       ..add(OtpRequest.serializer)
       ..add(OtpVerify.serializer)
@@ -76,6 +82,9 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(SimctlResetPostRequest.serializer)
       ..add(SosPostRequest.serializer)
       ..add(StopStatus.serializer)
+      ..add(SuggestionDecisionResult.serializer)
+      ..add(SuggestionDecisionResultDecisionEnum.serializer)
+      ..add(SuggestionDecisionResultStatusEnum.serializer)
       ..add(TokenPair.serializer)
       ..add(TrackerType.serializer)
       ..add(Trip.serializer)
@@ -130,6 +139,14 @@ Serializers _$serializers = (Serializers().toBuilder()
           const FullType(BuiltList, const [const FullType(MeRolesInner)]),
           () => ListBuilder<MeRolesInner>())
       ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(ModeSetting)]),
+          () => ListBuilder<ModeSetting>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [
+            const FullType(BuiltList, const [const FullType(String)])
+          ]),
+          () => ListBuilder<BuiltList<String>>())
+      ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(RideRequest)]),
           () => ListBuilder<RideRequest>())
       ..addBuilderFactory(
@@ -144,6 +161,12 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(Vehicle)]),
           () => ListBuilder<Vehicle>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(int)]),
+          () => ListBuilder<int>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(int)]),
+          () => ListBuilder<int>())
       ..addBuilderFactory(
           const FullType(BuiltMap, const [
             const FullType(String),

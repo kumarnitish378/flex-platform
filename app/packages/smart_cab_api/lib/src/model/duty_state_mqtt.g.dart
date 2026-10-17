@@ -12,6 +12,8 @@ class _$DutyStateMqtt extends DutyStateMqtt {
   @override
   final int? port;
   @override
+  final bool? tls;
+  @override
   final String? username;
   @override
   final String? password;
@@ -22,7 +24,12 @@ class _$DutyStateMqtt extends DutyStateMqtt {
       (DutyStateMqttBuilder()..update(updates))._build();
 
   _$DutyStateMqtt._(
-      {this.host, this.port, this.username, this.password, this.topicPrefix})
+      {this.host,
+      this.port,
+      this.tls,
+      this.username,
+      this.password,
+      this.topicPrefix})
       : super._();
   @override
   DutyStateMqtt rebuild(void Function(DutyStateMqttBuilder) updates) =>
@@ -37,6 +44,7 @@ class _$DutyStateMqtt extends DutyStateMqtt {
     return other is DutyStateMqtt &&
         host == other.host &&
         port == other.port &&
+        tls == other.tls &&
         username == other.username &&
         password == other.password &&
         topicPrefix == other.topicPrefix;
@@ -47,6 +55,7 @@ class _$DutyStateMqtt extends DutyStateMqtt {
     var _$hash = 0;
     _$hash = $jc(_$hash, host.hashCode);
     _$hash = $jc(_$hash, port.hashCode);
+    _$hash = $jc(_$hash, tls.hashCode);
     _$hash = $jc(_$hash, username.hashCode);
     _$hash = $jc(_$hash, password.hashCode);
     _$hash = $jc(_$hash, topicPrefix.hashCode);
@@ -59,6 +68,7 @@ class _$DutyStateMqtt extends DutyStateMqtt {
     return (newBuiltValueToStringHelper(r'DutyStateMqtt')
           ..add('host', host)
           ..add('port', port)
+          ..add('tls', tls)
           ..add('username', username)
           ..add('password', password)
           ..add('topicPrefix', topicPrefix))
@@ -77,6 +87,10 @@ class DutyStateMqttBuilder
   int? _port;
   int? get port => _$this._port;
   set port(int? port) => _$this._port = port;
+
+  bool? _tls;
+  bool? get tls => _$this._tls;
+  set tls(bool? tls) => _$this._tls = tls;
 
   String? _username;
   String? get username => _$this._username;
@@ -99,6 +113,7 @@ class DutyStateMqttBuilder
     if ($v != null) {
       _host = $v.host;
       _port = $v.port;
+      _tls = $v.tls;
       _username = $v.username;
       _password = $v.password;
       _topicPrefix = $v.topicPrefix;
@@ -125,6 +140,7 @@ class DutyStateMqttBuilder
         _$DutyStateMqtt._(
           host: host,
           port: port,
+          tls: tls,
           username: username,
           password: password,
           topicPrefix: topicPrefix,

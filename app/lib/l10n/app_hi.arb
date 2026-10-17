@@ -1,0 +1,70 @@
+{
+  "@@locale": "hi",
+
+  "appTitle": "स्मार्ट कैब",
+  "splashTagline": "आपकी कैब, लाइव ट्रैकिंग",
+  "signIn": "साइन इन करें",
+
+  "phoneNumber": "फ़ोन नंबर",
+  "enterPhoneNumber": "साइन इन करने के लिए अपना फ़ोन नंबर दर्ज करें",
+  "sendCode": "कोड भेजें",
+  "enterCode": "सत्यापन कोड दर्ज करें",
+  "codeSentTo": "{phone} पर कोड भेजा गया",
+  "verifyCode": "कोड सत्यापित करें",
+  "resendCode": "पुनः कोड भेजें",
+  "resendCodeIn": "{seconds} सेकंड में पुनः कोड भेजें",
+  "changePhone": "फ़ोन नंबर बदलें",
+
+  "otpRejected": "अमान्य या अमान्य कोड। कृपया पुनः प्रयास करें।",
+  "authUnavailable": "सर्वर से कनेक्ट नहीं हो सका। नेटवर्क जांचें।",
+  "tooManyRequests": "अत्यधिक अनुरोध। कृपया कुछ समय प्रतीक्षा करें।",
+  "noRolesAssigned": "आपके खाते में कोई भूमिका असाइन नहीं है।",
+
+  "selectRole": "सक्रिय भूमिका चुनें",
+  "roleNameEmployee": "कर्मचारी",
+  "roleNameDriver": "ड्राइवर",
+  "roleNameSupervisor": "सुपरवाइजर",
+  "roleNameOperatorAdmin": "ऑपरेटर एडमिन",
+  "roleNameClientAdmin": "क्लाइंट एडमिन",
+  "roleNamePlatformAdmin": "प्लेटफॉर्म एडमिन",
+
+  "switchRole": "भूमिका बदलें",
+  "signOut": "साइन आउट करें",
+  "more": "अधिक",
+
+  "screenNotBuiltYet": "{screen} स्क्रीन कार्य {task} के साथ उपलब्ध होगी।",
+
+  "navHome": "होम",
+  "navHistory": "इतिहास",
+  "navSavedPlaces": "स्थान",
+  "navRequestCab": "कैब बुक करें",
+  "navRequestStatus": "अनुरोध स्थिति",
+  "navLiveTracking": "लाइव ट्रैकिंग",
+  "navRateTrip": "मूल्यांकन करें",
+  "navProfile": "प्रोफ़ाइल",
+  "navNotifications": "सूचनाएं",
+
+  "navDuty": "ड्यूटी",
+  "navLocationPermission": "स्थान अनुमति",
+  "navTrips": "ट्रिप",
+  "navTripDetail": "ट्रिप विवरण",
+  "navNavigate": "नेविगेट करें",
+  "navReportIssue": "समस्या रिपोर्ट करें",
+
+  "navDispatchMap": "मानचित्र",
+  "navPendingQueue": "कतार",
+  "navAssign": "असाइन करें",
+  "navTripsBoard": "बोर्ड",
+  "navAlerts": "अलर्ट",
+  "navRequestOnBehalf": "किसी अन्य के लिए अनुरोध करें",
+
+  "navDashboard": "डैशबोर्ड",
+  "navVehicles": "वाहन",
+  "navDrivers": "ड्राइवर",
+  "navClients": "क्लाइंट",
+  "navUsers": "उपयोगकर्ता",
+  "navReports": "रिपोर्ट्स",
+  "navSettings": "सेटिंग्स",
+  "navEmployees": "कर्मचारी",
+  "navEmployeeForm": "कर्मचारी फ़ॉर्म"
+}

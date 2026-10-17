@@ -15,11 +15,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/admin/clients_screen.dart';
+import '../features/admin/dashboard_screen.dart';
+import '../features/admin/drivers_screen.dart';
+import '../features/admin/mode_settings_screen.dart';
+import '../features/admin/reports_screen.dart';
+import '../features/admin/settings_screen.dart';
+import '../features/admin/users_screen.dart';
+import '../features/admin/vehicles_screen.dart';
 import '../features/auth/login_screen.dart';
+import '../features/client/client_reports_screen.dart';
+import '../features/client/employee_form_screen.dart';
+import '../features/client/employees_screen.dart';
 import '../features/common/app_shell.dart';
 import '../features/common/detail_scaffold.dart';
 import '../features/common/pending_screen.dart';
 import '../features/common/splash_screen.dart';
+import '../features/driver/duty_home_screen.dart';
+import '../features/driver/navigation_map_screen.dart';
+import '../features/driver/permission_explainer_screen.dart';
+import '../features/driver/report_issue_screen.dart';
+import '../features/driver/trip_detail_screen.dart';
+import '../features/driver/trip_list_screen.dart';
+import '../features/employee/employee_home_screen.dart';
+import '../features/employee/live_tracking_screen.dart';
+import '../features/employee/request_confirmation_screen.dart';
+import '../features/employee/request_form_screen.dart';
+import '../features/employee/ride_history_screen.dart';
+import '../features/employee/saved_places_screen.dart';
+import '../features/employee/trip_completed_screen.dart';
+import '../features/supervisor/alerts_list_screen.dart';
+import '../features/supervisor/assign_panel_screen.dart';
+import '../features/supervisor/live_map_screen.dart';
+import '../features/supervisor/pending_queue_screen.dart';
+import '../features/supervisor/suggestions_panel_screen.dart';
+import '../features/supervisor/trips_board_screen.dart';
 import 'screens.dart';
 import 'session.dart';
 
@@ -105,17 +135,152 @@ final Provider<GoRouter> routerProvider = Provider<GoRouter>((Ref ref) {
           for (final AppScreen screen in _shellScreens)
             GoRoute(
               path: screen.path,
-              builder: (_, _) => PendingScreen(screen: screen, key: Key(screen.id)),
+              builder: (_, _) {
+                if (screen == AppScreen.employeeHome) {
+                  return const EmployeeHomeScreen();
+                }
+                if (screen == AppScreen.rideHistory) {
+                  return const RideHistoryScreen();
+                }
+                if (screen == AppScreen.savedPlaces) {
+                  return const SavedPlacesScreen();
+                }
+                if (screen == AppScreen.dutyHome) {
+                  return const DutyHomeScreen();
+                }
+                if (screen == AppScreen.driverTrips) {
+                  return const TripListScreen();
+                }
+                if (screen == AppScreen.dispatchMap) {
+                  return const SupervisorLiveMapScreen();
+                }
+                if (screen == AppScreen.pendingQueue) {
+                  return const PendingQueueScreen();
+                }
+                if (screen == AppScreen.tripsBoard) {
+                  return const TripsBoardScreen();
+                }
+                if (screen == AppScreen.alerts) {
+                  return const AlertsListScreen();
+                }
+                if (screen == AppScreen.adminDashboard) {
+                  return const DashboardScreen();
+                }
+                if (screen == AppScreen.adminVehicles) {
+                  return const VehiclesScreen();
+                }
+                if (screen == AppScreen.adminDrivers) {
+                  return const DriversScreen();
+                }
+                if (screen == AppScreen.adminClients) {
+                  return const ClientsScreen();
+                }
+                if (screen == AppScreen.adminUsers) {
+                  return const UsersScreen();
+                }
+                if (screen == AppScreen.adminReports) {
+                  return const ReportsScreen();
+                }
+                if (screen == AppScreen.adminSettings) {
+                  return const SettingsScreen();
+                }
+                if (screen == AppScreen.adminModeSettings) {
+                  return const ModeSettingsScreen();
+                }
+                if (screen == AppScreen.clientEmployees) {
+                  return const ClientEmployeesScreen();
+                }
+                if (screen == AppScreen.clientReports) {
+                  return const ClientReportsScreen();
+                }
+                return PendingScreen(screen: screen, key: Key(screen.id));
+              },
             ),
         ],
       ),
       for (final AppScreen screen in _detailScreens)
         GoRoute(
           path: screen.path,
-          builder: (_, _) => DetailScaffold(
-            screen: screen,
-            body: PendingScreen(screen: screen, key: Key(screen.id)),
-          ),
+          builder: (_, GoRouterState state) {
+            if (screen == AppScreen.requestForm) {
+              return const DetailScaffold(
+                screen: AppScreen.requestForm,
+                body: RequestFormScreen(),
+              );
+            }
+            if (screen == AppScreen.requestConfirmation) {
+              final String reqId = state.pathParameters['requestId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.requestConfirmation,
+                body: RequestConfirmationScreen(requestId: reqId),
+              );
+            }
+            if (screen == AppScreen.liveTracking) {
+              final String tripId = state.pathParameters['tripId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.liveTracking,
+                body: LiveTrackingScreen(tripId: tripId),
+              );
+            }
+            if (screen == AppScreen.tripCompleted) {
+              final String tripId = state.pathParameters['tripId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.tripCompleted,
+                body: TripCompletedScreen(tripId: tripId),
+              );
+            }
+            if (screen == AppScreen.driverTripDetail) {
+              final String tripId = state.pathParameters['tripId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.driverTripDetail,
+                body: TripDetailScreen(tripId: tripId),
+              );
+            }
+            if (screen == AppScreen.driverNavigation) {
+              final String tripId = state.pathParameters['tripId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.driverNavigation,
+                body: NavigationMapScreen(tripId: tripId),
+              );
+            }
+            if (screen == AppScreen.driverReportIssue) {
+              return const DetailScaffold(
+                screen: AppScreen.driverReportIssue,
+                body: ReportIssueScreen(),
+              );
+            }
+            if (screen == AppScreen.assignPanel) {
+              final String reqId = state.pathParameters['requestId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.assignPanel,
+                body: AssignPanelScreen(requestId: reqId),
+              );
+            }
+            if (screen == AppScreen.suggestionsPanel) {
+              final String reqId = state.pathParameters['requestId'] ?? '';
+              return DetailScaffold(
+                screen: AppScreen.suggestionsPanel,
+                body: SuggestionsPanelScreen(requestId: reqId),
+              );
+            }
+            if (screen == AppScreen.locationPermission) {
+              return const DetailScaffold(
+                screen: AppScreen.locationPermission,
+                body: PermissionExplainerScreen(),
+              );
+            }
+            if (screen == AppScreen.clientEmployeeForm) {
+              final String? empId = state.pathParameters['employeeId'];
+              return DetailScaffold(
+                screen: AppScreen.clientEmployeeForm,
+                body: EmployeeFormScreen(employeeId: empId == 'new' ? null : empId),
+              );
+            }
+            return DetailScaffold(
+              screen: screen,
+              body: PendingScreen(screen: screen, key: Key(screen.id)),
+            );
+          },
         ),
     ],
     redirect: (_, GoRouterState state) {
