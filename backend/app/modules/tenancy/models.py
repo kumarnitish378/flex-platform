@@ -127,7 +127,12 @@ class ClientPolicy(TenantEntity):
         PG_UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
     )
     pooling_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    employee_opt_out_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Default **true**, unlike the other restrictions here. Asking not to share is a
+    #: behaviour Phase 1 shipped with no gate at all, and `client_policy` had no API
+    #: until B28 - so defaulting it off would have revoked a permission every rider
+    #: already had, and creating a policy row to set a detour limit would silently take
+    #: it away. A client who wants to forbid opting out says so.
+    employee_opt_out_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     night_safety_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     night_start: Mapped[time | None] = mapped_column(Time)
     night_end: Mapped[time | None] = mapped_column(Time)

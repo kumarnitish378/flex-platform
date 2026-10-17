@@ -40,6 +40,12 @@ class SuggestionStatus(StrEnum):
     rejected = "rejected"
     superseded = "superseded"
     expired = "expired"
+    #: The failsafe assigned it because nobody answered in time (§4). **Not**
+    #: `accepted`: Phase 2's exit criterion is "suggestion acceptance > 70%", and a
+    #: scope where no supervisor ever looked would otherwise score 100% - the platform
+    #: agreeing with itself, counted as a human agreeing with the platform. Found in
+    #: M09, writing the scenario (S08) whose whole subject is an absent supervisor.
+    failsafe_assigned = "failsafe_assigned"
 
 
 class FailsafeOutcome(StrEnum):

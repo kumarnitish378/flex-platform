@@ -59,7 +59,6 @@ from app.domain.dispatch import (
     build_plan,
     check_hard_rules,
     pickup_time,
-    stricter,
     widened_candidate_eta_minutes,
 )
 from app.domain.enums import Direction, Urgency
@@ -67,6 +66,8 @@ from app.domain.errors import Conflict, NotFound
 from app.domain.geo import LatLng
 from app.domain.notifications import NotificationType
 from app.domain.overrides import still_applies
+from app.domain.policy import EffectivePolicy
+from app.domain.policy import resolve as resolve_policy
 from app.domain.rules import assignable
 from app.domain.state_machines import (
     Actor,
@@ -81,6 +82,7 @@ from app.domain.state_machines import (
 )
 from app.domain.suggestions import SuggestionFacts, named_riders
 from app.domain.suggestions import reasons as render_reasons
+from app.domain.timeofday import local_time
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import MODE_MANUAL, Trip, TripEvent, TripStop
 from app.modules.fleet.duty_models import DutySession
@@ -88,7 +90,8 @@ from app.modules.fleet.models import Vehicle
 from app.modules.notifications.service import Audience, NotificationService
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest, RideRequestEvent
-from app.modules.tenancy.models import ClientPolicy, Office
+from app.modules.tenancy.models import Office, Operator
+from app.modules.tenancy.policy_service import ClientPolicyService
 
 logger = get_logger(__name__)
 
@@ -165,6 +168,17 @@ class Candidate:
             self.eta_to_pickup_seconds,
             str(self.vehicle.id),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RuleInputs:
+    """The per-rider facts §2 needs, loaded once for a whole candidate list."""
+
+    limits: dict[uuid.UUID, DetourLimits]
+    #: Straight-line seconds from each rider's pickup to their drop, for rule 7.
+    direct: dict[uuid.UUID, float]
+    #: Requests whose rider is flagged `night_escort_required` (rule 11).
+    night_escort_required: frozenset[uuid.UUID] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +371,10 @@ class DispatchService:
         trips = await self._live_trips(operator_id)
         loads = await self._riders_by_trip(operator_id)
         now = self.clock.now()
+        policy = (await self.client_policies(operator_id, {request.client_id}, settings))[
+            request.client_id
+        ]
+        timezone = await self.operator_timezone(operator_id)
 
         candidates: list[Candidate] = []
         for index, vehicle in enumerate(usable):
@@ -377,8 +395,10 @@ class DispatchService:
                 eta_seconds=eta.seconds,
                 settings=settings,
                 now=now,
+                policy=policy,
+                timezone=timezone,
             )
-            limits, direct = await self._detour_inputs(operator_id, request, on_board, office)
+            inputs = await self._detour_inputs(operator_id, request, on_board, office)
             candidates.append(
                 Candidate(
                     vehicle=vehicle,
@@ -389,7 +409,13 @@ class DispatchService:
                     gps_age_seconds=facts.gps_age_seconds,
                     added_minutes=insertion.added_minutes if insertion else {},
                     new_trip=trip is None,
-                    violations=check_hard_rules(facts, insertion, limits, direct),
+                    violations=check_hard_rules(
+                        facts,
+                        insertion,
+                        inputs.limits,
+                        inputs.direct,
+                        inputs.night_escort_required,
+                    ),
                     empty_km_added=(eta.distance_meters / 1000.0) if trip is None else 0.0,
                 )
             )
@@ -581,9 +607,15 @@ class DispatchService:
             eta_seconds=eta_seconds,
             settings=settings,
             now=now,
+            policy=(await self.client_policies(operator_id, {request.client_id}, settings))[
+                request.client_id
+            ],
+            timezone=await self.operator_timezone(operator_id),
         )
-        limits, direct = await self._detour_inputs(operator_id, request, on_board, office)
-        violations = check_hard_rules(facts, insertion, limits, direct)
+        inputs = await self._detour_inputs(operator_id, request, on_board, office)
+        violations = check_hard_rules(
+            facts, insertion, inputs.limits, inputs.direct, inputs.night_escort_required
+        )
 
         created = trip is None
         if trip is None:
@@ -930,7 +962,13 @@ class DispatchService:
         eta_seconds: float,
         settings: dict[str, Any],
         now: datetime,
+        policy: EffectivePolicy | None = None,
+        timezone: str = "UTC",
     ) -> AssignmentFacts:
+        # A client with no policy gets the operator's numbers, which is every client
+        # today; resolving here keeps the callers that have not loaded one working.
+        effective = policy or resolve_policy(settings)
+        pickup_at = pickup_time(now, eta_seconds)
         return AssignmentFacts(
             vehicle_id=vehicle.id,
             vehicle_status=vehicle.status,
@@ -953,13 +991,23 @@ class DispatchService:
                 ceiling_minutes=int(settings["retry_eta_max_minutes"]),
             ),
             enroute_reuse_max_eta_minutes=int(settings["enroute_reuse_max_eta_minutes"]),
-            pickup_window_minutes=int(settings["pickup_window_minutes"]),
+            # The client's own window where they set one (§1, per-client). Not
+            # stricter-only: how long their people will wait at the kerb is their call.
+            pickup_window_minutes=effective.pickup_window_minutes,
             requested_time=request.requested_time,
-            pickup_at=pickup_time(now, eta_seconds),
+            pickup_at=pickup_at,
+            # Local, because "20:00-06:00" is a wall clock and not UTC.
+            pickup_time_local=local_time(pickup_at, timezone),
+            night_safety_enabled=effective.night_safety_enabled,
+            night_start=effective.night_start,
+            night_end=effective.night_end,
+            night_safety_positions=effective.night_safety_positions,
             direction=Direction(request.direction),
             office_id=request.office_id,
             employee_is_vip=employee.is_vip,
-            request_no_sharing=request.no_sharing,
+            # A client who does not allow pooling at all is the same thing, rule by
+            # rule, as every one of their riders asking not to share (§1, B28).
+            request_no_sharing=request.no_sharing or not effective.pooling_allowed,
             # Gated on expiry, never read raw: `control-model.md` §3 rule 5 requires an
             # override to stop applying with **nothing running**, so the question is
             # asked here on every read rather than by a sweep that flips the column
@@ -984,68 +1032,72 @@ class DispatchService:
         request: RideRequest,
         on_board: list[Rider],
         office: Office,
-    ) -> tuple[dict[uuid.UUID, DetourLimits], dict[uuid.UUID, float]]:
-        """Per-rider detour limits and direct times.
+    ) -> RuleInputs:
+        """Everything §2 needs that varies per rider: limits, direct times, flags.
 
-        Limits come from operator config tightened by the rider's client policy, because
-        `allocation-rules.md` section 2 rule 7 uses the **stricter** of the two.
+        One loader rather than three, because all of it comes from the same two rows -
+        the rider's request and their client's policy - and a second pass would be a
+        second chance for the two to disagree about whose client is whose.
+
+        Limits are operator config tightened by the client policy: rule 7 uses the
+        **stricter** of the two, which `domain/policy.py` now decides from the config
+        registry rather than from a list restated here.
         """
         settings = await self.config.all_values(operator_id)
-        operator_limits = DetourLimits(
-            max_detour_factor=float(settings["max_detour_factor"]),
-            max_detour_minutes=float(settings["max_detour_minutes"]),
-        )
 
         request_ids = [rider.request_id for rider in on_board] + [request.id]
         rows = list(
-            (await self.session.execute(select(RideRequest).where(RideRequest.id.in_(request_ids))))
-            .scalars()
-            .all()
-        )
-        policies = {
-            policy.client_id: policy
-            for policy in (
+            (
                 await self.session.execute(
-                    select(ClientPolicy).where(
-                        ClientPolicy.client_id.in_({row.client_id for row in rows})
-                    )
+                    select(RideRequest, Employee.night_escort_required)
+                    .join(Employee, Employee.id == RideRequest.employee_id)
+                    .where(RideRequest.id.in_(request_ids))
                 )
-            )
-            .scalars()
-            .all()
-        }
+            ).all()
+        )
+        policies = await self.client_policies(
+            operator_id, {row[0].client_id for row in rows}, settings
+        )
 
         limits: dict[uuid.UUID, DetourLimits] = {}
-        for row in rows:
-            policy = policies.get(row.client_id)
-            limits[row.id] = (
-                stricter(
-                    operator_limits,
-                    DetourLimits(
-                        max_detour_factor=float(
-                            policy.max_detour_factor or operator_limits.max_detour_factor
-                        ),
-                        max_detour_minutes=float(
-                            policy.max_detour_minutes
-                            if policy.max_detour_minutes is not None
-                            else operator_limits.max_detour_minutes
-                        ),
-                    ),
-                )
-                if policy is not None
-                else operator_limits
+        flagged: set[uuid.UUID] = set()
+        for row, escort_required in rows:
+            policy = policies[row.client_id]
+            limits[row.id] = DetourLimits(
+                max_detour_factor=policy.max_detour_factor,
+                max_detour_minutes=policy.max_detour_minutes,
             )
+            if escort_required:
+                flagged.add(row.id)
 
         office_place = Place(*_coords(office.location))
         direct: dict[uuid.UUID, float] = {}
-        for row in rows:
+        for row, _ in rows:
             rider = _rider_of(row)
             direction = Direction(row.direction)
             direct[row.id] = _haversine_seconds(
                 rider.pickup_place(direction, office_place),
                 rider.drop_place(direction, office_place),
             )
-        return limits, direct
+        return RuleInputs(limits=limits, direct=direct, night_escort_required=frozenset(flagged))
+
+    async def client_policies(
+        self,
+        operator_id: uuid.UUID,
+        client_ids: set[uuid.UUID],
+        settings: dict[str, Any] | None = None,
+    ) -> dict[uuid.UUID, EffectivePolicy]:
+        """Operator config resolved against each client's own policy (B28)."""
+        return await ClientPolicyService(self.session, self.clock, self.config).effective(
+            operator_id, client_ids, settings
+        )
+
+    async def operator_timezone(self, operator_id: uuid.UUID) -> str:
+        """The wall clock the night window and the mode windows are written in."""
+        timezone: str | None = await self.session.scalar(
+            select(Operator.timezone).where(Operator.id == operator_id)
+        )
+        return timezone or "UTC"
 
     async def _eta_to_pickup(
         self, position: Position | None, request: RideRequest, office: Office

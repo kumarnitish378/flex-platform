@@ -52,6 +52,7 @@ from app.modules.dispatch.models import Trip, TripEvent, TripStop
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.notifications.service import Audience, NotificationService
 from app.modules.requests.models import RideRequest, RideRequestEvent
+from app.modules.tenancy.policy_service import ClientPolicyService
 
 logger = get_logger(__name__)
 
@@ -269,8 +270,14 @@ class DriverTripService:
         if stop.status == str(StopStatus.skipped):
             return
 
-        wait_minutes = int(await self.config.get(trip.operator_id, "no_show_wait_minutes"))
         request = await self._request(stop.request_id)
+        # The rider's own client may set how long the driver waits (§1, per-client).
+        # Read from the policy rather than straight from operator config, or a client
+        # who asked for a longer wait would watch their people marked absent early.
+        policy = await ClientPolicyService(self.session, self.clock, self.config).for_client(
+            trip.operator_id, request.client_id
+        )
+        wait_minutes = policy.no_show_wait_minutes
         # The state machine owns the wait rule; it needs the stop's facts to apply it.
         transition = transition_request(
             RequestStatus(request.status),

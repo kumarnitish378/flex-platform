@@ -44,6 +44,10 @@ CONFIG_KEY_FOR: dict[Violation, str | None] = {
     Violation.pickup_window_missed: "pickup_window_minutes",
     Violation.eta_over_candidate_limit: "candidate_max_eta_minutes",
     Violation.enroute_reuse_eta_exceeded: "enroute_reuse_max_eta_minutes",
+    # The key that turns the rule on, not the one that sets a limit - but it is the
+    # number a supervisor asked "why was this refused?" needs to be pointed at, and
+    # `night_safety_positions` is the one that decides *which* position was the problem.
+    Violation.night_safety_breach: "night_safety_enabled",
 }
 
 #: Rules a human may waive with a reason, and rules nobody may (control-model.md §3

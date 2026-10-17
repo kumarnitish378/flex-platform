@@ -224,6 +224,16 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         ),
         ConfigKey("night_safety_start", time(20, 0), per_client=True),
         ConfigKey("night_safety_end", time(6, 0), per_client=True),
+        ConfigKey(
+            "night_safety_positions",
+            "both",
+            choices=("both", "first_pickup", "last_drop"),
+            description=(
+                "Which lone positions rule 11 polices: the first pickup, the last drop,"
+                " or both. A setting rather than a constant because OQ-10 - the pilot"
+                " clients' actual policy - is still open."
+            ),
+        ),
     )
 }
 
@@ -239,8 +249,9 @@ STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.s
 #:
 #: What is left, and what will claim it: `batch_window_seconds` belongs to
 #: micro-batching and the hold window to pooling (Phase 3, `allocation-rules.md`
-#: section 6), and the night-safety trio to section 2 rule 11 (B28), whose exact
-#: policy is still OQ-10. B25 took the failsafe pair.
+#: section 6). B25 took the failsafe pair and B28 took the night-safety trio, which is
+#: now read by `domain/policy.py` and rule 11 - OQ-10 remains open about the exact
+#: client policy, which is why `night_safety_positions` is a key and not a constant.
 #:
 #: `night_safety_enabled` is the subtle one: `client_policy` has a
 #: column of that name, so a loose search for the string finds a "reader" that is really
@@ -253,9 +264,6 @@ PHASE_2_KEYS = frozenset(
         "batch_window_seconds",
         "hold_window_max_minutes",
         "hold_window_min_minutes",
-        "night_safety_enabled",
-        "night_safety_end",
-        "night_safety_start",
     }
 )
 

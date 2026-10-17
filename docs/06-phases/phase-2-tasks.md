@@ -232,13 +232,52 @@ business numbers still come from `operator_config`.
   onwards and could never match, because every employee's `zone_id` was null; there is now a test that
   resolves one.
 
-- [ ] **B28 · Client policies** · deps B05, B27
+- [x] **B28 · Client policies** · deps B05, B27
   Docs: allocation-rules.md §2 rules 7 and 11, control-model.md
   Do: per-client overrides of detour limits and pickup window (the "stricter client value" rule 7 already
   names), and the night-safety policy of rule 11 behind `client_policy`.
   Done when: the stricter of operator and client value is the one applied, proved both ways; night safety
   refuses a sequence leaving a flagged rider first-pickup or last-drop without an escort; the exact policy
   remains configurable (OQ-10 is still open, so the shape is a setting, not a constant).
+  **`client_policy` had a table since B06, two of its nine columns read, and no API at all** — so the
+  other seven were settable only by hand in `psql`, which means they were not settable. `domain/policy.py`
+  resolves operator config against one client's row; `ClientPolicyService` owns reading and writing it;
+  `GET/PUT /admin/clients/{id}/policy` exposes it.
+  **The response carries both what the client set and what it resolves to.** An admin who types a laxer
+  detour limit, sees it saved and is never told it is not applied has been misled by the screen.
+  **Which keys are stricter-only comes from the config registry, not a list restated here** — only
+  `max_detour_factor` and `max_detour_minutes` are. `pickup_window_minutes` and `no_show_wait_minutes` are
+  per-client but either way: how long *their* people wait at the kerb is the client's call.
+  **Night safety is a floor.** `client_policy.night_safety_enabled` is `NOT NULL` with a `False` default,
+  so a row that was never touched reads identically to one that deliberately said no — resolving that
+  towards "off" would mean creating a policy row silently disabled an operator-wide safety rule. Either
+  side may turn it on; neither side's silence turns it off.
+  **Rule 11's lone position depends on the direction, which the rule's own sentence does not say.** On a
+  `to_office` trip everyone is dropped at the same office, so the drops happen together and the only
+  solitary moment is the **first pickup**; going home everyone boards at the office and it is the **last
+  drop**. Policing both on both directions would flag a rider who is never alone, and a safety rule that
+  cries wolf gets waived out of habit. Which positions are policed is `night_safety_positions`, a config
+  key, because OQ-10 is still open — and an unrecognised value polices everything, so a typo cannot
+  quietly switch a safety rule off. A **solo trip cannot breach it**: this is a constraint on the order of
+  a shared trip, and refusing the ride would leave the rider with no cab, which is not safer. Whether a
+  flagged rider may travel alone at all, and what an escort is in the data model, is what OQ-10 has to
+  answer.
+  **`pooling_allowed: false` is rule-for-rule the same as every one of that client's riders asking not to
+  share**, and `employee_opt_out_allowed: false` makes `no_sharing: true` a 422 rather than a silently
+  ignored field — a rider who ticks the box and is pooled anyway has been told something untrue, and will
+  report it as a dispatch bug.
+  **Found while wiring the night window: every local-time rule was comparing UTC.** `domain/modes.py`
+  compared `requested_time.time()` against a window written in the operator's wall clock, so B24's
+  "evening" rule governed 23:30–02:30 local for an Indian operator — the inverse of what was written. The
+  night window would have had the same five-and-a-half-hour error, which here is silent exposure rather
+  than an odd-looking mode. `domain/timeofday.py` is now the one conversion, `AssignmentFacts` takes a
+  `pickup_time_local` that is `None` until a caller converts, and the rule does not fire without it: the
+  mistake has to be impossible rather than merely discouraged, because it passes every test written in
+  UTC.
+  **A test had to be rewritten after it proved the opposite of what it claimed.** The first night-safety
+  tests assumed the trip ran in assignment order; the planner re-sequences, so the "flagged rider first"
+  case was being set up by the test that expected no breach. The rule judges the **resulting** sequence,
+  which is correct and is now what the tests say — one fixed scenario with one thing varied each time.
 
 ## Simulator
 

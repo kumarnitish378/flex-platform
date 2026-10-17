@@ -49,6 +49,7 @@ from app.modules.config.service import ConfigService
 from app.modules.notifications.service import Audience, NotificationService
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest, RideRequestEvent
+from app.modules.tenancy.policy_service import ClientPolicyService
 
 logger = get_logger(__name__)
 
@@ -118,6 +119,20 @@ class RideRequestService:
 
         point = location or await self._home_of(employee)
         expiry_minutes = await self.config.get(operator_id, "request_expiry_minutes")
+
+        if no_sharing:
+            # `allocation-rules.md` §1: whether an employee may ask not to share is
+            # their client's decision. Refused rather than silently ignored - a rider
+            # who ticks the box and is pooled anyway has been told something untrue,
+            # and will report it as a bug in the dispatch rather than a policy.
+            policy = await ClientPolicyService(self.session, self.clock, self.config).for_client(
+                operator_id, employee.client_id
+            )
+            if not policy.employee_opt_out_allowed:
+                raise ValidationFailed(
+                    "This client does not allow employees to opt out of sharing",
+                    {"client_id": str(employee.client_id), "no_sharing": True},
+                )
 
         request = RideRequest(
             operator_id=operator_id,

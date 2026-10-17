@@ -251,6 +251,43 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Office'}
+  /admin/clients/{client_id}/policy:
+    parameters: [{$ref: '#/components/parameters/ClientId'}]
+    get:
+      tags: [admin]
+      summary: What this client's own rules are, and what they resolve to
+      description: >
+        `allocation-rules.md` section 1: a client may override a handful of the
+        operator's numbers, and for the "stricter only" ones their value is used **only
+        when it is the stricter of the two**. The response carries both - what the
+        client set, and what the platform will actually apply - because an admin who
+        types a laxer number and sees it accepted but not applied has been misled.
+      responses:
+        '200':
+          description: Policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClientPolicy'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [admin]
+      summary: Set this client's policy
+      description: >
+        Creates the policy if the client has none. Every field is optional; a `null`
+        clears an override and returns that number to the operator's value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClientPolicyInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClientPolicy'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /admin/clients/{client_id}/employees:
     parameters: [{$ref: '#/components/parameters/ClientId'}]
     get:
@@ -897,6 +934,40 @@ paths:
               schema: {$ref: '#/components/schemas/Impact'}
         '404': {$ref: '#/components/responses/NotFound'}
         '422': {$ref: '#/components/responses/ValidationError'}
+  /dispatch/suggestions:
+    get:
+      tags: [dispatch]
+      summary: Offers the system is waiting for an answer to
+      description: >
+        The stored offers a `semi_auto` scope has made (`control-model.md` §1 and §4),
+        newest first. `GET /dispatch/requests/{id}/suggestions` answers a different
+        question - it **recomputes** the best cabs for one request, which is what a
+        supervisor wants when they are choosing - whereas this returns what was already
+        offered, with the `id` the decision endpoint takes and the moment the failsafe
+        fires.
+
+
+        Without it the offer record is unreachable: the decision endpoint needs a
+        `suggestion_id` that nothing else returns, and the countdown a supervisor sees
+        needs `failsafe_due_at`.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {type: string, enum: [offered, accepted, rejected, superseded, expired, failsafe_assigned], default: offered}
+        - name: request_id
+          in: query
+          required: false
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Suggestion'}}
   /dispatch/suggestions/{suggestion_id}/decision:
     parameters: [{name: suggestion_id, in: path, required: true, schema: {type: string, format: uuid}}]
     post:
@@ -1532,6 +1603,83 @@ components:
               description: >
                 Employees whose home falls in this zone. An inactive zone covers nobody
                 and reports zero - which is the point of deactivating one.
+    ClientPolicyInput:
+      type: object
+      description: >
+        Every field optional. `null` clears an override and the operator's value
+        applies. The numeric four are **stricter only** - a client may tighten a limit,
+        never loosen it - and a laxer value is kept as written and simply not applied,
+        which the `effective` block makes visible.
+      properties:
+        pooling_allowed:
+          type: boolean
+          description: >
+            False means this client's riders never share a cab. Equivalent to every one
+            of their requests arriving with `no_sharing`.
+        employee_opt_out_allowed:
+          type: boolean
+          description: >
+            Whether an employee of this client may ask not to share. False makes
+            `no_sharing: true` on their request a 422 rather than a silently ignored
+            field - the rider is told, instead of being quietly pooled.
+        night_safety_enabled: {type: boolean}
+        night_start: {type: [string, 'null'], format: time, description: 'local time, HH:MM:SS'}
+        night_end: {type: [string, 'null'], format: time}
+        max_detour_factor: {type: [number, 'null'], minimum: 1.0, maximum: 3.0}
+        max_detour_minutes: {type: [integer, 'null'], minimum: 0, maximum: 60}
+        pickup_window_minutes: {type: [integer, 'null'], minimum: 0, maximum: 30}
+        no_show_wait_minutes: {type: [integer, 'null'], minimum: 1, maximum: 15}
+    ClientPolicy:
+      allOf:
+        - $ref: '#/components/schemas/ClientPolicyInput'
+        - type: object
+          properties:
+            client_id: {type: string, format: uuid}
+            effective:
+              type: object
+              description: >
+                The numbers the platform will actually apply to this client's rides,
+                after the stricter-value rule. Read-only.
+              properties:
+                max_detour_factor: {type: number}
+                max_detour_minutes: {type: integer}
+                pickup_window_minutes: {type: integer}
+                no_show_wait_minutes: {type: integer}
+                night_safety_enabled: {type: boolean}
+                night_start: {type: string, format: time}
+                night_end: {type: string, format: time}
+    Suggestion:
+      type: object
+      description: One offer the system made, and what became of it.
+      properties:
+        id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        vehicle_id: {type: string, format: uuid}
+        trip_id: {type: [string, 'null'], format: uuid, description: The trip this would join; null opens a new one.}
+        rank: {type: integer, description: 1 is the system's first choice.}
+        cost: {type: number}
+        reasons:
+          type: array
+          items: {type: string}
+          description: >
+            The plain-text phrases exactly as they were offered. Kept verbatim rather
+            than recomputed: "+4 min for Rahul" is the claim the supervisor acted on,
+            and recomputing it later answers against a different world.
+        status:
+          type: string
+          enum: [offered, accepted, rejected, superseded, expired, failsafe_assigned]
+          description: >
+            `accepted` means a supervisor approved it. `failsafe_assigned` means nobody
+            answered and the platform assigned it anyway (§4) - a separate state
+            because counting it as an acceptance would let an unwatched scope score
+            100% on Phase 2's exit criterion.
+        offered_at: {type: string, format: date-time}
+        failsafe_due_at:
+          type: string
+          format: date-time
+          description: When the failsafe acts if nobody answers. The countdown on S-05.
+        escalated_at: {type: [string, 'null'], format: date-time}
+        decided_at: {type: [string, 'null'], format: date-time}
     OverrideInput:
       type: object
       required: [action, reason_code]

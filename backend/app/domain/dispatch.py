@@ -23,12 +23,13 @@ completes a different request (a pickup stop going `done` sets `picked_up`, a dr
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from enum import StrEnum
 
 from app.domain.enums import Direction
+from app.domain.night_safety import breaches_night_safety
 from app.domain.state_machines import StopKind
 
 #: Travel time in seconds between two points, from a pre-fetched matrix.
@@ -55,6 +56,10 @@ class Violation(StrEnum):
     pickup_window_missed = "pickup_window_missed"
     eta_over_candidate_limit = "eta_over_candidate_limit"
     enroute_reuse_eta_exceeded = "enroute_reuse_eta_exceeded"
+    #: Rule 11. Waivable with a reason, like the other hard rules - `control-model.md`
+    #: section 3 rule 4 names night safety among the overrides a supervisor may make
+    #: with `safety` / `client_request` / `other` and a note (B26, B28).
+    night_safety_breach = "night_safety_breach"
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +263,19 @@ class AssignmentFacts:
     trip_office_id: uuid.UUID | None = None
     trip_pooling_blocked: bool = False
     trip_has_other_riders: bool = False
+    #: Rule 11, from the rider's client policy resolved against operator config (B28).
+    #: Off by default, which is Phase 1's behaviour and the behaviour of every operator
+    #: who has not turned it on.
+    night_safety_enabled: bool = False
+    night_start: time = time(20, 0)
+    night_end: time = time(6, 0)
+    night_safety_positions: str = "both"
+    #: Pickup time as the **operator's wall clock** shows it, which is what a window
+    #: written "20:00-06:00" means. `None` when the caller has not converted, and the
+    #: rule then does not fire: comparing a UTC time of day against a local window is
+    #: wrong by five and a half hours here and passes every test written in UTC, so it
+    #: has to be impossible to do by accident rather than merely discouraged.
+    pickup_time_local: time | None = None
 
 
 AVAILABLE_FOR_DISPATCH = frozenset({"available", "on_trip"})
@@ -269,6 +287,7 @@ def check_hard_rules(
     insertion: Insertion | None = None,
     limits: dict[uuid.UUID, DetourLimits] | None = None,
     direct_seconds: dict[uuid.UUID, float] | None = None,
+    night_escort_required: Collection[uuid.UUID] | None = None,
 ) -> list[Violation]:
     """Every hard rule this assignment breaks, in the order `allocation-rules.md` lists them.
 
@@ -306,6 +325,24 @@ def check_hard_rules(
     # 7. Detour limits, for every rider on the resulting trip.
     if insertion is not None:
         violations.extend(_detour_violations(insertion, limits or {}, direct_seconds or {}))
+
+    # 11. Night safety. Judged on the resulting **order**, so it needs the insertion;
+    # a brand-new trip has one rider and no order to get wrong.
+    if (
+        insertion is not None
+        and facts.pickup_time_local is not None
+        and breaches_night_safety(
+            direction=facts.direction,
+            order=[rider.request_id for rider in insertion.plan.order],
+            flagged=night_escort_required or (),
+            at=facts.pickup_time_local,
+            enabled=facts.night_safety_enabled,
+            night_start=facts.night_start,
+            night_end=facts.night_end,
+            positions=facts.night_safety_positions,
+        )
+    ):
+        violations.append(Violation.night_safety_breach)
 
     # 8. Time window.
     drift = abs((facts.pickup_at - facts.requested_time).total_seconds())

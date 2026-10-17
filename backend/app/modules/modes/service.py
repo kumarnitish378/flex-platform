@@ -26,6 +26,7 @@ from app.domain.modes import (
     overlaps,
     resolve_mode,
 )
+from app.domain.timeofday import local as local_time
 from app.modules.modes.models import ModeSetting
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest
@@ -73,6 +74,7 @@ class ModeService:
 
         operator = await self.session.get(Operator, request.operator_id)
         paused = bool(operator.automation_paused) if operator is not None else False
+        timezone = operator.timezone if operator is not None else "UTC"
 
         return resolve_mode(
             await self.scopes(request.operator_id),
@@ -82,7 +84,12 @@ class ModeService:
                 zone_id=employee.zone_id,
                 is_vip=bool(employee.is_vip),
             ),
-            request.requested_time,
+            # Converted to the operator's wall clock, because a window written
+            # "18:00-21:00" means their evening and not UTC's. Comparing the stored
+            # instant directly made an Indian operator's evening rule govern 23:30 to
+            # 02:30 local - found in B28, where the same mistake in the night-safety
+            # window would have been five and a half hours of silent exposure.
+            local_time(request.requested_time, timezone),
             automation_paused=paused,
             operator_default=await self.operator_default(request.operator_id),
         )

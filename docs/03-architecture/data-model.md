@@ -36,7 +36,7 @@ flowchart LR
 
 **office** — `operator_id`, `client_id`, `name`, `location` point, `address_text`.
 
-**client_policy** — `client_id` (unique), `pooling_allowed` bool, `employee_opt_out_allowed` bool, `night_safety_enabled` bool, `night_start`, `night_end` (time), `max_detour_factor` (nullable, stricter only), `max_detour_minutes` (nullable), `pickup_window_minutes` (nullable), `no_show_wait_minutes` (nullable).
+**client_policy** — `client_id` (unique), `pooling_allowed` bool (default true), `employee_opt_out_allowed` bool (**default true**: asking not to share is a behaviour Phase 1 shipped ungated, so defaulting it off would revoke a permission every rider already had, and creating a policy row to set a detour limit would silently take it away - B28), `night_safety_enabled` bool (a **floor**: the rule is on if either this or the operator's key says so, because an untouched row is indistinguishable from a deliberate no - B28), `night_start`, `night_end` (time, both or neither), `max_detour_factor` (nullable, stricter only), `max_detour_minutes` (nullable), `pickup_window_minutes` (nullable), `no_show_wait_minutes` (nullable).
 
 **employee** — `operator_id`, `client_id`, `user_id` (nullable until first login), `name`, `phone`, `office_id`, `home_location` point, `home_landmark`, `zone_id` (derived, nullable), `priority` smallint 1–10 (default 5), `is_vip` bool, `night_escort_required` bool, `active` bool.
 

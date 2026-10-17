@@ -171,6 +171,29 @@ class SemiAutoService:
                 no_candidate += 1
         return offered, no_candidate
 
+    async def offers(
+        self,
+        operator_id: uuid.UUID,
+        status: str = str(SuggestionStatus.offered),
+        request_id: uuid.UUID | None = None,
+    ) -> list[Suggestion]:
+        """The stored offers in one state, newest first (B25's record, read at last).
+
+        The table has existed since B25 and nothing could read it, which made
+        `/suggestions/{id}/decision` uncallable by any client: the id it needs was
+        never returned anywhere. Found writing M09's supervisor, which has to answer
+        offers rather than make assignments.
+        """
+        query = (
+            select(Suggestion)
+            .where(Suggestion.operator_id == operator_id)
+            .where(Suggestion.status == status)
+            .order_by(Suggestion.offered_at.desc(), Suggestion.rank)
+        )
+        if request_id is not None:
+            query = query.where(Suggestion.request_id == request_id)
+        return list((await self.session.execute(query)).scalars().all())
+
     async def offer(self, request: RideRequest) -> list[Suggestion]:
         """Record the top suggestions for this request and start the timer.
 
@@ -430,7 +453,7 @@ class SemiAutoService:
             await self._close(suggestion, SuggestionStatus.superseded)
             return False
 
-        await self._close(suggestion, SuggestionStatus.accepted, at=self.clock.now())
+        await self._close(suggestion, SuggestionStatus.failsafe_assigned, at=self.clock.now())
         await self._close_siblings(suggestion, SuggestionStatus.superseded)
         logger.info(
             "failsafe_assigned",

@@ -24,9 +24,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from zoneinfo import ZoneInfo
 
 from app.domain.errors import ValidationFailed
+from app.domain.timeofday import local as local_datetime
 
 #: The local clock time an operator's shift is taken to end on (`control-model.md` §3
 #: rule 5, "end of current shift / 23:59 IST"). The operator's own timezone comes from
@@ -220,7 +220,7 @@ def default_expiry(action: OverrideAction, now: datetime, timezone: str) -> date
     if action not in EXPIRING_ACTIONS:
         return None
 
-    local = now.astimezone(ZoneInfo(timezone))
+    local = local_datetime(now, timezone)
     hour, minute = SHIFT_END
     end = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if end <= local:

@@ -42,6 +42,11 @@ pytestmark = pytest.mark.requires_db
 
 #: Thursday 09:00.
 NOW = datetime(2026, 10, 15, 9, 0, tzinfo=UTC)
+#: 19:00 and 09:00 in Asia/Kolkata, the timezone `make_operator` gives an operator.
+#: Mode windows are written in the operator's wall clock, so a test that states its
+#: times in UTC is testing a different hour than the one it reads like.
+IST_EVENING = datetime(2026, 10, 15, 13, 30, tzinfo=UTC)
+IST_MORNING = datetime(2026, 10, 15, 3, 30, tzinfo=UTC)
 JWT_SECRET = "mode-tests-secret-0123456789abcdefgh"
 HOME = (28.5300, 77.4000)
 
@@ -341,6 +346,12 @@ async def test_the_window_is_judged_on_the_requested_time_not_now(
 
     Judging it by the clock instead would govern the morning bookings and miss the
     evening ones - the exact inverse of what the operator wrote.
+
+    **The times here are the operator's, not UTC**, which is the second half of the
+    same point: `18:00-22:00` is a wall clock in Asia/Kolkata, so the evening ride is
+    stored as 13:30 UTC and the morning one as 03:30. Written in UTC this test passed
+    while the implementation compared a UTC time of day against a local window - five
+    and a half hours out, which made the rule govern 00:30 to 04:30 local (B28).
     """
     admin = await token_for(Role.operator_admin, world["operator"].id, clock, db_session)  # type: ignore[attr-defined]
     supervisor = await token_for(Role.supervisor, world["operator"].id, clock, db_session)  # type: ignore[attr-defined]
@@ -350,9 +361,9 @@ async def test_the_window_is_judged_on_the_requested_time_not_now(
         headers=admin,
     )
 
-    # It is 09:00 now; the ride is for 19:00.
-    evening = await make_ride_request(db_session, world, at=NOW.replace(hour=19))
-    morning = await make_ride_request(db_session, world, at=NOW)
+    # It is early afternoon now; the ride is for 19:00 **local**, which is 13:30 UTC.
+    evening = await make_ride_request(db_session, world, at=IST_EVENING)
+    morning = await make_ride_request(db_session, world, at=IST_MORNING)
 
     evening_body = (
         await client.get(f"/dispatch/requests/{evening.id}/mode", headers=supervisor)

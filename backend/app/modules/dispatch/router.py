@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Query
@@ -128,6 +129,68 @@ async def list_suggestions(
     """
     suggestions = await service.suggestions(_operator_id(current_user), request_id, limit=limit)
     return {"items": [_candidate_out(candidate) for candidate in suggestions]}
+
+
+class SuggestionOut(BaseModel):
+    """One stored offer (`api-spec.yaml` Suggestion)."""
+
+    id: uuid.UUID
+    request_id: uuid.UUID
+    vehicle_id: uuid.UUID
+    trip_id: uuid.UUID | None = None
+    rank: int
+    cost: float
+    reasons: list[str] = []
+    status: str
+    offered_at: datetime
+    failsafe_due_at: datetime
+    escalated_at: datetime | None = None
+    decided_at: datetime | None = None
+
+
+@router.get(
+    "/suggestions",
+    summary="Offers the system is waiting for an answer to",
+    dependencies=[Depends(require(Permission.assign))],
+)
+async def list_offers(
+    session: SessionDep,
+    clock: ClockDep,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    status: Annotated[str, Query()] = "offered",
+    request_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> dict[str, list[SuggestionOut]]:
+    """What was already offered, with the id the decision endpoint takes.
+
+    A different question from `GET /requests/{id}/suggestions`, which **recomputes**
+    the best cabs for one request - that is what a supervisor wants while choosing,
+    and it is not a record of anything. Without this endpoint the offer row is
+    unreachable: the decision endpoint needs a `suggestion_id` nothing else returns,
+    and the failsafe countdown needs `failsafe_due_at`.
+    """
+    offers = await SemiAutoService(session, clock, service).offers(
+        operator_id=_operator_id(current_user), status=status, request_id=request_id
+    )
+    return {
+        "items": [
+            SuggestionOut(
+                id=offer.id,
+                request_id=offer.request_id,
+                vehicle_id=offer.vehicle_id,
+                trip_id=offer.trip_id,
+                rank=offer.rank,
+                cost=offer.cost,
+                reasons=list(offer.reasons or []),
+                status=offer.status,
+                offered_at=offer.offered_at,
+                failsafe_due_at=offer.failsafe_due_at,
+                escalated_at=offer.escalated_at,
+                decided_at=offer.decided_at,
+            )
+            for offer in offers
+        ]
+    }
 
 
 class SuggestionDecisionBody(BaseModel):
