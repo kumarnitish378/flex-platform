@@ -17,7 +17,7 @@ Principle: **modes decide who normally assigns; overrides let a human step in on
 A `mode_setting` row has optional `client_id`, `zone_id`, `direction`, `weekdays`, `start_time`, `end_time` and a `mode`. For a request, the **most specific matching** setting wins:
 
 1. Global emergency pause (`automation_paused = true`) → effectively `manual` for everything.
-2. VIP request → always assigned immediately in `full_auto` behaviour **if** a VIP vehicle is available and scope is not paused; otherwise alert supervisor.
+2. VIP request → always assigned immediately in `full_auto` behaviour **if** a VIP vehicle is available and scope is not paused; otherwise alert supervisor. "Immediately" is literal (B34): a VIP skips the micro-batch window, because the window exists to pool riders and a VIP is never pooled. With no VIP vehicle the request stays queued and a `vip_no_vehicle` alert is raised with the rules that excluded every cab; an ordinary cab is never substituted. The alert resolves itself when the VIP is assigned.
 3. Setting matching client + zone + time window
 4. client + time window
 5. zone + time window

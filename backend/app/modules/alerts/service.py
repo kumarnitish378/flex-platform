@@ -464,16 +464,53 @@ class AlertService:
         return [user_id for user_id in rows.scalars().all() if user_id is not None]
 
     async def vip_without_vehicle(
-        self, operator_id: uuid.UUID, request_id: uuid.UUID
+        self,
+        operator_id: uuid.UUID,
+        request_id: uuid.UUID,
+        reasons: list[str] | None = None,
     ) -> Alert | None:
-        """`allocation-rules.md` section 2 rule 4: alert, never auto-assign a normal cab."""
+        """`allocation-rules.md` section 2 rule 4: alert, never auto-assign a normal cab.
+
+        `reasons` are the rules that ruled every cab out, so the supervisor reads "no VIP
+        vehicle is free" or "the VIP vehicle is over its approach limit" and not just that
+        something is wrong. One open alert per request however many batches fail to place
+        them.
+        """
         return await self.raise_alert(
             operator_id,
             AlertType.vip_no_vehicle,
-            data={"request_id": str(request_id)},
+            data={"request_id": str(request_id), "reasons": reasons or []},
             request_id=request_id,
             dedupe=True,
         )
+
+    async def clear_for_request(
+        self, operator_id: uuid.UUID, alert_type: AlertType, request_id: uuid.UUID
+    ) -> int:
+        """Resolve, on the platform's own authority, alerts about a request it has now served.
+
+        A "VIP has no vehicle" banner that outlives the VIP being collected teaches a
+        supervisor to ignore the banner. The alert is not acknowledged by anyone, because
+        nobody did anything: the problem went away.
+        """
+        rows = (
+            (
+                await self.session.execute(
+                    select(Alert)
+                    .where(Alert.operator_id == operator_id)
+                    .where(Alert.type == str(alert_type))
+                    .where(Alert.request_id == request_id)
+                    .where(Alert.status != str(AlertStatus.resolved))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for alert in rows:
+            alert.status = AlertStatus.resolved
+            alert.resolved_at = self.clock.now()
+            await self._announce_change(alert)
+        return len(rows)
 
     async def vehicle_on_duty_for(self, driver_user_id: uuid.UUID) -> uuid.UUID | None:
         """The cab this driver is signed into right now.

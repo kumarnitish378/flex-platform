@@ -1863,6 +1863,14 @@ components:
         p90_wait_minutes: {type: number}
         no_shows: {type: integer}
         cancellations: {type: integer}
+        assignments_by_actor:
+          type: object
+          additionalProperties: {type: integer}
+          description: >
+            How many requests each kind of actor assigned (`supervisor`, `system_failsafe`,
+            `optimizer`), from each request's own event log (B34). Whether `full_auto` is
+            doing the work is a number here, not an inference. Each row also carries
+            `assigned_by`.
         rows: {type: array, items: {type: object, additionalProperties: true}}
     SimClock:
       type: object

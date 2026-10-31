@@ -81,7 +81,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: a cab whose *route* passes a rider is a candidate while one that is merely near but heading
   away is not; the existing ceiling still applies per candidate kind.
 
-- [ ] **B34 · `full_auto`** · deps B32
+- [x] **B34 · `full_auto`** · deps B32
   Docs: control-model.md §1 and §2, ADR-0008
   Do: the mode the mode table has accepted since B24 and nothing has acted on. A `full_auto` scope assigns
   without a human; VIP handling stays §2 level 2, which is why Phase 2 assigned no VIP automatically

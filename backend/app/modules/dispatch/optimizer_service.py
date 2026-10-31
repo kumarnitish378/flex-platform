@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
@@ -29,7 +29,7 @@ from app.core.geo import coords as _coords
 from app.core.logging import get_logger
 from app.domain.cost import CostWeights, effective_rider
 from app.domain.dispatch import DetourLimits, Place, widened_candidate_eta_minutes
-from app.domain.enums import Direction, Urgency
+from app.domain.enums import AlertType, Direction, Urgency
 from app.domain.errors import Conflict, InvalidTransition, NotFound
 from app.domain.failsafe import SuggestionStatus
 from app.domain.geo import LatLng
@@ -51,6 +51,7 @@ from app.domain.policy import EffectivePolicy
 from app.domain.state_machines import Actor, RequestStatus, StopKind, StopStatus, TripStatus
 from app.domain.suggestions import SuggestionFacts, named_riders
 from app.domain.suggestions import reasons as render_reasons
+from app.modules.alerts.service import AlertService
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import Trip, TripStop
 from app.modules.dispatch.optimizer_models import OptimizerHint, OptimizerRun
@@ -153,15 +154,33 @@ class OptimizerService:
             return BatchSweep()
 
         now = self.clock.now()
-        window = timedelta(seconds=int(await self.config.get(operator_id, "batch_window_seconds")))
-        oldest_ready = min(ready_at for _, ready_at in ready)
-        if now < oldest_ready + window:
-            return BatchSweep()
-        last = await self.last_run(operator_id)
-        if last is not None and now < last.started_at + window:
-            return BatchSweep()
+        # `allocation-rules.md` §2 rule 4: a VIP is "assigned immediately". The micro-batch
+        # window exists so that riders can be pooled, and a VIP is never pooled, so there is
+        # nothing for them to wait for. The rest of the ready queue rides along: the batch
+        # is run now, and everything ready is in it.
+        if not await self._any_vip([request for request, _ in ready]):
+            window = timedelta(
+                seconds=int(await self.config.get(operator_id, "batch_window_seconds"))
+            )
+            oldest_ready = min(ready_at for _, ready_at in ready)
+            if now < oldest_ready + window:
+                return BatchSweep()
+            last = await self.last_run(operator_id)
+            if last is not None and now < last.started_at + window:
+                return BatchSweep()
 
         return await self.run_batch(operator_id, [request for request, _ in ready])
+
+    async def _any_vip(self, requests: list[RideRequest]) -> bool:
+        if not requests:
+            return False
+        count = await self.session.scalar(
+            select(func.count())
+            .select_from(Employee)
+            .where(Employee.id.in_({request.employee_id for request in requests}))
+            .where(Employee.is_vip.is_(True))
+        )
+        return bool(count)
 
     async def ready_requests(self, operator_id: uuid.UUID) -> list[tuple[RideRequest, datetime]]:
         """Queued requests the optimizer may act on, each with when it became ready.
@@ -333,6 +352,8 @@ class OptimizerService:
         the solver did not plan.
         """
         applied = 0
+        await self._alert_unserved_vips(operator_id, plan, requests)
+        alerts = AlertService(self.session, self.clock)
         for placement in plan.placements:
             planned = PlannedAssignment(
                 order=placement.order,
@@ -366,7 +387,36 @@ class OptimizerService:
                     break
                 trip_id = trip.id
                 applied += 1
+                # A VIP who has a cab no longer needs the alert that said they had none.
+                await alerts.clear_for_request(operator_id, AlertType.vip_no_vehicle, request_id)
         return applied
+
+    async def _alert_unserved_vips(
+        self, operator_id: uuid.UUID, plan: Plan, requests: dict[uuid.UUID, RideRequest]
+    ) -> None:
+        """`allocation-rules.md` §2 rule 4: no VIP vehicle means an alert, never a substitute.
+
+        The solver already refuses to put a VIP in an ordinary cab (`vip_needs_vip_vehicle`),
+        so the request simply stays queued. Staying queued silently is the failure: the VIP
+        is standing at a kerb and nobody has been told. Before Phase 3 no VIP was assigned
+        automatically at all (OQ-38), so this branch could not be reached; it can now.
+        """
+        unserved = {item.request_id: item for item in plan.unplaced if item.request_id in requests}
+        if not unserved:
+            return
+        vips = set(
+            (
+                await self.session.execute(
+                    select(Employee.id)
+                    .where(Employee.id.in_({requests[rid].employee_id for rid in unserved}))
+                    .where(Employee.is_vip.is_(True))
+                )
+            ).scalars()
+        )
+        alerts = AlertService(self.session, self.clock)
+        for request_id, item in unserved.items():
+            if requests[request_id].employee_id in vips:
+                await alerts.vip_without_vehicle(operator_id, request_id, list(item.reasons))
 
     async def _suggest(self, plan: Plan, requests: dict[uuid.UUID, RideRequest]) -> int:
         """`semi_auto`: each placed rider becomes an offer a supervisor answers."""

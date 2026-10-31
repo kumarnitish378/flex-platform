@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -28,7 +29,7 @@ from app.domain.stats import median, p90
 from app.modules.dispatch.models import Trip, TripStop
 from app.modules.people.models import Employee
 from app.modules.reports.models import TripRating
-from app.modules.requests.models import RideRequest
+from app.modules.requests.models import RideRequest, RideRequestEvent
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,7 @@ CSV_COLUMNS = (
     "picked_up_at",
     "dropped_at",
     "wait_minutes",
+    "assigned_by",
 )
 
 
@@ -67,6 +69,10 @@ class TripRow:
     picked_up_at: datetime | None
     dropped_at: datetime | None
     wait_minutes: float | None
+    #: Who made the assignment: `supervisor`, `system_failsafe` or `optimizer` (B34). `None`
+    #: for a request that was never assigned. Taken from the request's own event log, so
+    #: an automatic assignment can always be told from a person's.
+    assigned_by: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +88,7 @@ class TripRow:
             "picked_up_at": self.picked_up_at.isoformat() if self.picked_up_at else None,
             "dropped_at": self.dropped_at.isoformat() if self.dropped_at else None,
             "wait_minutes": round(self.wait_minutes, 1) if self.wait_minutes is not None else None,
+            "assigned_by": self.assigned_by,
         }
 
 
@@ -93,6 +100,9 @@ class TripReport:
     p90_wait_minutes: float | None = None
     no_shows: int = 0
     cancellations: int = 0
+    #: How many requests each kind of actor assigned (B34), so "is full auto doing the
+    #: work?" is a number on the report and not an inference from the event log.
+    assignments_by_actor: dict[str, int] = field(default_factory=dict)
     rows: list[TripRow] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -103,6 +113,7 @@ class TripReport:
             "p90_wait_minutes": _round(self.p90_wait_minutes),
             "no_shows": self.no_shows,
             "cancellations": self.cancellations,
+            "assignments_by_actor": dict(sorted(self.assignments_by_actor.items())),
             "rows": [row.as_dict() for row in self.rows],
         }
 
@@ -199,6 +210,7 @@ class ReportService:
             p90_wait_minutes=p90(waits),
             no_shows=sum(1 for row in rows if row.status == str(RequestStatus.no_show)),
             cancellations=sum(1 for row in rows if row.status == str(RequestStatus.cancelled)),
+            assignments_by_actor=_count_by(row.assigned_by for row in rows),
             rows=rows,
         )
         logger.info(
@@ -236,6 +248,7 @@ class ReportService:
             return []
 
         stop_times = await self._stop_times([request.id for request in requests])
+        assigners = await self._assigners([request.id for request in requests])
         trips = await self._trips({r.trip_id for r in requests if r.trip_id is not None})
 
         rows: list[TripRow] = []
@@ -256,9 +269,22 @@ class ReportService:
                     picked_up_at=picked_up,
                     dropped_at=dropped,
                     wait_minutes=_wait_minutes(request.queued_at, picked_up),
+                    assigned_by=assigners.get(request.id),
                 )
             )
         return rows
+
+    async def _assigners(self, request_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """The actor behind each request's most recent assignment."""
+        result = await self.session.execute(
+            select(RideRequestEvent.request_id, RideRequestEvent.actor_type)
+            .where(RideRequestEvent.request_id.in_(request_ids))
+            .where(RideRequestEvent.to_status == str(RequestStatus.assigned))
+            .order_by(RideRequestEvent.at, RideRequestEvent.created_at)
+        )
+        # Ordered oldest first, so the last write per request is the latest assignment: a
+        # request put back in the queue and assigned again is attributed to the second time.
+        return {request_id: str(actor) for request_id, actor in result.all()}
 
     async def _stop_times(
         self, request_ids: list[uuid.UUID]
@@ -304,6 +330,14 @@ def _wait_minutes(asked_at: datetime, picked_up_at: datetime | None) -> float | 
     if picked_up_at is None:
         return None
     return (picked_up_at - asked_at).total_seconds() / 60.0
+
+
+def _count_by(values: Iterable[str | None]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        if value is not None:
+            counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _round(value: float | None) -> float | None:
