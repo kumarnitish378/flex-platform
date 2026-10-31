@@ -46,11 +46,13 @@ from app.domain.optimizer import (
     Veh,
     solve,
 )
+from app.domain.optimizer_health import Health, HealthThresholds, RunFact, assess
 from app.domain.overrides import still_applies
 from app.domain.policy import EffectivePolicy
 from app.domain.state_machines import Actor, RequestStatus, StopKind, StopStatus, TripStatus
 from app.domain.suggestions import SuggestionFacts, named_riders
 from app.domain.suggestions import reasons as render_reasons
+from app.modules.alerts.models import Alert
 from app.modules.alerts.service import AlertService
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import Trip, TripStop
@@ -73,6 +75,9 @@ from app.modules.tenancy.models import Office
 logger = get_logger(__name__)
 
 Solver = Callable[[Problem], Plan]
+
+#: `alert.data.kind` of the alert raised while the optimizer is unavailable.
+OPTIMIZER_DOWN = "optimizer_down"
 
 #: Vehicles worth offering the optimizer. An `off_duty` or `out_of_service` cab has no
 #: driver to send (`allocation-rules.md` §2 rule 1).
@@ -130,6 +135,9 @@ class OptimizerService:
         total = BatchSweep()
         for operator in await self._operators_with_ready_requests(operator_id):
             total = total + await self._run_if_due(operator)
+            # After the run, so a batch that has just failed for the third time is noticed
+            # in the same sweep and not a minute later.
+            await self.sync_health_alert(operator)
         return total
 
     async def _operators_with_ready_requests(
@@ -144,16 +152,34 @@ class OptimizerService:
         return sorted(rows.scalars().all(), key=str)
 
     async def _run_if_due(self, operator_id: uuid.UUID) -> BatchSweep:
-        if await self.dispatch.automation_paused(operator_id):
-            # `control-model.md` §3: the emergency pause stops every automatic path, and
-            # the optimizer is the most automatic one there is.
-            return BatchSweep()
-
         ready = await self.ready_requests(operator_id)
         if not ready:
             return BatchSweep()
 
         now = self.clock.now()
+        if await self.dispatch.automation_paused(operator_id):
+            # `control-model.md` §3: the emergency pause stops every automatic path, and
+            # the optimizer is the most automatic one there is. It says so in the run log,
+            # at most once a window: the first sweep after a long pause must be able to tell
+            # "idle on purpose" from "dead" (B36).
+            window = timedelta(
+                seconds=int(await self.config.get(operator_id, "batch_window_seconds"))
+            )
+            last = await self.last_run(operator_id)
+            if last is None or now >= last.started_at + window:
+                self.session.add(
+                    OptimizerRun(
+                        id=uuid.uuid4(),
+                        operator_id=operator_id,
+                        started_at=now,
+                        status="paused",
+                        requests=len(ready),
+                        request_ids=[],
+                    )
+                )
+                await self.session.flush()
+            return BatchSweep()
+
         # `allocation-rules.md` §2 rule 4: a VIP is "assigned immediately". The micro-batch
         # window exists so that riders can be pooled, and a VIP is never pooled, so there is
         # nothing for them to wait for. The rest of the ready queue rides along: the batch
@@ -165,7 +191,7 @@ class OptimizerService:
             oldest_ready = min(ready_at for _, ready_at in ready)
             if now < oldest_ready + window:
                 return BatchSweep()
-            last = await self.last_run(operator_id)
+            last = await self.last_run(operator_id, solved_only=True)
             if last is not None and now < last.started_at + window:
                 return BatchSweep()
 
@@ -223,12 +249,101 @@ class OptimizerService:
             ready.append((request, became_ready))
         return ready
 
-    async def last_run(self, operator_id: uuid.UUID) -> OptimizerRun | None:
-        run: OptimizerRun | None = await self.session.scalar(
-            select(OptimizerRun)
+    # --- degradation (control-model.md section 6, B36) -------------------------------
+
+    async def health(self, operator_id: uuid.UUID) -> Health:
+        """Is the optimizer usable for this operator right now?
+
+        When it is not, `full_auto` and `semi_auto` scopes behave as `manual`: nothing is
+        applied and nothing is offered, and the queue is for the supervisors. Derived from
+        the run log and the queue on every call, never stored, so recovery needs no one to
+        flip a switch: the first run that does not fail is the recovery.
+        """
+        now = self.clock.now()
+        settings = await self.config.all_values(operator_id)
+        window = int(settings["batch_window_seconds"])
+        runs = await self._recent_runs(operator_id, int(settings["optimizer_failure_threshold"]))
+        ready = await self.ready_requests(operator_id)
+        oldest = min((at for _, at in ready), default=None)
+        return assess(
+            runs,
+            oldest,
+            now,
+            HealthThresholds(
+                failure_threshold=int(settings["optimizer_failure_threshold"]),
+                failure_memory=timedelta(minutes=int(settings["optimizer_failure_memory_minutes"])),
+                # Never tighter than the batch cadence itself: a request legitimately waits up
+                # to about two windows for its run.
+                stall=timedelta(seconds=max(int(settings["optimizer_stall_seconds"]), 3 * window)),
+            ),
+            paused=await self.dispatch.automation_paused(operator_id),
+        )
+
+    async def sync_health_alert(self, operator_id: uuid.UUID) -> Health:
+        """Raise one `system` alert while the optimizer is down, and clear it on recovery."""
+        health = await self.health(operator_id)
+        alerts = AlertService(self.session, self.clock)
+        open_alerts = [
+            alert
+            for alert in (
+                await self.session.execute(
+                    select(Alert)
+                    .where(Alert.operator_id == operator_id)
+                    .where(Alert.type == str(AlertType.system))
+                    .where(Alert.status != "resolved")
+                )
+            ).scalars()
+            if (alert.data or {}).get("kind") == OPTIMIZER_DOWN
+        ]
+        if not health.available and not open_alerts:
+            await alerts.raise_alert(
+                operator_id,
+                AlertType.system,
+                data={
+                    "kind": OPTIMIZER_DOWN,
+                    "reason": str(health.reason),
+                    "since": health.since.isoformat() if health.since else None,
+                    "behaves_as": str(Mode.manual),
+                },
+            )
+            logger.warning("optimizer_down", operator_id=str(operator_id), reason=health.reason)
+        elif health.available:
+            for alert in open_alerts:
+                alert.status = "resolved"
+                alert.resolved_at = self.clock.now()
+                await alerts.announce_change(alert)
+            if open_alerts:
+                logger.info("optimizer_recovered", operator_id=str(operator_id))
+        return health
+
+    async def effective_mode(self, request: RideRequest, health: Health | None = None) -> Mode:
+        """The mode a request is actually served under: its own, unless the optimizer is down."""
+        modes = ModeService(self.session, self.clock)
+        resolution = await modes.resolve_for_request(request)
+        if resolution.mode is Mode.manual:
+            return Mode.manual
+        health = health or await self.health(request.operator_id)
+        return resolution.mode if health.available else Mode.manual
+
+    async def _recent_runs(self, operator_id: uuid.UUID, count: int) -> list[RunFact]:
+        rows = await self.session.execute(
+            select(OptimizerRun.started_at, OptimizerRun.status)
             .where(OptimizerRun.operator_id == operator_id)
             .order_by(OptimizerRun.started_at.desc(), OptimizerRun.created_at.desc())
-            .limit(1)
+            .limit(max(count, 1))
+        )
+        return [RunFact(row[0], row[1] == "failed") for row in rows]
+
+    async def last_run(
+        self, operator_id: uuid.UUID, *, solved_only: bool = False
+    ) -> OptimizerRun | None:
+        """The newest run. `solved_only` skips the `paused` markers, which say the optimizer
+        was alive but are not a batch and must not delay the first real one after a resume."""
+        query = select(OptimizerRun).where(OptimizerRun.operator_id == operator_id)
+        if solved_only:
+            query = query.where(OptimizerRun.status != "paused")
+        run: OptimizerRun | None = await self.session.scalar(
+            query.order_by(OptimizerRun.started_at.desc(), OptimizerRun.created_at.desc()).limit(1)
         )
         return run
 
@@ -244,11 +359,13 @@ class OptimizerService:
         first: what it commits is visible to the next partition's problem, so an offer or
         a hint is never made for a cab the batch has just taken.
         """
-        modes = ModeService(self.session, self.clock)
+        # While the optimizer is down every scope behaves as `manual` (control-model.md
+        # section 6): the run is still attempted - it is the probe that notices recovery -
+        # but its plan is only ever a hint.
+        health = await self.health(operator_id)
         partitions: dict[Mode, list[RideRequest]] = {}
         for request in requests:
-            resolution = await modes.resolve_for_request(request)
-            partitions.setdefault(resolution.mode, []).append(request)
+            partitions.setdefault(await self.effective_mode(request, health), []).append(request)
 
         total = BatchSweep()
         for mode in (Mode.full_auto, Mode.semi_auto, Mode.manual):

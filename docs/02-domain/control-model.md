@@ -66,6 +66,7 @@ How each is measured (B35): a **scope** is a mode setting currently on `semi_aut
 
 ## 6. Degradation
 - Optimizer/worker down → scopes in `full_auto`/`semi_auto` behave as `manual`; alert shown.
+  **How the platform knows (B36, `domain/optimizer_health.py`):** the last `optimizer_failure_threshold` (3) batch runs all failed, within `optimizer_failure_memory_minutes` (15); or a request has been ready for `optimizer_stall_seconds` (180, never under three batch windows) with no run started since - a worker that is not running leaves no failed runs to count. While down: nothing is applied or offered (the optimizer is still *attempted* each window, as the probe, but its plan is only a hint), `/dispatch/requests/{id}/mode` answers `manual` with reason `optimizer_down`, and one `system` alert (`data.kind = optimizer_down`) is open. **Recovery needs no one:** the first run that does not fail clears the alert and the scope returns. A paused operator is never reported as down, supervisors can always assign by hand, and an offer made before the outage still reaches its failsafe - none of that depends on the optimizer.
 - **Routing degradation ladder** (ADR-0010 §3.4 of `architecture.md`): Redis cache hit → `osrm` provider →
   `approx`. The `approx` step is used whenever OSRM is down, slow, erroring **or the shared 1 request/second
   limit on the public server is exhausted**; it estimates from straight-line distance × 1.4 and the

@@ -17,7 +17,7 @@ from typing import Any
 
 import simpy
 
-from sim.agents.driver import DriverAgent
+from sim.agents.driver import DriverAgent, TripLog
 from sim.agents.driver import summarise as summarise_fleet
 from sim.agents.employee import EmployeeAgent, EmployeeProfile, Outcome
 from sim.agents.employee import summarise as summarise_demand
@@ -33,12 +33,14 @@ from sim.metrics import (
     DispatchMetrics,
     DrivingMetrics,
     IntegrityMetrics,
+    OptimizerMetrics,
     RunMetrics,
     compute_fleet_metrics,
 )
 from sim.mqtt import MqttPingSink, TeeingPingSink
 from sim.pings import MemoryPingSink
 from sim.platform import DutyCredentials, PlatformClient, PlatformError, SeededWorld
+from sim.pooling import PoolingMetrics, pooling_metrics
 from sim.rng import RngFactory
 from sim.routing import RoutingClient, build_routing
 from sim.scenario import LatLngModel, OperatorMode, Scenario
@@ -118,6 +120,13 @@ class Engine:
         self._events_scheduled = 0
         #: `no_show_wait_minutes` as the backend has it; the driver must not guess.
         self.no_show_wait_minutes = DEFAULT_NO_SHOW_WAIT_MINUTES
+        #: Employees the backend flagged for a night escort (S11).
+        self.night_escort_ids: frozenset[str] = frozenset()
+        #: Intervals the simulator switched the optimizer off for (S12).
+        self.optimizer_outages: list[tuple[datetime, datetime]] = []
+        #: The seeded world, kept so the end-of-run questions can be asked as the
+        #: supervisor would (S12 reads the alerts).
+        self.world: SeededWorld | None = None
         #: True once the demand window has closed: nothing new is asked for, nothing new
         #: is assigned, and a rider still waiting has their answer (OQ-29).
         self.window_closed = False
@@ -322,8 +331,77 @@ class Engine:
             demand=self._demand_metrics(),
             driving=self._driving_metrics(),
             dispatch=self._dispatch_metrics(),
+            pooling=self._pooling_metrics(),
+            optimizer=self._optimizer_metrics(),
             events=summarise_events(self.events, self._events_scheduled),
             integrity=IntegrityMetrics(agent_errors=self._agent_errors()),
+        )
+
+    def _optimizer_metrics(self) -> OptimizerMetrics:
+        """What the optimizer did and, if it was switched off, how the platform coped."""
+        if self.platform is None:
+            return OptimizerMetrics()
+        ledger = self.platform.optimizer
+        metrics = OptimizerMetrics(
+            runs=ledger.runs,
+            applied=ledger.applied,
+            suggested=ledger.suggested,
+            hinted=ledger.hinted,
+            failed=ledger.failed,
+        )
+        if not self.optimizer_outages:
+            return metrics
+
+        metrics.outage_minutes = round(
+            sum((end - start).total_seconds() for start, end in self.optimizer_outages) / 60.0, 1
+        )
+        metrics.applied_while_down = ledger.applied_while_down
+        metrics.suggested_while_down = ledger.suggested_while_down
+        down = []
+        if self.world is not None:
+            try:
+                alerts = self.platform.alerts(self.world.token_for("supervisor"))
+                down = [
+                    alert
+                    for alert in alerts
+                    if alert.get("type") == "system"
+                    and (alert.get("data") or {}).get("kind") == "optimizer_down"
+                ]
+            except Exception as exc:  # noqa: BLE001 - not being able to look is a finding
+                self.record(f"could not read alerts to check the outage: {exc}")
+        metrics.alert_raised = bool(down)
+        metrics.alert_resolved = bool(down) and all(a.get("status") == "resolved" for a in down)
+        return metrics
+
+    def trip_logs(self) -> list[TripLog]:
+        """Every trip a driver started, finalised at the odometer reading of the moment.
+
+        A trip still under way when the clock stopped has no end of its own, so it is closed
+        here at the cab's current reading rather than counted as zero kilometres.
+        """
+        logs: list[TripLog] = []
+        for driver in self.drivers:
+            for log in driver.record.trip_log:
+                if log.odometer_end_km is None:
+                    log.ended_at = self.now()
+                    log.odometer_end_km = driver.vehicle.odometer_km
+                logs.append(log)
+        return logs
+
+    def _pooling_metrics(self) -> PoolingMetrics:
+        if not self.drivers:
+            return PoolingMetrics()
+        overrides = self.scenario.operator.config_overrides if self.scenario.operator else {}
+
+        def direct(origin: LatLng, destination: LatLng, at: datetime) -> float:
+            return self.routing.route(origin, destination, at).duration_seconds / 60.0
+
+        return pooling_metrics(
+            self.trip_logs(),
+            direct,
+            max_detour_factor=float(overrides.get("max_detour_factor", 1.5)),
+            max_detour_minutes=float(overrides.get("max_detour_minutes", 15)),
+            night_escort_riders=self.night_escort_ids,
         )
 
     def _dispatch_metrics(self) -> DispatchMetrics:
@@ -515,7 +593,10 @@ def connect_fleet(engine: Engine, platform: PlatformClient) -> SeededWorld:
         # The exact mix, not just the count: a scenario asking for two VIP cars that
         # silently got one would test nothing it claims to.
         fleet=[(str(group.type), group.count) for group in engine.scenario.fleet],
+        night_escort_employees=engine.scenario.night_escort_employee_count,
     )
+    engine.world = world
+    engine.night_escort_ids = frozenset(str(value) for value in world.night_escort_employee_ids)
 
     overrides = engine.scenario.operator.config_overrides
     if overrides:

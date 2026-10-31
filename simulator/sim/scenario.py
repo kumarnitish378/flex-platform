@@ -28,6 +28,9 @@ class RoutingMode(StrEnum):
 
 class SupervisorPolicy(StrEnum):
     manual_nearest = "manual_nearest"
+    #: Watches a `full_auto` scope and works only the requests the platform hands back
+    #: to manual - the person on the end of the optimizer-down alert (S12, M13).
+    monitor = "monitor"
     approve_all = "approve_all"
     mixed = "mixed"
     absent = "absent"
@@ -87,6 +90,8 @@ class Employees(Strict):
     count: int = Field(ge=1)
     home_zones: list[str] = Field(default_factory=list)
     vip_share: float = Field(default=0.0, ge=0, le=1)
+    #: S11: the share of riders flagged `night_escort_required`.
+    night_escort_share: float = Field(default=0.0, ge=0, le=1)
     priority_dist: dict[int, float] = Field(default_factory=dict)
     shifts: list[Shift] = Field(min_length=1)
 
@@ -198,6 +203,18 @@ class Assertions(Strict):
     #: Phase 2's exit criterion, as a scenario assertion. Approvals over the offers a
     #: human answered; failsafe assignments are not acceptances.
     acceptance_rate_min: float | None = None
+    #: S10: pooling actually happened, and nobody was detoured past rule 7.
+    riders_per_trip_min: float | None = None
+    detour_over_limit_max: int | None = None
+    vehicles_used_max: int | None = None
+    #: S11: no flagged rider was left alone in the lone position of a pooled trip
+    #: (`allocation-rules.md` section 2 rule 11). Fails if no flagged rider travelled.
+    night_safety_violations_max: int | None = None
+    #: S12: the optimizer was killed, the platform noticed (an alert), did nothing
+    #: automatic while it was down, and recovered on its own.
+    optimizer_outage_handled: bool | None = None
+    #: S10: the optimizer, not a person, did the assigning.
+    optimizer_assignments_min: int | None = None
 
 
 class Scenario(Strict):
@@ -249,6 +266,14 @@ class Scenario(Strict):
     @property
     def employee_count(self) -> int:
         return sum(client.employees.count for client in self.clients)
+
+    @property
+    def night_escort_employee_count(self) -> int:
+        """How many seeded employees are flagged for a night escort (S11), rounded up."""
+        return sum(
+            math.ceil(client.employees.count * client.employees.night_escort_share)
+            for client in self.clients
+        )
 
     @property
     def vip_employee_count(self) -> int:

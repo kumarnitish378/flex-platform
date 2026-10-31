@@ -22,6 +22,7 @@ from app.core.clock import SIM_CLOCK_KEY, FakeClock
 from app.core.dependencies import ClockDep, SessionDep
 from app.core.logging import get_logger
 from app.domain.errors import Conflict, ValidationFailed
+from app.domain.optimizer import Plan, Problem
 from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
 from app.modules.dispatch.eta_refresh import EtaRefresher
@@ -36,6 +37,8 @@ from app.modules.simctl.schemas import (
     ResetResult,
     SimClockState,
     SimClockUpdate,
+    SimOptimizerState,
+    SimOptimizerUpdate,
 )
 from app.modules.simctl.service import SimControlService
 
@@ -113,11 +116,19 @@ async def set_clock(
     await ModePromptService(session, fake).run_due_mode_prompts()
     # The batch optimizer is due work as well: a window that closed during the jump must
     # have been solved before the PUT returns (B30), or a scenario would race it.
-    await OptimizerService(
-        session, fake, DispatchService(session, fake, request.app.state.eta)
+    batches = await OptimizerService(
+        session,
+        fake,
+        DispatchService(session, fake, request.app.state.eta),
+        solver=None if _optimizer_available(request) else _dead_solver,
     ).run_due_batches()
     return SimClockState(
         now=fake.now(),
+        optimizer_runs=batches.runs,
+        optimizer_applied=batches.applied,
+        optimizer_suggested=batches.suggested,
+        optimizer_hinted=batches.hinted,
+        optimizer_failed=batches.failed,
         expired=sweep.expired,
         near_expiry_alerts=sweep.warned,
         stop_etas_refreshed=refreshed.stops,
@@ -126,6 +137,33 @@ async def set_clock(
         failsafe_assignments=semi_auto.assigned,
         failsafe_escalations=semi_auto.escalated,
     )
+
+
+def _optimizer_available(request: Request) -> bool:
+    return bool(getattr(request.app.state, "optimizer_available", True))
+
+
+def _dead_solver(_: Problem) -> Plan:
+    """What a crashed optimizer looks like from the batch sweep: every solve raises."""
+    raise RuntimeError("the optimizer has been switched off by the simulator")
+
+
+@router.put(
+    "/simctl/optimizer",
+    summary="Kill or restore the optimizer (S12)",
+    dependencies=[Depends(public_route())],
+)
+async def set_optimizer(body: SimOptimizerUpdate, request: Request) -> SimOptimizerState:
+    """Make every optimizer run fail, or stop doing so.
+
+    A switch on the solver and nothing else: the sweep still runs, still records its
+    failures, and the platform detects the outage the way it would a real one - from the
+    run log. That is the point of S12: the *detection* is what is under test, so the fault
+    is injected as low as it can go.
+    """
+    request.app.state.optimizer_available = body.available
+    logger.info("sim_optimizer", available=body.available)
+    return SimOptimizerState(available=body.available)
 
 
 @router.post(
@@ -157,6 +195,7 @@ async def reset(
         employees=body.employees,
         vehicles=body.vehicles,
         vip_employees=body.vip_employees,
+        night_escort_employees=body.night_escort_employees,
         fleet=[(group.type, group.count) for group in body.fleet] if body.fleet else None,
     )
 

@@ -98,7 +98,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: each of the four conditions raises on its own; the prompt resolves when the condition clears;
   no code path anywhere changes a mode without a human.
 
-- [ ] **B36 · Degradation: the optimizer is allowed to be down** · deps B34
+- [~] **B36 · Degradation: the optimizer is allowed to be down** · deps B34
   Docs: control-model.md §6
   Do: a scope in `full_auto` or `semi_auto` behaves as `manual` when the optimizer or worker is
   unavailable, with an alert. The routing ladder (Redis → `osrm` → `approx`) already exists and is not

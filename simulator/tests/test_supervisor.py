@@ -550,3 +550,50 @@ def test_the_dispatch_summary_reports_the_policy() -> None:
 def test_no_supervisor_means_no_policy() -> None:
     """An offline run had nobody watching, which is not the same as a policy of doing nothing."""
     assert summarise_dispatch(None).policy is None
+
+
+# --- the monitor supervisor -----------------------------------------------------------------------
+
+
+class ModalDispatch(FakeDispatch):
+    """A board that says which mode is actually serving each request."""
+
+    def __init__(self, *args: Any, handed_back: set[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.handed_back = handed_back or set()
+
+    def request_mode(self, token: str, request_id: uuid.UUID) -> dict[str, Any]:
+        manual = str(request_id) in self.handed_back
+        return {"mode": "manual" if manual else "full_auto"}
+
+
+def monitor(engine: Engine, platform: ModalDispatch) -> SupervisorAgent:
+    engine.platform = platform  # type: ignore[assignment]
+    agent = SupervisorAgent(
+        engine, token="t", policy=SupervisorPolicy.monitor, reaction_delay_seconds=(20, 20)
+    )
+    engine.supervisor = agent
+    engine.spawn(agent.watch)
+    return agent
+
+
+def test_a_monitor_leaves_alone_what_the_platform_is_serving_itself(engine: Engine) -> None:
+    served_by_the_optimizer = request_row()
+    platform = ModalDispatch([served_by_the_optimizer], [candidate(eta=60)])
+    monitor(engine, platform)
+
+    engine.run()
+
+    assert platform.assigned == [], "a monitor that assigned here would race the optimizer"
+
+
+def test_a_monitor_works_what_the_platform_hands_back_to_manual(engine: Engine) -> None:
+    handed_back, other = request_row(), request_row()
+    platform = ModalDispatch(
+        [handed_back, other], [candidate(eta=60)], handed_back={handed_back["id"]}
+    )
+    monitor(engine, platform)
+
+    engine.run()
+
+    assert [str(request) for request, _ in platform.assigned] == [handed_back["id"]]

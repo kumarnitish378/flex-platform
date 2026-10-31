@@ -73,9 +73,10 @@ class PromptSweep:
 
 
 class ModePromptService:
-    def __init__(self, session: AsyncSession, clock: Clock) -> None:
+    def __init__(self, session: AsyncSession, clock: Clock, eta: Any = None) -> None:
         self.session = session
         self.clock = clock
+        self.eta = eta
         self.config = ConfigService(session, clock)
         self.modes = ModeService(session, clock)
         self.alerts = AlertService(session, clock)
@@ -88,12 +89,25 @@ class ModePromptService:
         total = PromptSweep()
         for operator in sorted((await self.session.execute(query)).scalars(), key=str):
             result = await self._operator(operator)
+            # The optimizer's own sweep cannot report that it is not running, so this
+            # separate task is the one that notices (control-model.md section 6, B36).
+            await self._optimizer_watch(operator)
             total = PromptSweep(
                 raised=total.raised + result.raised,
                 updated=total.updated + result.updated,
                 resolved=total.resolved + result.resolved,
             )
         return total
+
+    async def _optimizer_watch(self, operator_id: uuid.UUID) -> None:
+        from app.modules.dispatch.optimizer_service import OptimizerService
+        from app.modules.dispatch.service import DispatchService
+
+        # The sweep only reads and raises alerts, so it needs no routing: an approximate
+        # ETA service is a stand-in that is never asked a question.
+        await OptimizerService(
+            self.session, self.clock, DispatchService(self.session, self.clock, self.eta)
+        ).sync_health_alert(operator_id)
 
     # --- one operator ---------------------------------------------------------------
 

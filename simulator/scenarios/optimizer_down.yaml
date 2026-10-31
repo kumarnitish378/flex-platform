@@ -1,0 +1,73 @@
+# S12 optimizer_down (scenarios.md): the optimizer is killed in the middle of the morning
+# peak, and the platform has to cope by itself.
+#
+# `control-model.md` section 6 / B36: with the optimizer unavailable a scope on automation
+# behaves as manual - nothing applied, nothing offered - an alert is raised, and when the
+# optimizer comes back the scope returns without anyone touching it.
+#
+# The outage is injected as low as it can go (every optimizer run raises), so the platform
+# has to *detect* it from its own run log rather than being told. The supervisor is a
+# `monitor`: it assigns only requests the platform reports as being served manually, which
+# in this run means exactly the requests that arrive during the outage - so "no request is
+# stuck" is tested by a person with the same view a real supervisor has.
+#
+# Not part of `make sim-quick` - it needs a live backend.
+name: optimizer_down
+version: 1
+seed: 1212
+start: "2026-10-05T02:00:00Z"      # 07:30 IST
+duration_hours: 3.5
+drain_minutes_max: 120
+speed_factor: 60
+routing: approx
+
+operator:
+  config_overrides:
+    pickup_window_minutes: 30
+    candidate_max_eta_minutes: 45
+    alert_wait_minutes: 30
+    request_expiry_minutes: 120
+    batch_window_seconds: 30
+
+modes:
+  - {mode: full_auto}
+
+fleet:
+  - {type: sedan_4, count: 7, depot: [28.50, 77.38]}
+  - {type: sedan_4, count: 7, depot: [28.46, 77.40]}
+
+drivers:
+  shift_start_ist: "07:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 60
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      priority_dist: {5: 1.0}
+      shifts:
+        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+
+supervisor:
+  policy: monitor
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # Twenty minutes (scenarios.md), starting as the first riders of the morning ask.
+  - {at_ist: "08:35", type: optimizer_down, duration_min: 20}
+
+assertions:
+  optimizer_outage_handled: true
+  # Nobody is stranded by the outage, which is the part a person can see.
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

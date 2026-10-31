@@ -9,10 +9,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 
-from app.core.dependencies import ClockDep, CurrentUserDep, SessionDep
+from app.core.dependencies import ClockDep, CurrentUserDep, EtaDep, SessionDep
 from app.domain.enums import Direction
 from app.domain.errors import Forbidden, NotFound
-from app.domain.modes import Mode
+from app.domain.modes import Mode, ModeReason
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
 from app.modules.modes.models import ModeSetting
@@ -141,7 +141,11 @@ async def delete_mode_setting(
     dependencies=[Depends(require(Permission.assign))],
 )
 async def resolved_mode(
-    request_id: uuid.UUID, session: SessionDep, clock: ClockDep, current_user: CurrentUserDep
+    request_id: uuid.UUID,
+    session: SessionDep,
+    clock: ClockDep,
+    eta_service: EtaDep,
+    current_user: CurrentUserDep,
 ) -> ModeResolutionOut:
     operator_id = _operator_id(current_user)
     request = await session.get(RideRequest, request_id)
@@ -149,6 +153,22 @@ async def resolved_mode(
         raise NotFound("Ride request not found")
 
     resolution = await ModeService(session, clock).resolve_for_request(request)
+    # While the optimizer is down an automatic scope behaves as manual (B36). The answer a
+    # supervisor gets is the one that is true: "manual, because the optimizer is down" - not
+    # the mode the scope is configured for, which nothing is currently acting on.
+    if resolution.mode is not Mode.manual:
+        from app.modules.dispatch.optimizer_service import OptimizerService
+        from app.modules.dispatch.service import DispatchService
+
+        health = await OptimizerService(
+            session, clock, DispatchService(session, clock, eta_service)
+        ).health(operator_id)
+        if not health.available:
+            return ModeResolutionOut(
+                mode=Mode.manual,
+                reason=str(ModeReason.optimizer_down),
+                setting_id=resolution.setting_id,
+            )
     return ModeResolutionOut(
         mode=resolution.mode,
         reason=str(resolution.reason),

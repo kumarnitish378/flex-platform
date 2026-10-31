@@ -84,6 +84,100 @@ def evaluate(assertions: Assertions, metrics: RunMetrics) -> list[Failure]:
                 )
             )
 
+    if assertions.riders_per_trip_min is not None:
+        value = metrics.pooling.riders_per_trip
+        if value is None:
+            failures.append(Failure("riders_per_trip_min", "no trip carried anyone"))
+        elif value < assertions.riders_per_trip_min:
+            failures.append(
+                Failure(
+                    "riders_per_trip_min",
+                    f"{value:.2f} riders per trip, floor {assertions.riders_per_trip_min}",
+                )
+            )
+
+    if assertions.vehicles_used_max is not None:
+        used = metrics.pooling.vehicles_used
+        if used is None:
+            failures.append(Failure("vehicles_used_max", "no cab carried anyone"))
+        elif used > assertions.vehicles_used_max:
+            failures.append(
+                Failure(
+                    "vehicles_used_max", f"{used} cabs used, limit {assertions.vehicles_used_max}"
+                )
+            )
+
+    if assertions.detour_over_limit_max is not None:
+        over = metrics.pooling.detour_over_limit
+        if over is None:
+            failures.append(Failure("detour_over_limit_max", "no ride was measured"))
+        elif over > assertions.detour_over_limit_max:
+            failures.append(
+                Failure(
+                    "detour_over_limit_max",
+                    f"{over} ride(s) exceeded rule 7's detour limit, allowed "
+                    f"{assertions.detour_over_limit_max}",
+                )
+            )
+
+    if assertions.night_safety_violations_max is not None:
+        carried = metrics.pooling.night_flagged_carried
+        violations = metrics.pooling.night_safety_violations
+        if not carried:
+            failures.append(
+                Failure(
+                    "night_safety_violations_max",
+                    "no flagged rider was carried, so rule 11 was never exercised",
+                )
+            )
+        elif (violations or 0) > assertions.night_safety_violations_max:
+            failures.append(
+                Failure(
+                    "night_safety_violations_max",
+                    f"{violations} pooled trip(s) left a flagged rider alone in the lone "
+                    f"position, allowed {assertions.night_safety_violations_max}",
+                )
+            )
+
+    if assertions.optimizer_assignments_min is not None:
+        applied = metrics.optimizer.applied
+        if not applied or applied < assertions.optimizer_assignments_min:
+            failures.append(
+                Failure(
+                    "optimizer_assignments_min",
+                    f"the optimizer assigned {applied or 0} request(s), expected at least "
+                    f"{assertions.optimizer_assignments_min}",
+                )
+            )
+
+    if assertions.optimizer_outage_handled:
+        optimizer = metrics.optimizer
+        if optimizer.outage_minutes is None:
+            failures.append(Failure("optimizer_outage_handled", "no outage was injected"))
+        else:
+            if not optimizer.alert_raised:
+                failures.append(
+                    Failure(
+                        "optimizer_outage_handled", "the platform raised no optimizer_down alert"
+                    )
+                )
+            elif not optimizer.alert_resolved:
+                failures.append(
+                    Failure(
+                        "optimizer_outage_handled",
+                        "the optimizer_down alert never cleared after the optimizer came back",
+                    )
+                )
+            if (optimizer.applied_while_down or 0) > 0 or (optimizer.suggested_while_down or 0) > 0:
+                failures.append(
+                    Failure(
+                        "optimizer_outage_handled",
+                        f"the platform assigned {optimizer.applied_while_down} and offered "
+                        f"{optimizer.suggested_while_down} request(s) while the optimizer was down"
+                        " - a scope in manual must do neither",
+                    )
+                )
+
     if assertions.all_requests_terminal:
         unresolved = metrics.demand.unresolved
         if unresolved is None:

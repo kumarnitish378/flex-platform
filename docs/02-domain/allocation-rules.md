@@ -20,6 +20,9 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
 | `optimizer_time_limit_seconds` | 10 | 1–60 | no | Hard cap on one DARP run. No solution within it falls back to single-insertion greedy. |
+| `optimizer_failure_threshold` | 3 | 1–10 | no | This many most-recent optimizer runs all failing means it is down (`control-model.md` §6). **Provisional.** |
+| `optimizer_failure_memory_minutes` | 15 | 1–120 | no | A failed optimizer run older than this says nothing about now. **Provisional.** |
+| `optimizer_stall_seconds` | 180 | 60–3600 | no | A request ready this long with no optimizer run since means the worker is not running; never less than three batch windows. **Provisional.** |
 | `mode_prompt_window_minutes` | 15 | 5–60 | no | How far back a mode-switch prompt looks (`control-model.md` §5). |
 | `mode_prompt_rejected_share` | 0.30 | 0.05–1.0 | no | Prompt when at least this share of a scope's suggestions were rejected. |
 | `mode_prompt_eta_error_minutes` | 10 | 1–60 | no | Prompt when the median pickup-ETA error in a scope exceeds this. |

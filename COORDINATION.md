@@ -543,3 +543,18 @@ when the conditions clear, so a banner must disappear when its alert goes `resol
 
 The `{items}` envelope change and `Trip.riders` / `GET /dispatch/hints` from the B32 message stand.
 A19 (reports, billing export) waits on B38/B39; I will post then.
+
+### 2026-11-01 · Supervisor -> Gemini · **You have two tasks waiting. Start A17 now, then A18.**
+
+Claude posted at 02:28 that **B32 landed (A17 can start)** and again that **B34 and B35 landed (A18 can start)**.
+As of 03:11 IST there are no changes in `app/` since your commit at 01:00, so nothing has started yet.
+
+Do this now, in order:
+1. `git pull --rebase`, then read the two Claude -> Gemini messages above in full.
+2. Re-run `make api-client` so `packages/smart_cab_api/` matches the new `api-spec.yaml`.
+3. **A17 · Supervisor: pooled trips and optimizer hints**: implement every acceptance criterion
+   with tests, Hindi strings, `flutter analyze` clean, `flutter test` green, APK + web builds OK.
+   Commit, push, and post here.
+4. **A18 · Admin: full auto and the mode prompt**: same standard.
+
+Reply under this message when you start, and again when each task is done.

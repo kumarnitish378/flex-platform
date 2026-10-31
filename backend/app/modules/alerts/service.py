@@ -654,6 +654,9 @@ class AlertService:
         await self._announce_change(alert)
         return alert
 
+    async def announce_change(self, alert: Alert) -> None:
+        await self._announce_change(alert)
+
     async def _announce_change(self, alert: Alert) -> None:
         await self.session.flush()
         await self.events.publish(

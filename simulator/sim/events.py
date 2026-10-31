@@ -52,16 +52,12 @@ SUPPORTED = (
     "supervisor_absent",
     "vip_burst",
     "lock_requests",
+    "optimizer_down",
 )
 
 #: Listed in section 7 but not implementable yet, with the reason. Refused loudly so a
 #: scenario cannot quietly measure something other than what it claims to.
-NOT_YET = {
-    "optimizer_down": (
-        "the optimizer that Phase 3 runs does not exist yet; Phase 2's automatic path is"
-        " the semi-auto sweep, and taking it down is not the same experiment"
-    ),
-}
+NOT_YET: dict[str, str] = {}
 
 
 class UnsupportedEventError(RuntimeError):
@@ -149,6 +145,26 @@ class EventInjector:
         return float(event.duration_min or DEFAULT_DURATION_MINUTES)
 
     # --- weather and roads ------------------------------------------------------------
+
+    def _on_optimizer_down(self, event: Event) -> Process:
+        """Kill the batch optimizer for a while (S12), then bring it back (B36).
+
+        Acts through `PUT /simctl/optimizer`, which makes every optimizer run raise: the
+        outage is injected as low as it can go, so the platform has to notice it the way it
+        would notice a real one - from the failed runs - and fall back by itself. Nothing in
+        the simulator tells the platform it is degraded.
+        """
+        platform = self.engine.platform
+        if platform is None:
+            self.record.skipped.append(event.type)
+            return
+        platform.set_optimizer(False)
+        began = self.engine.now()
+        self.engine.record("optimizer switched off")
+        yield self.engine.env.timeout(self._minutes(event) * 60)
+        platform.set_optimizer(True)
+        self.engine.optimizer_outages.append((began, self.engine.now()))
+        self.engine.record("optimizer switched back on")
 
     def _on_rain(self, event: Event) -> Process:
         """Section 6: rain slows everything by a factor."""

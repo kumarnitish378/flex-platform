@@ -57,6 +57,11 @@ class VehicleAgent:
         self.engine = engine
         self.vehicle_id = vehicle_id
         self.position = start
+        #: Kilometres this cab has actually moved. Counted from the movement itself,
+        #: not from the pings (which carry GPS noise and are dropped on purpose by
+        #: some scenarios) and not from what dispatch planned: M11 measures what the
+        #: drivers drove.
+        self.odometer_km = 0.0
         self.speed_ms = 0.0
         self.heading = 0.0
         self.on_duty = False
@@ -154,7 +159,7 @@ class VehicleAgent:
     def _drive_to(self, destination: LatLng) -> Generator[simpy.Event, Any, None]:
         route = self.route_to(destination)
         if route.duration_seconds <= 0:
-            self.position = destination
+            self._move_to(destination)
             self._maybe_emit()
             return
 
@@ -167,12 +172,12 @@ class VehicleAgent:
                 break
 
             previous = self.position
-            self.position = route.position_at(elapsed)
+            self._move_to(route.position_at(elapsed))
             self._update_motion(previous, self.position, self._current_interval())
             self._maybe_emit()
             yield self.engine.env.timeout(self._current_interval())
 
-        self.position = destination
+        self._move_to(destination)
         self.speed_ms = 0.0
         self._stationary_since = self.engine.env.now
         self._maybe_emit()
@@ -200,6 +205,11 @@ class VehicleAgent:
             0.0 if self._stationary_since is None else self.engine.env.now - self._stationary_since
         )
         return ping_interval_seconds(self.speed_ms, stationary_for)
+
+    def _move_to(self, point: LatLng) -> None:
+        """Move, and count the distance."""
+        self.odometer_km += haversine_km(self.position, point)
+        self.position = point
 
     def _update_motion(self, previous: LatLng, current: LatLng, seconds: float) -> None:
         distance_m = haversine_km(previous, current) * 1000.0

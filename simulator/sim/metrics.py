@@ -14,20 +14,8 @@ from typing import Any
 from sim.events import EventSummary
 from sim.geo import LatLng, haversine_km
 from sim.pings import Ping
-
-
-def percentile(values: list[float], fraction: float) -> float | None:
-    """Linear-interpolated percentile. `None` for an empty sample."""
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    position = fraction * (len(ordered) - 1)
-    lower = int(position)
-    upper = min(lower + 1, len(ordered) - 1)
-    weight = position - lower
-    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+from sim.pooling import PoolingMetrics
+from sim.stats import percentile
 
 
 @dataclass
@@ -134,6 +122,23 @@ class DispatchMetrics:
 
 
 @dataclass
+class OptimizerMetrics:
+    """What the batch optimizer did (M12), from the platform's own report of each jump."""
+
+    runs: int | None = None
+    applied: int | None = None
+    suggested: int | None = None
+    hinted: int | None = None
+    failed: int | None = None
+    #: S12. `None` when no outage was injected.
+    outage_minutes: float | None = None
+    applied_while_down: int | None = None
+    suggested_while_down: int | None = None
+    alert_raised: bool | None = None
+    alert_resolved: bool | None = None
+
+
+@dataclass
 class IntegrityMetrics:
     """Must stay at zero. Any non-zero value fails a scenario (`scenarios.md`)."""
 
@@ -163,6 +168,9 @@ class RunMetrics:
     demand: DemandMetrics = field(default_factory=DemandMetrics)
     driving: DrivingMetrics = field(default_factory=DrivingMetrics)
     dispatch: DispatchMetrics = field(default_factory=DispatchMetrics)
+    #: Phase 3's exit criterion (M11): cab-km per trip, vehicles used, riders per trip.
+    pooling: PoolingMetrics = field(default_factory=PoolingMetrics)
+    optimizer: OptimizerMetrics = field(default_factory=OptimizerMetrics)
     events: EventSummary = field(default_factory=EventSummary)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
 

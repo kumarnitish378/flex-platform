@@ -40,6 +40,9 @@ class ModeReason(StrEnum):
     """
 
     automation_paused = "automation_paused"
+    #: The optimizer is unavailable, so a scope that is on automation behaves as
+    #: manual (`control-model.md` section 6, B36).
+    optimizer_down = "optimizer_down"
     vip = "vip"
     client_zone_time = "client_zone_time"
     client_time = "client_time"

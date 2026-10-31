@@ -15,6 +15,10 @@ Policies (section 5.3):
 * `approve_all` - in a `semi_auto` scope, take whatever the system offered, after the
   same reaction delay. The optimistic bound: what the platform achieves when the human
   never disagrees.
+* `monitor` - watch a `full_auto` scope and work only the requests the platform has
+  handed back to manual (S12, M13). Asks the platform which mode is actually serving
+  each queued request, so a request the optimizer will take is left to it and one it
+  cannot (the optimizer is down) is assigned by hand.
 * `mixed` - approve a configurable share and override the rest with a cab of their own
   choosing. The realistic one, and the only policy that makes the Phase 2 exit
   criterion mean anything: acceptance is measured against offers that could have been
@@ -56,6 +60,7 @@ SUPPORTED = (
     SupervisorPolicy.absent,
     SupervisorPolicy.approve_all,
     SupervisorPolicy.mixed,
+    SupervisorPolicy.monitor,
 )
 
 #: Policies that answer the system's offers rather than assigning from scratch.
@@ -203,7 +208,20 @@ class SupervisorAgent:
             return None
 
         self.record.looks += 1
+        if self.policy is SupervisorPolicy.monitor:
+            queued = [item for item in queued if self._handed_back_to_manual(item)]
         return queued[0] if queued else None
+
+    def _handed_back_to_manual(self, request: dict[str, Any]) -> bool:
+        """Is this request one the platform is *not* going to serve by itself?"""
+        platform = self.engine.platform
+        assert platform is not None
+        try:
+            mode = platform.request_mode(self.token, uuid.UUID(request["id"]))
+        except Exception as exc:  # noqa: BLE001 - a failed glance is not a crash
+            self.record.errors.append(f"mode: {type(exc).__name__}")
+            return False
+        return mode.get("mode") == "manual"
 
     def _oldest_offer(self) -> dict[str, Any] | None:
         """The offer that has been waiting longest for an answer (M09).

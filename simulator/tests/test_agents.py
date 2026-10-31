@@ -8,13 +8,13 @@ in CI. That the same calls work against the real API is `test_closed_loop_live.p
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from sim.agents.driver import DriverAgent
+from sim.agents.driver import DriverAgent, TripLog
 from sim.agents.driver import summarise as summarise_fleet
 from sim.agents.employee import (
     PATIENCE_FLOOR_MINUTES,
@@ -959,3 +959,54 @@ def test_a_broken_down_driver_stops_working(engine: Engine) -> None:
 
     assert driver.record.trips_started == 0
     assert driver.record.errors == []
+
+
+# --- M11: what the driver logs ------------------------------------------------------------
+
+
+def test_a_driver_logs_the_kilometres_it_really_moved_and_who_got_in(engine: Engine) -> None:
+    platform = with_platform(engine, FakePlatform())
+    platform.trips = [a_trip(stop_count=2)]
+    driver = driver_for(engine)
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    (log,) = driver.record.trip_log
+    assert log.completed and log.ended_at is not None and log.odometer_end_km is not None
+    assert log.odometer_end_km > log.odometer_start_km, "the cab drove between the stops"
+    assert len(log.rides) == 1
+    only: Any = next(iter(log.rides.values()))
+    assert only.picked_up_at is not None and only.dropped_at is not None
+    assert only.dropped_at >= only.picked_up_at
+
+
+def test_the_odometer_counts_distance_moved_not_pings_emitted(engine: Engine) -> None:
+    platform = with_platform(engine, FakePlatform())
+    platform.trips = [a_trip(stop_count=2)]
+    driver = driver_for(engine)
+    start = driver.vehicle.odometer_km
+    engine.spawn(driver.shift)
+
+    engine.run()
+
+    assert driver.vehicle.odometer_km > start
+    assert driver.record.trip_log[0].odometer_end_km == pytest.approx(driver.vehicle.odometer_km)
+
+
+def test_an_unfinished_trip_is_closed_at_the_current_reading(engine: Engine) -> None:
+    log = TripLog(
+        trip_id=str(uuid.uuid4()),
+        vehicle_id="v",
+        started_at=datetime(2026, 10, 5, 4, 0, tzinfo=UTC),
+        odometer_start_km=1.0,
+    )
+    platform = with_platform(engine, FakePlatform())
+    platform.trips = []
+    driver = driver_for(engine)
+    driver.record.trip_log.append(log)
+    engine.drivers.append(driver)
+
+    closed = engine.trip_logs()
+
+    assert closed[0].odometer_end_km == driver.vehicle.odometer_km

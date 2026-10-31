@@ -78,6 +78,8 @@ class SeededWorld:
     #: Which of them are VIPs (S07). Without this a VIP scenario would burst ordinary
     #: riders and report a result it never tested.
     vip_employee_ids: list[uuid.UUID] = field(default_factory=list)
+    #: Which are flagged `night_escort_required` (S11).
+    night_escort_employee_ids: list[uuid.UUID] = field(default_factory=list)
     vehicle_ids: list[uuid.UUID] = field(default_factory=list)
     vip_vehicle_ids: list[uuid.UUID] = field(default_factory=list)
     driver_ids: list[uuid.UUID] = field(default_factory=list)
@@ -99,6 +101,25 @@ class SeededWorld:
         return [user.access_token for user in self.users if user.role == role]
 
 
+@dataclass(slots=True)
+class OptimizerLedger:
+    """What the batch optimizer did, as the backend reported it after each clock jump (M12).
+
+    Read from the platform's own account of each jump rather than counted by the simulator:
+    a simulator that counted its own expectation would pass whether or not the optimizer
+    did anything. `*_while_down` is what it did during an outage the simulator caused,
+    which S12 requires to be zero.
+    """
+
+    runs: int = 0
+    applied: int = 0
+    suggested: int = 0
+    hinted: int = 0
+    failed: int = 0
+    applied_while_down: int = 0
+    suggested_while_down: int = 0
+
+
 class PlatformClient:
     """A thin, synchronous client. SimPy is single-threaded, so async buys nothing here."""
 
@@ -118,6 +139,9 @@ class PlatformClient:
         #: is how three long runs were lost before the claim existed.
         self.run_id = run_id or f"sim-{uuid.uuid4().hex[:12]}"
         self.force = force
+        self.optimizer = OptimizerLedger()
+        #: True between `set_optimizer(False)` and `set_optimizer(True)`.
+        self.optimizer_down = False
 
     # --- the world ------------------------------------------------------------
 
@@ -127,6 +151,7 @@ class PlatformClient:
         vehicles: int | None = None,
         vip_employees: int | None = None,
         fleet: Sequence[tuple[str, int]] | None = None,
+        night_escort_employees: int | None = None,
     ) -> SeededWorld:
         """Truncate and seed a world the size this scenario needs.
 
@@ -142,6 +167,7 @@ class PlatformClient:
                 "employees": employees,
                 "vehicles": vehicles,
                 "vip_employees": vip_employees,
+                "night_escort_employees": night_escort_employees,
                 "fleet": (
                     [{"type": name, "count": count} for name, count in fleet] if fleet else None
                 ),
@@ -155,6 +181,9 @@ class PlatformClient:
             office_ids=[uuid.UUID(value) for value in body.get("office_ids", [])],
             employee_ids=[uuid.UUID(value) for value in body.get("employee_ids", [])],
             vip_employee_ids=[uuid.UUID(value) for value in body.get("vip_employee_ids", [])],
+            night_escort_employee_ids=[
+                uuid.UUID(value) for value in body.get("night_escort_employee_ids", [])
+            ],
             vehicle_ids=[uuid.UUID(value) for value in body.get("vehicle_ids", [])],
             vip_vehicle_ids=[uuid.UUID(value) for value in body.get("vip_vehicle_ids", [])],
             driver_ids=[uuid.UUID(value) for value in body.get("driver_ids", [])],
@@ -186,11 +215,41 @@ class PlatformClient:
     def set_clock(self, now: datetime) -> datetime:
         """Move the backend's clock to a simulated instant and run what became due."""
         body = self._put("/simctl/clock", json={"now": now.isoformat()})
+        self._note_optimizer(body)
         return _parse_time(body["now"]) or now
 
     def advance_clock(self, seconds: int) -> dict[str, Any]:
         """Advance and report what the jump triggered, so a scenario can assert on it."""
-        return self._put("/simctl/clock", json={"advance_seconds": seconds})
+        body = self._put("/simctl/clock", json={"advance_seconds": seconds})
+        self._note_optimizer(body)
+        return body
+
+    def _note_optimizer(self, body: dict[str, Any]) -> None:
+        ledger = self.optimizer
+        applied = int(body.get("optimizer_applied") or 0)
+        suggested = int(body.get("optimizer_suggested") or 0)
+        ledger.runs += int(body.get("optimizer_runs") or 0)
+        ledger.applied += applied
+        ledger.suggested += suggested
+        ledger.hinted += int(body.get("optimizer_hinted") or 0)
+        ledger.failed += int(body.get("optimizer_failed") or 0)
+        if self.optimizer_down:
+            ledger.applied_while_down += applied
+            ledger.suggested_while_down += suggested
+
+    def set_optimizer(self, available: bool) -> None:
+        """Kill or restore the optimizer (S12, `PUT /simctl/optimizer`)."""
+        self._put("/simctl/optimizer", json={"available": available})
+        self.optimizer_down = not available
+
+    def request_mode(self, token: str, request_id: uuid.UUID) -> dict[str, Any]:
+        """Which mode is actually serving this request right now, and why (B24, B36)."""
+        return self._get(f"/dispatch/requests/{request_id}/mode", token=token)
+
+    def alerts(self, token: str, status: str | None = None) -> list[dict[str, Any]]:
+        query = f"?status={status}" if status else ""
+        items: list[dict[str, Any]] = self._get(f"/alerts{query}", token=token).get("items", [])
+        return items
 
     def clock(self) -> datetime | None:
         return _parse_time(self._get("/simctl/clock")["now"])

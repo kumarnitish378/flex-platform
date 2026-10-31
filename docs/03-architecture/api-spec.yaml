@@ -1088,6 +1088,26 @@ paths:
             schema: {$ref: '#/components/schemas/SimClock'}
       responses:
         '200': {description: Updated}
+  /simctl/optimizer:
+    x-env: sim-only
+    put:
+      tags: [simctl]
+      summary: Kill or restore the optimizer (S12, B36)
+      description: >
+        Makes every optimizer run fail (or stops doing so). A switch on the solver and
+        nothing else - the sweep still runs and records its failures, so the platform
+        notices the outage the way it would a real one, from the run log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [available]
+              properties:
+                available: {type: boolean}
+      responses:
+        '200': {description: Updated}
   /simctl/reset:
     x-env: sim-only
     post:
@@ -1553,8 +1573,11 @@ components:
         mode: {type: string, enum: [manual, semi_auto, full_auto]}
         reason:
           type: string
-          description: which level of control-model.md section 2 decided it
-          enum: [automation_paused, vip, client_zone_time, client_time, zone_time, client_zone, client, zone, operator_default]
+          description: >
+            which level of control-model.md section 2 decided it. `optimizer_down` (B36) is
+            not a level: it means the scope is configured for automation but the optimizer
+            is unavailable, so the request is being served as `manual`.
+          enum: [automation_paused, optimizer_down, vip, client_zone_time, client_time, zone_time, client_zone, client, zone, operator_default]
         setting_id:
           type: [string, 'null']
           format: uuid
@@ -1891,3 +1914,8 @@ components:
       properties:
         now: {type: string, format: date-time}
         advance_seconds: {type: integer, description: PUT only, alternative to now}
+        optimizer_runs: {type: integer, description: batch runs the jump caused}
+        optimizer_applied: {type: integer}
+        optimizer_suggested: {type: integer}
+        optimizer_hinted: {type: integer}
+        optimizer_failed: {type: integer}

@@ -1,0 +1,76 @@
+# S11 night_safety (scenarios.md): the rule B28 built, exercised end to end for the first time.
+#
+# `allocation-rules.md` section 2 rule 11: during the night window a trip's order must not
+# leave a rider flagged `night_escort_required` alone in the lone position - the first
+# pickup going to the office. This run puts a night shift's riders (a third of them
+# flagged) on a pooled full_auto scope with the policy switched on, and asks the drivers'
+# own records whether any flagged rider ended up there.
+#
+# **What it does not test.** OQ-10: the escort half of the policy - what happens to a
+# flagged rider who travels alone - is not built, because the data model has nowhere to
+# record an escort. A solo trip cannot breach the sequencing rule, so this checks the half
+# that exists, and says so.
+#
+# Not part of `make sim-quick` - it needs a live backend.
+name: night_safety
+version: 1
+seed: 1111
+start: "2026-10-05T15:30:00Z"      # 21:00 IST, inside the 20:00-06:00 night window
+duration_hours: 3
+drain_minutes_max: 120
+speed_factor: 60
+routing: approx
+
+operator:
+  config_overrides:
+    night_safety_enabled: true
+    night_safety_start: "20:00"
+    night_safety_end: "06:00"
+    night_safety_positions: both
+    pickup_window_minutes: 30
+    candidate_max_eta_minutes: 45
+    alert_wait_minutes: 30
+    request_expiry_minutes: 120
+    batch_window_seconds: 30
+
+modes:
+  - {mode: full_auto}
+
+fleet:
+  - {type: sedan_4, count: 6, depot: [28.50, 77.38]}
+  - {type: sedan_4, count: 6, depot: [28.46, 77.40]}
+
+drivers:
+  shift_start_ist: "20:30"
+  shift_end_ist: "23:59"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 40
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      night_escort_share: 0.35
+      priority_dist: {5: 1.0}
+      shifts:
+        - {start_ist: "22:30", end_ist: "06:30", share: 1.0}
+
+supervisor:
+  policy: monitor
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+assertions:
+  # Zero is the only passing answer, and a run in which no flagged rider travelled fails
+  # rather than passes: a rule that was never exercised has not been kept.
+  night_safety_violations_max: 0
+  optimizer_assignments_min: 10
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

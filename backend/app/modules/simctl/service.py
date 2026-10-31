@@ -206,6 +206,7 @@ class SimControlService:
         vehicles: int | None = None,
         vip_employees: int | None = None,
         fleet: Sequence[tuple[VehicleType, int]] | None = None,
+        night_escort_employees: int | None = None,
     ) -> ResetResult:
         await self._truncate()
         employee_count = employees or EMPLOYEE_COUNT
@@ -217,6 +218,7 @@ class SimControlService:
             vip_employee_count=min(
                 vip_employees if vip_employees is not None else 1, employee_count
             ),
+            night_escort_count=night_escort_employees or 0,
         )
         await self.session.flush()
         logger.info("simctl_reset", operator_id=str(result.operator_id), at=result.now.isoformat())
@@ -239,6 +241,7 @@ class SimControlService:
         vehicle_count: int,
         vip_employee_count: int = 1,
         fleet: Sequence[tuple[VehicleType, int]] | None = None,
+        night_escort_count: int = 0,
     ) -> ResetResult:
         operator = Operator(id=_id("operator"), name=OPERATOR_NAME)
         self.session.add(operator)
@@ -288,6 +291,11 @@ class SimControlService:
                 home_location=_point(base_lat + index * 0.001, base_lng + index * 0.001),
                 priority=5,
                 is_vip=index < vip_employee_count,
+                # The riders after the VIPs, so the two groups never overlap: a VIP is
+                # never pooled anyway, and a flagged VIP would test nothing.
+                night_escort_required=(
+                    vip_employee_count <= index < vip_employee_count + night_escort_count
+                ),
             )
             # Every employee gets a login, not just the first: the simulator's employee
             # agents each create their own requests, and `/ride-requests` scopes a
@@ -351,6 +359,9 @@ class SimControlService:
             zone_ids=zone_ids,
             employee_ids=employee_ids,
             vip_employee_ids=employee_ids[:vip_employee_count],
+            night_escort_employee_ids=employee_ids[
+                vip_employee_count : vip_employee_count + night_escort_count
+            ],
             vehicle_ids=vehicle_ids,
             vip_vehicle_ids=vip_vehicle_ids,
             driver_ids=driver_ids,

@@ -33,6 +33,23 @@ class SimClockState(Strict):
     suggestions_offered: int = 0
     failsafe_assignments: int = 0
     failsafe_escalations: int = 0
+    #: The batch optimizer (B30-B32): runs made by this jump, and what became of the
+    #: requests - assigned, offered, hinted - so a scenario can assert on it.
+    optimizer_runs: int = 0
+    optimizer_applied: int = 0
+    optimizer_suggested: int = 0
+    optimizer_hinted: int = 0
+    optimizer_failed: int = 0
+
+
+class SimOptimizerUpdate(Strict):
+    """Kill or restore the optimizer (S12, B36)."""
+
+    available: bool
+
+
+class SimOptimizerState(Strict):
+    available: bool
 
 
 class ReleaseRequest(Strict):
@@ -68,6 +85,10 @@ class ResetRequest(Strict):
     force: bool = False
     #: How many of the seeded employees are VIPs. Defaults to one, the historic fixture.
     vip_employees: int | None = Field(default=None, ge=0, le=500)
+    #: How many seeded employees (after the VIPs) are flagged `night_escort_required`.
+    #: S11 cannot test the night-safety rule (`allocation-rules.md` section 2 rule 11)
+    #: on a world where nobody is flagged.
+    night_escort_employees: int | None = Field(default=None, ge=0, le=500)
 
 
 class SeededUser(Strict):
@@ -87,6 +108,9 @@ class ResetResult(Strict):
     #: written without this: bursting ordinary riders would report a VIP result that was
     #: never tested.
     vip_employee_ids: list[uuid.UUID]
+    #: Which are flagged for a night escort, so the simulator can tell whether the rule
+    #: held for them from the trips its drivers actually drove.
+    night_escort_employee_ids: list[uuid.UUID] = Field(default_factory=list)
     vehicle_ids: list[uuid.UUID]
     #: Which of those vehicles are VIP cars, so a scenario can check that a VIP was not
     #: put in an ordinary cab (`allocation-rules.md` section 2 rule 4).

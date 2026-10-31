@@ -117,16 +117,28 @@ def test_a_router_with_no_speed_knob_is_left_alone() -> None:
 # --- scheduling ---------------------------------------------------------------------------
 
 
-def test_a_phase_two_event_is_refused_with_the_reason(engine: Engine) -> None:
-    """Approximating it would make a Phase 2 scenario measure the wrong thing."""
+def test_the_optimizer_outage_is_now_a_supported_event(engine: Engine) -> None:
+    """It was refused until Phase 3 had an optimizer to take down (M12)."""
     injector = EventInjector(engine)
 
-    with pytest.raises(UnsupportedEventError, match="Phase 2"):
-        injector.schedule([event("optimizer_down")])
+    assert "optimizer_down" in SUPPORTED and "optimizer_down" not in NOT_YET
+    assert injector.schedule([event("optimizer_down")]) == 1
+
+
+def test_an_optimizer_outage_with_no_platform_is_skipped_not_faked(engine: Engine) -> None:
+    """An offline run has no optimizer to switch off; pretending it did would measure nothing."""
+    injector = EventInjector(engine)
+    injector.schedule([event("optimizer_down", at="06:05")])
+
+    engine.run()
+
+    assert injector.record.skipped == ["optimizer_down"]
 
 
 def test_every_unimplementable_event_explains_itself() -> None:
-    assert set(NOT_YET) == {"optimizer_down"}
+    # Nothing is unimplementable right now, but the day something is, it must say why and must
+    # not also be advertised as supported.
+    assert set(NOT_YET).isdisjoint(SUPPORTED)
     for reason in NOT_YET.values():
         assert len(reason) > 20
 
@@ -151,7 +163,7 @@ def test_validation_happens_before_anything_fires(engine: Engine) -> None:
     injector = EventInjector(engine)
 
     with pytest.raises(UnsupportedEventError):
-        injector.schedule([event("rain"), event("optimizer_down")])
+        injector.schedule([event("rain"), event("teleport")])
 
     engine.run()
     assert injector.record.fired == []

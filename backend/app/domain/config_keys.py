@@ -170,6 +170,30 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         ),
         ConfigKey("batch_window_seconds", 45, 10, 120, description="Micro-batch window."),
         ConfigKey(
+            "optimizer_failure_threshold",
+            3,
+            1,
+            10,
+            description="This many most-recent optimizer runs all failing means it is down.",
+        ),
+        ConfigKey(
+            "optimizer_failure_memory_minutes",
+            15,
+            1,
+            120,
+            description="A failed optimizer run older than this says nothing about now.",
+        ),
+        ConfigKey(
+            "optimizer_stall_seconds",
+            180,
+            60,
+            3600,
+            description=(
+                "A request ready this long with no optimizer run since means the worker is "
+                "not running. Never less than three batch windows."
+            ),
+        ),
+        ConfigKey(
             "mode_prompt_window_minutes",
             15,
             5,

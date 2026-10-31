@@ -25,7 +25,10 @@ from app.core.models import TenantEntity, tenant_index
 
 #: `solved` - at least one request was placed. `no_solution` - the solver ran and placed
 #: none. `failed` - it raised; the batch was left untouched and B36 treats it as a symptom.
-RUN_STATUSES = ("solved", "no_solution", "failed")
+#: `paused` - automation was paused, so the sweep did not solve anything and said so: a
+#: marker that the optimizer was alive and deliberately idle, which is what stops a long
+#: pause being mistaken for a dead worker on the first sweep after it ends (B36).
+RUN_STATUSES = ("solved", "no_solution", "failed", "paused")
 
 
 class OptimizerRun(TenantEntity):

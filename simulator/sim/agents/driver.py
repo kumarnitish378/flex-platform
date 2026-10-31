@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -57,6 +58,39 @@ FINISHED_STOP_STATUSES = frozenset({"done", "skipped"})
 
 
 @dataclass
+class RideLog:
+    """One rider's ride as the driver lived it: when they got in and out, and where."""
+
+    request_id: str
+    picked_up_at: datetime | None = None
+    picked_up_at_place: LatLng | None = None
+    dropped_at: datetime | None = None
+    dropped_at_place: LatLng | None = None
+
+
+@dataclass
+class TripLog:
+    """What a driver actually drove on one trip (M11).
+
+    Everything here is observed, not planned: the odometer is the distance the cab moved,
+    the times are when the driver tapped the stop done, and the riders are the ones who
+    got in. `pooling_metrics` is computed from these and from nothing dispatch says it
+    intended.
+    """
+
+    trip_id: str
+    vehicle_id: str
+    started_at: datetime
+    odometer_start_km: float
+    #: `to_office` or `from_office`, as the platform called the trip.
+    direction: str | None = None
+    ended_at: datetime | None = None
+    odometer_end_km: float | None = None
+    completed: bool = False
+    rides: dict[str, RideLog] = field(default_factory=dict)
+
+
+@dataclass
 class DriverRecord:
     """What one driver did, for the run's metrics."""
 
@@ -73,6 +107,8 @@ class DriverRecord:
     #: whole trip's stop list, so this is where "was this rider pooled?" can be answered
     #: without inventing an endpoint (S07).
     riders_per_trip: dict[str, set[str]] = field(default_factory=dict)
+    #: One entry per trip this driver started, in the order they were driven (M11).
+    trip_log: list[TripLog] = field(default_factory=list)
     faults: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -190,6 +226,14 @@ class DriverAgent:
         if not self._call(lambda: platform.start_trip(self.token, trip_id, self.engine.now())):
             return
         self.record.trips_started += 1
+        log = TripLog(
+            trip_id=str(trip_id),
+            vehicle_id=self.vehicle.vehicle_id,
+            started_at=self.engine.now(),
+            odometer_start_km=self.vehicle.odometer_km,
+            direction=trip.get("direction"),
+        )
+        self.record.trip_log.append(log)
         self.record.riders_per_trip.setdefault(str(trip_id), set())
         self.engine.record(f"driver {self.driver_id} started trip {trip_id}")
 
@@ -201,6 +245,7 @@ class DriverAgent:
                 # (`trip-lifecycle.md`: breakdown -> aborted), so carrying on would be a
                 # driver tapping through a trip that no longer exists.
                 self.engine.record(f"driver {self.driver_id} abandoned trip {trip_id}")
+                self._close_log(log)
                 return
             stop = self._next_stop(trip_id, stuck)
             if stop is None:
@@ -229,13 +274,20 @@ class DriverAgent:
                     )
                 continue
             attempted.add(stop_id)
-            yield from self._work_a_stop(trip_id, stop)
+            yield from self._work_a_stop(trip_id, stop, log)
 
         if self.broken_down:
+            self._close_log(log)
             return
         if self._call(lambda: platform.complete_trip(self.token, trip_id, self.engine.now())):
             self.record.trips_completed += 1
+            log.completed = True
             self.engine.record(f"driver {self.driver_id} completed trip {trip_id}")
+        self._close_log(log)
+
+    def _close_log(self, log: TripLog) -> None:
+        log.ended_at = self.engine.now()
+        log.odometer_end_km = self.vehicle.odometer_km
 
     def _next_stop(
         self, trip_id: uuid.UUID, skip: set[uuid.UUID] | None = None
@@ -290,7 +342,7 @@ class DriverAgent:
         """
         self.record.riders_per_trip.setdefault(str(trip_id), set()).add(request_id)
 
-    def _work_a_stop(self, trip_id: uuid.UUID, stop: dict[str, Any]) -> Process:
+    def _work_a_stop(self, trip_id: uuid.UUID, stop: dict[str, Any], log: TripLog) -> Process:
         """Drive there, arrive, wait for the rider, then finish or call a no-show."""
         platform = self.engine.platform
         assert platform is not None
@@ -326,6 +378,14 @@ class DriverAgent:
             self.record.stops_done += 1
             if stop.get("stop_type") == "pickup" and stop.get("request_id") is not None:
                 self._note_boarded(trip_id, str(stop["request_id"]))
+            if stop.get("request_id") is not None:
+                ride = log.rides.setdefault(
+                    str(stop["request_id"]), RideLog(str(stop["request_id"]))
+                )
+                if stop.get("stop_type") == "pickup":
+                    ride.picked_up_at, ride.picked_up_at_place = self.engine.now(), destination
+                else:
+                    ride.dropped_at, ride.dropped_at_place = self.engine.now(), destination
         elif self._refused is not None:
             self._last_refusal[stop_id] = self._refused
 

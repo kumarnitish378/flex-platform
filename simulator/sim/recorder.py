@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sim.agents.driver import TripLog
 from sim.metrics import RunMetrics
 from sim.pings import Ping
 
@@ -155,15 +156,52 @@ class Recorder:
             f"| API 5xx | {metrics.integrity.api_5xx} |",
             "",
             *_demand_lines(metrics),
+            *_pooling_lines(metrics),
             *_dispatch_lines(metrics),
         ]
         self.paths.summary.write_text("\n".join(lines), encoding="utf-8")
         return self.paths.summary
 
-    def write_all(self, metrics: RunMetrics, pings: list[Ping], events: list[str]) -> RunPaths:
+    def write_trips(self, logs: list[TripLog]) -> Path:
+        """One row per trip a driver started, from what the driver actually did (M11)."""
+        with self.paths.trips.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["trip_id", "vehicle_id", "started_at", "ended_at", "riders", "distance_km"]
+            )
+            for log in logs:
+                boarded = sum(1 for ride in log.rides.values() if ride.picked_up_at is not None)
+                distance = (
+                    None
+                    if log.odometer_end_km is None
+                    else round(max(log.odometer_end_km - log.odometer_start_km, 0.0), 3)
+                )
+                writer.writerow(
+                    [
+                        log.trip_id,
+                        log.vehicle_id,
+                        log.started_at.isoformat().replace("+00:00", "Z"),
+                        ""
+                        if log.ended_at is None
+                        else log.ended_at.isoformat().replace("+00:00", "Z"),
+                        boarded,
+                        "" if distance is None else distance,
+                    ]
+                )
+        return self.paths.trips
+
+    def write_all(
+        self,
+        metrics: RunMetrics,
+        pings: list[Ping],
+        events: list[str],
+        trips: list[TripLog] | None = None,
+    ) -> RunPaths:
         self.write_metrics(metrics)
         self.write_pings(pings)
         self.write_empty_tables()
+        if trips is not None:
+            self.write_trips(trips)
         self.write_events(events)
         self.write_summary(metrics)
         return self.paths
@@ -239,6 +277,29 @@ def _show(value: float | None) -> str:
 def _count(value: int | None) -> str:
     """A tally, not a measurement. "125 riders gave up" - never "125.0 riders"."""
     return "-" if value is None else f"{int(value)}"
+
+
+def _pooling_lines(metrics: RunMetrics) -> list[str]:
+    """Phase 3's exit criterion, in the file a person opens."""
+    pooling = metrics.pooling
+    if pooling.trips_driven is None:
+        return ["## Pooling", "", "Not measured: no cab carried anyone in this run.", ""]
+    return [
+        "## Pooling (from the trips the drivers drove)",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Trips driven | {pooling.trips_driven} |",
+        f"| Vehicles used | {pooling.vehicles_used} |",
+        f"| Riders per trip | {_show(pooling.riders_per_trip)} |",
+        f"| Pooling rate | {_show(pooling.pooling_rate)} |",
+        f"| Cab-km per trip | {_show(pooling.cab_km_per_trip)} |",
+        f"| Cab-km per rider | {_show(pooling.cab_km_per_rider)} |",
+        f"| Detour median / p90 (min) | {_show(pooling.detour_minutes_median)} / "
+        f"{_show(pooling.detour_minutes_p90)} |",
+        f"| Rides over the detour limit | {_show(pooling.detour_over_limit)} |",
+        "",
+    ]
 
 
 def _demand_lines(metrics: RunMetrics) -> list[str]:

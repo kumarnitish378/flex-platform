@@ -16,11 +16,13 @@ from pathlib import Path
 
 from sim.assertions import evaluate
 from sim.engine import Engine, connect_fleet, spawn_fleet, spawn_people
+from sim.metrics import RunMetrics
 from sim.mqtt import MqttUnavailableError
 from sim.platform import PlatformClient, PlatformError
+from sim.policies import comparison_table, policy_variants
 from sim.recorder import Recorder, compare_runs, run_directory
 from sim.routing import PublicServerRefusedError
-from sim.scenario import RoutingMode, Scenario, ScenarioError, load_scenario
+from sim.scenario import OperatorMode, RoutingMode, Scenario, ScenarioError, load_scenario
 
 SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 
@@ -48,6 +50,11 @@ FULL_SUITE = (
     # reports in a few minutes rather than at the end of the night.
     "supervisor_absent_semi_auto",
     "override_respected",
+    # The three Phase 3 runs (M12): the optimizer pooling a morning, the night-safety
+    # rule exercised end to end, and the optimizer being killed mid-peak.
+    "pooling_efficiency",
+    "night_safety",
+    "optimizer_down",
     "evening_surge",
     "normal_weekday",
     "rain_day",
@@ -104,6 +111,20 @@ def main(argv: list[str] | None = None) -> int:
         help="override every scenario's routing provider (see `run --routing`)",
     )
 
+    policies = subparsers.add_parser(
+        "policies",
+        help="run one scenario under manual, semi_auto and full_auto and compare (M13)",
+    )
+    policies.add_argument("scenario", help="path to a scenario YAML file")
+    policies.add_argument("--runs-dir", default="runs")
+    policies.add_argument("--platform", dest="platform_url", required=True, metavar="URL")
+    policies.add_argument("--seed", type=int, default=None)
+    policies.add_argument(
+        "--modes",
+        default="manual,semi_auto,full_auto",
+        help="comma-separated, in the order to run them; the first is the baseline",
+    )
+
     compare = subparsers.add_parser("compare", help="delta table between two runs")
     compare.add_argument("run_a")
     compare.add_argument("run_b")
@@ -123,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "compare":
         return _compare(args.run_a, args.run_b)
+    if args.command == "policies":
+        return _policies(args.scenario, args.runs_dir, args.platform_url, args.seed, args.modes)
     return _suite(args.name, args.runs_dir, args.platform_url, args.routing)
 
 
@@ -175,6 +198,8 @@ def _run_scenario(
     runs_dir: str = "runs",
     no_output: bool = False,
     platform_url: str | None = None,
+    collect: list[RunMetrics] | None = None,
+    check_assertions: bool = True,
 ) -> int:
     platform = None
     # Identifies this run in the backend's claim and in the output directory's name, so
@@ -211,6 +236,8 @@ def _run_scenario(
 
     summary = engine.run()
     metrics = engine.metrics(summary)
+    if collect is not None:
+        collect.append(metrics)
     print(
         f"ran      {summary.scenario} seed={summary.seed} routing={summary.routing} "
         f"{summary.simulated_seconds / 3600:.1f}h "
@@ -255,7 +282,7 @@ def _run_scenario(
 
     if not no_output:
         paths = run_directory(scenario.name, summary.started_at, runs_dir, run_id=run_id)
-        Recorder(paths).write_all(metrics, engine.pings.pings, summary.events)
+        Recorder(paths).write_all(metrics, engine.pings.pings, summary.events, engine.trip_logs())
         print(f"output   {paths.root}")
 
     if platform is None:
@@ -264,6 +291,11 @@ def _run_scenario(
         # green tick would be a lie and a red one would blame the wrong thing.
         # `make sim-quick` runs offline today; M08 gives CI a backend to run against.
         print("assert   not checked (offline run; use --platform to evaluate)")
+        return 0
+
+    if not check_assertions:
+        # A policy comparison: the assertions describe what *one* mode must achieve,
+        # and a manual run is not supposed to meet `optimizer_assignments_min`.
         return 0
 
     failures = evaluate(scenario.assertions, metrics)
@@ -275,6 +307,56 @@ def _run_scenario(
         # A scenario that broke its own promise is a failed run, and `make sim-quick`
         # must say so rather than exiting 0 with a warning nobody reads.
         return 4
+    return 0
+
+
+def _policies(
+    path: str,
+    runs_dir: str,
+    platform_url: str,
+    seed: int | None,
+    modes_arg: str,
+) -> int:
+    """The same scenario and seed under each mode, reported side by side (M13)."""
+    try:
+        scenario = load_scenario(path)
+        modes = tuple(OperatorMode(item.strip()) for item in modes_arg.split(",") if item.strip())
+    except (ScenarioError, ValueError) as exc:
+        print(f"INVALID  {exc}", file=sys.stderr)
+        return 1
+    if not modes:
+        print("INVALID  no modes to compare", file=sys.stderr)
+        return 1
+    if seed is not None:
+        scenario = scenario.model_copy(update={"seed": seed})
+
+    results: dict[OperatorMode, RunMetrics] = {}
+    for mode, variant in policy_variants(scenario, modes).items():
+        print(
+            f"policies {variant.name}: seed={variant.seed} supervisor={variant.supervisor.policy}"
+        )
+        collected: list[RunMetrics] = []
+        code = _run_scenario(
+            variant, runs_dir, False, platform_url, collect=collected, check_assertions=False
+        )
+        if code != 0 or not collected:
+            print(f"FAILED   the {mode} run did not complete (exit {code})", file=sys.stderr)
+            return code or 1
+        results[mode] = collected[0]
+
+    table = comparison_table(results, baseline=modes[0])
+    print()
+    print(f"# {scenario.name}: seed {scenario.seed}, baseline {modes[0]}")
+    print()
+    print(table)
+    out = Path(runs_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / f"policies_{scenario.name}_seed{scenario.seed}.md"
+    target.write_text(
+        f"# {scenario.name}: seed {scenario.seed}, baseline {modes[0]}\n\n{table}\n",
+        encoding="utf-8",
+    )
+    print(f"\noutput   {target}")
     return 0
 
 

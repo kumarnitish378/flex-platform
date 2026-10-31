@@ -98,6 +98,21 @@ async def dev_client(
 # --- environment gating -----------------------------------------------------------
 
 
+async def test_the_optimizer_switch_is_sim_only_and_reports_what_a_jump_did(
+    sim_client: AsyncClient, dev_client: AsyncClient
+) -> None:
+    """S12 (B36): the optimizer can be killed from outside, and a clock jump says what ran."""
+    assert (await dev_client.put("/simctl/optimizer", json={"available": False})).status_code == 404
+
+    off = await sim_client.put("/simctl/optimizer", json={"available": False})
+    assert off.status_code == 200 and off.json() == {"available": False}
+    jump = (await sim_client.put("/simctl/clock", json={"advance_seconds": 60})).json()
+    assert jump["optimizer_runs"] == 0 and jump["optimizer_failed"] == 0  # nothing queued yet
+    assert (await sim_client.put("/simctl/optimizer", json={"available": True})).json() == {
+        "available": True
+    }
+
+
 async def test_clock_is_404_in_dev(dev_client: AsyncClient) -> None:
     """B19 acceptance: the endpoints do not exist outside sim."""
     assert (await dev_client.get("/simctl/clock")).status_code == 404
@@ -569,6 +584,35 @@ async def test_more_vips_than_employees_is_clamped(sim_client: AsyncClient) -> N
         await sim_client.post("/simctl/reset", json={"employees": 3, "vip_employees": 10})
     ).json()
     assert len(body["vip_employee_ids"]) == 3
+
+
+async def test_a_scenario_can_flag_riders_for_a_night_escort(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """S11 (M12): the night-safety rule needs riders it applies to."""
+    from app.modules.people.models import Employee
+
+    body = (
+        await sim_client.post(
+            "/simctl/reset",
+            json={"employees": 20, "vip_employees": 2, "night_escort_employees": 6},
+        )
+    ).json()
+
+    flagged = set(body["night_escort_employee_ids"])
+    assert len(flagged) == 6
+    assert not flagged & set(body["vip_employee_ids"]), "a flagged VIP would test nothing"
+    stored = (
+        (await db_session.execute(select(Employee.id).where(Employee.night_escort_required)))
+        .scalars()
+        .all()
+    )
+    assert {str(v) for v in stored} == flagged
+
+
+async def test_nobody_is_flagged_for_an_escort_unless_asked(sim_client: AsyncClient) -> None:
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    assert body["night_escort_employee_ids"] == []
 
 
 # --- releasing the claim -----------------------------------------------------
