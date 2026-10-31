@@ -15,7 +15,7 @@ Backend versions were pinned on 2026-09-24 (task B01). Blank cells are packages 
 | Geo | PostGIS, GeoAlchemy2, Shapely | |
 | Background jobs | Celery + Redis broker (+ beat) | |
 | MQTT client | aiomqtt (ingestor) | |
-| Optimizer | Google OR-Tools | |
+| Optimizer | Google OR-Tools `ortools==9.15.6755` | Routing library for the Phase 3 DARP (B31, ADR-0027) |
 | ML (Phase 4) | scikit-learn, LightGBM, pandas | |
 | Auth | PyJWT; OTP via SMS gateway adapter (pluggable; console adapter in dev) | |
 | HTTP client | httpx | 0.28.1 (runtime: OSRM client) |

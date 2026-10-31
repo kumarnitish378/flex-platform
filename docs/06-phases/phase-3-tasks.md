@@ -56,7 +56,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   same one `/simctl/clock` drives (the B20 guard); a batch that finds no solution leaves every request
   exactly as it was.
 
-- [ ] **B31 · OR-Tools DARP optimizer** · deps B30
+- [x] **B31 · OR-Tools DARP optimizer** · deps B30
   Docs: allocation-rules.md §4 and §6, ADR to be written
   Do: pickup-and-delivery with time windows and capacities, over OSRM time matrices, objective = §4's cost,
   hard rules as **constraints** rather than filters. `optimizer_time_limit_seconds` (default 10) caps a

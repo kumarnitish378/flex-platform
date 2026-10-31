@@ -36,6 +36,8 @@ dependencies = [
     # Metrics exposition (R01). `non-functional.md` (Operability) names the metrics the
     # platform must publish; without a client there is nothing for Grafana to draw.
     "prometheus-client==0.24.1",
+    # The batch optimizer (B31, ADR-0027): Google OR-Tools routing for the DARP.
+    "ortools==9.15.6755",
 ]
 
 [project.optional-dependencies]
