@@ -56,11 +56,13 @@ Ties at the same specificity: the most recently updated setting wins, and the ad
 - VIP and high urgency requests use half the timeout.
 
 ## 5. Mode-switch prompts (Phase 3)
-The system suggests switching a scope to `manual` (never switches by itself) when any is true in the last 15 minutes:
+The system suggests switching a scope to `manual` (never switches by itself) when any is true in the last 15 minutes (B35: a `mode_prompt` alert per scope, resolved by the platform when the condition clears; `domain/mode_prompts.py`):
 - ≥ 30% of suggestions rejected in that scope,
 - median ETA error > 10 minutes,
 - pending requests > 2× normal for that time slot,
 - ≥ 20% of vehicles in the scope stale or out of service.
+
+How each is measured (B35): a **scope** is a mode setting currently on `semi_auto` or `full_auto` whose window is open, and a request belongs to the scope `resolve_mode` assigns it to. *Rejected* = rank-1 suggestions a person rejected over those a person or the failsafe settled (a suggestion superseded because the world moved is not a verdict). *ETA error* = the median of |actual - planned| pickup, for pickups completed in the window. *Normal* = the mean number pending at this time of day over the last `mode_prompt_baseline_days` days, in this scope; with no history the condition cannot fire. *Fleet* = vehicles not off duty that are out of service or have no ping within `stale_gps_seconds` (vehicles carry no scope, so this is operator-wide). The three ratio-style conditions need `mode_prompt_min_samples` (provisional, 5) observations: a percentage of one is not a signal.
 
 ## 6. Degradation
 - Optimizer/worker down → scopes in `full_auto`/`semi_auto` behave as `manual`; alert shown.

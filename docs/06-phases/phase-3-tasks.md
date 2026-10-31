@@ -90,7 +90,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: a scope in `full_auto` serves a request end to end with no supervisor action; `automation_paused`
   still beats it; every automatic assignment is attributable in `trip_event` and the report.
 
-- [ ] **B35 · Mode-switch prompts** · deps B34
+- [x] **B35 · Mode-switch prompts** · deps B34
   Docs: control-model.md §5
   Do: the four conditions of §5, evaluated per scope over the last 15 minutes, raising a `mode_prompt`
   alert — the alert type `AlertType` has carried since Phase 1 and nothing raises. **The system suggests;

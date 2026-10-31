@@ -59,6 +59,10 @@ SEMI_AUTO_INTERVAL_SECONDS = 15
 #: window can be as short as 10 s, and a beat coarser than the window would stretch it.
 OPTIMIZER_INTERVAL_SECONDS = 10
 
+#: Mode-switch prompts once a minute. They look back fifteen minutes (`control-model.md`
+#: section 5), so finer than a minute would add load and no information.
+MODE_PROMPT_INTERVAL_SECONDS = 60
+
 
 def create_celery(settings: Settings | None = None) -> Celery:
     """The Celery app. Broker and result backend are the Redis we already run."""
@@ -83,6 +87,10 @@ def create_celery(settings: Settings | None = None) -> Celery:
             "sweep-stale-vehicles": {
                 "task": "smart_cab.sweep_stale_vehicles",
                 "schedule": float(STALE_VEHICLE_INTERVAL_SECONDS),
+            },
+            "run-mode-prompts": {
+                "task": "smart_cab.run_mode_prompts",
+                "schedule": float(MODE_PROMPT_INTERVAL_SECONDS),
             },
             "run-optimizer": {
                 "task": "smart_cab.run_optimizer",
@@ -167,6 +175,16 @@ async def _run_semi_auto() -> dict[str, int]:
         "escalated": sweep.escalated,
         "superseded": sweep.superseded,
     }
+
+
+async def _run_mode_prompts() -> dict[str, int]:
+    from app.modules.modes.prompts import ModePromptService
+
+    settings = get_settings()
+    async with _session_factory(settings)() as session:
+        sweep = await ModePromptService(session, SystemClock()).run_due_mode_prompts()
+        await session.commit()
+    return {"raised": sweep.raised, "updated": sweep.updated, "resolved": sweep.resolved}
 
 
 async def _run_optimizer() -> dict[str, int]:
@@ -256,6 +274,12 @@ def expire_requests() -> dict[str, int]:
 def refresh_stop_etas() -> dict[str, int]:
     """Keep the ETA a rider is watching honest (B15)."""
     return _run("stop_etas", _refresh_stop_etas)
+
+
+@celery_app.task(name="smart_cab.run_mode_prompts")
+def run_mode_prompts() -> dict[str, int]:
+    """Suggest taking a struggling scope off automation. Never switches one (B35)."""
+    return _run("mode_prompts", _run_mode_prompts)
 
 
 @celery_app.task(name="smart_cab.run_optimizer")

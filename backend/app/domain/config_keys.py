@@ -170,6 +170,58 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         ),
         ConfigKey("batch_window_seconds", 45, 10, 120, description="Micro-batch window."),
         ConfigKey(
+            "mode_prompt_window_minutes",
+            15,
+            5,
+            60,
+            description="How far back a mode-switch prompt looks (control-model.md section 5).",
+        ),
+        ConfigKey(
+            "mode_prompt_rejected_share",
+            0.30,
+            0.05,
+            1.0,
+            description="Prompt when at least this share of a scope's suggestions were rejected.",
+        ),
+        ConfigKey(
+            "mode_prompt_eta_error_minutes",
+            10.0,
+            1,
+            60,
+            description="Prompt when the median pickup-ETA error in a scope exceeds this.",
+        ),
+        ConfigKey(
+            "mode_prompt_pending_multiple",
+            2.0,
+            1.0,
+            10.0,
+            description="Prompt when pending requests exceed this multiple of normal for the slot.",
+        ),
+        ConfigKey(
+            "mode_prompt_fleet_share",
+            0.20,
+            0.05,
+            1.0,
+            description="Prompt when this share of the fleet is stale or out of service.",
+        ),
+        ConfigKey(
+            "mode_prompt_min_samples",
+            5,
+            1,
+            50,
+            description=(
+                "Fewest decisions, pickups or pending requests a ratio is judged on. "
+                "Provisional: section 5 names none, and a percentage of one is not a signal."
+            ),
+        ),
+        ConfigKey(
+            "mode_prompt_baseline_days",
+            14,
+            1,
+            60,
+            description='How many past days define "normal" pending requests for a time slot.',
+        ),
+        ConfigKey(
             "optimizer_time_limit_seconds",
             10,
             1,

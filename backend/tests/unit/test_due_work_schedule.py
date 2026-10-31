@@ -37,6 +37,7 @@ DUE_WORK: dict[str, str] = {
     "sweep_stale_vehicles": "smart_cab.sweep_stale_vehicles",
     "run_due_semi_auto": "smart_cab.run_semi_auto",
     "run_due_batches": "smart_cab.run_optimizer",
+    "run_due_mode_prompts": "smart_cab.run_mode_prompts",
 }
 
 

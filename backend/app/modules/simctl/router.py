@@ -28,6 +28,7 @@ from app.modules.dispatch.eta_refresh import EtaRefresher
 from app.modules.dispatch.optimizer_service import OptimizerService
 from app.modules.dispatch.semi_auto import SemiAutoService
 from app.modules.dispatch.service import DispatchService
+from app.modules.modes.prompts import ModePromptService
 from app.modules.requests.service import RideRequestService
 from app.modules.simctl.schemas import (
     ReleaseRequest,
@@ -107,6 +108,9 @@ async def set_clock(
     semi_auto = await SemiAutoService(
         session, fake, DispatchService(session, fake, request.app.state.eta)
     ).run_due_semi_auto()
+    # Mode-switch prompts are due work too (B35): a scenario that jumps an hour must see
+    # the prompt the last fifteen minutes of it earned, or S-series assertions would race it.
+    await ModePromptService(session, fake).run_due_mode_prompts()
     # The batch optimizer is due work as well: a window that closed during the jump must
     # have been solved before the PUT returns (B30), or a scenario would race it.
     await OptimizerService(

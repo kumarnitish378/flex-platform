@@ -20,6 +20,13 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
 | `optimizer_time_limit_seconds` | 10 | 1–60 | no | Hard cap on one DARP run. No solution within it falls back to single-insertion greedy. |
+| `mode_prompt_window_minutes` | 15 | 5–60 | no | How far back a mode-switch prompt looks (`control-model.md` §5). |
+| `mode_prompt_rejected_share` | 0.30 | 0.05–1.0 | no | Prompt when at least this share of a scope's suggestions were rejected. |
+| `mode_prompt_eta_error_minutes` | 10 | 1–60 | no | Prompt when the median pickup-ETA error in a scope exceeds this. |
+| `mode_prompt_pending_multiple` | 2.0 | 1.0–10.0 | no | Prompt when pending requests exceed this multiple of normal for the time slot. |
+| `mode_prompt_fleet_share` | 0.20 | 0.05–1.0 | no | Prompt when this share of the fleet is stale or out of service. |
+| `mode_prompt_min_samples` | 5 | 1–50 | no | Fewest decisions / pickups / pending requests a ratio is judged on. **Provisional** (§5 names none). |
+| `mode_prompt_baseline_days` | 14 | 1–60 | no | Past days that define "normal" pending requests for a time slot. |
 | `failsafe_timeout_seconds` | 180 | 30–900 | no | Semi-auto suggestion timeout. |
 | `failsafe_action` | `auto_assign` | `auto_assign` / `escalate` | no | What happens on timeout. |
 | `alert_wait_minutes` | 20 | 5–60 | no | A waiting request has waited too long: the board turns it red **and escalation starts** (ADR-0023). |
