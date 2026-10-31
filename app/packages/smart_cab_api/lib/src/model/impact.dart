@@ -10,20 +10,22 @@ import 'package:built_value/serializer.dart';
 
 part 'impact.g.dart';
 
-/// Impact
+/// Section 3 rule 2's confirm screen. Every field may be empty - that is an answer.
 ///
 /// Properties:
 /// * [affectedRequests] 
-/// * [zonesWithoutAvailableVehicle] 
-/// * [hardRuleViolations] 
+/// * [zonesWithoutAvailableVehicle] - Zones whose only available cab this override would take off the road. A zone that was already uncovered is not listed - that is not something this override did, and listing it would bury the one that is. 
+/// * [hardRuleViolations] - Each naming the config key that set the limit where there is one, for example `eta_over_candidate_limit (candidate_max_eta_minutes)`. Non-empty means the apply call will require rule 4's narrowed reasons and a note. 
 @BuiltValue()
 abstract class Impact implements Built<Impact, ImpactBuilder> {
   @BuiltValueField(wireName: r'affected_requests')
   BuiltList<ImpactAffectedRequestsInner>? get affectedRequests;
 
+  /// Zones whose only available cab this override would take off the road. A zone that was already uncovered is not listed - that is not something this override did, and listing it would bury the one that is. 
   @BuiltValueField(wireName: r'zones_without_available_vehicle')
   BuiltList<String>? get zonesWithoutAvailableVehicle;
 
+  /// Each naming the config key that set the limit where there is one, for example `eta_over_candidate_limit (candidate_max_eta_minutes)`. Non-empty means the apply call will require rule 4's narrowed reasons and a note. 
   @BuiltValueField(wireName: r'hard_rule_violations')
   BuiltList<String>? get hardRuleViolations;
 

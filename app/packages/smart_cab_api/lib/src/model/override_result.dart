@@ -14,6 +14,8 @@ part 'override_result.g.dart';
 /// Properties:
 /// * [overrideId] 
 /// * [impact] 
+/// * [expiresAt] - When this override lapses. Null means it stands until the trip ends.
+/// * [tripId] - The trip the request ended up on, for reassign.
 @BuiltValue()
 abstract class OverrideResult implements Built<OverrideResult, OverrideResultBuilder> {
   @BuiltValueField(wireName: r'override_id')
@@ -21,6 +23,14 @@ abstract class OverrideResult implements Built<OverrideResult, OverrideResultBui
 
   @BuiltValueField(wireName: r'impact')
   Impact? get impact;
+
+  /// When this override lapses. Null means it stands until the trip ends.
+  @BuiltValueField(wireName: r'expires_at')
+  DateTime? get expiresAt;
+
+  /// The trip the request ended up on, for reassign.
+  @BuiltValueField(wireName: r'trip_id')
+  String? get tripId;
 
   OverrideResult._();
 
@@ -59,6 +69,20 @@ class _$OverrideResultSerializer implements PrimitiveSerializer<OverrideResult> 
         specifiedType: const FullType(Impact),
       );
     }
+    if (object.expiresAt != null) {
+      yield r'expires_at';
+      yield serializers.serialize(
+        object.expiresAt,
+        specifiedType: const FullType.nullable(DateTime),
+      );
+    }
+    if (object.tripId != null) {
+      yield r'trip_id';
+      yield serializers.serialize(
+        object.tripId,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
   }
 
   @override
@@ -95,6 +119,22 @@ class _$OverrideResultSerializer implements PrimitiveSerializer<OverrideResult> 
             specifiedType: const FullType(Impact),
           ) as Impact;
           result.impact.replace(valueDes);
+          break;
+        case r'expires_at':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(DateTime),
+          ) as DateTime?;
+          if (valueDes == null) continue;
+          result.expiresAt = valueDes;
+          break;
+        case r'trip_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.tripId = valueDes;
           break;
         default:
           unhandled.add(key);

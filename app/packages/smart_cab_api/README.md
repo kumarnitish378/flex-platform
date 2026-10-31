@@ -81,6 +81,8 @@ Class | Method | HTTP request | Description
 [*AdminApi*](doc/AdminApi.md) | [**adminClientsClientIdEmployeesPost**](doc/AdminApi.md#adminclientsclientidemployeespost) | **POST** /admin/clients/{client_id}/employees | 
 [*AdminApi*](doc/AdminApi.md) | [**adminClientsClientIdOfficesGet**](doc/AdminApi.md#adminclientsclientidofficesget) | **GET** /admin/clients/{client_id}/offices | 
 [*AdminApi*](doc/AdminApi.md) | [**adminClientsClientIdOfficesPost**](doc/AdminApi.md#adminclientsclientidofficespost) | **POST** /admin/clients/{client_id}/offices | 
+[*AdminApi*](doc/AdminApi.md) | [**adminClientsClientIdPolicyGet**](doc/AdminApi.md#adminclientsclientidpolicyget) | **GET** /admin/clients/{client_id}/policy | What this client&#39;s own rules are, and what they resolve to
+[*AdminApi*](doc/AdminApi.md) | [**adminClientsClientIdPolicyPut**](doc/AdminApi.md#adminclientsclientidpolicyput) | **PUT** /admin/clients/{client_id}/policy | Set this client&#39;s policy
 [*AdminApi*](doc/AdminApi.md) | [**adminClientsGet**](doc/AdminApi.md#adminclientsget) | **GET** /admin/clients | 
 [*AdminApi*](doc/AdminApi.md) | [**adminClientsPost**](doc/AdminApi.md#adminclientspost) | **POST** /admin/clients | 
 [*AdminApi*](doc/AdminApi.md) | [**adminConfigGet**](doc/AdminApi.md#adminconfigget) | **GET** /admin/config | 
@@ -97,6 +99,10 @@ Class | Method | HTTP request | Description
 [*AdminApi*](doc/AdminApi.md) | [**adminVehiclesGet**](doc/AdminApi.md#adminvehiclesget) | **GET** /admin/vehicles | 
 [*AdminApi*](doc/AdminApi.md) | [**adminVehiclesPost**](doc/AdminApi.md#adminvehiclespost) | **POST** /admin/vehicles | 
 [*AdminApi*](doc/AdminApi.md) | [**adminVehiclesVehicleIdPatch**](doc/AdminApi.md#adminvehiclesvehicleidpatch) | **PATCH** /admin/vehicles/{vehicle_id} | 
+[*AdminApi*](doc/AdminApi.md) | [**adminZonesGet**](doc/AdminApi.md#adminzonesget) | **GET** /admin/zones | Operational zones, with how many employees each covers
+[*AdminApi*](doc/AdminApi.md) | [**adminZonesPost**](doc/AdminApi.md#adminzonespost) | **POST** /admin/zones | Draw a zone
+[*AdminApi*](doc/AdminApi.md) | [**adminZonesZoneIdDelete**](doc/AdminApi.md#adminzoneszoneiddelete) | **DELETE** /admin/zones/{zone_id} | Remove a zone
+[*AdminApi*](doc/AdminApi.md) | [**adminZonesZoneIdPatch**](doc/AdminApi.md#adminzoneszoneidpatch) | **PATCH** /admin/zones/{zone_id} | Rename, redraw or deactivate a zone
 [*AlertsApi*](doc/AlertsApi.md) | [**alertsAlertIdActionPost**](doc/AlertsApi.md#alertsalertidactionpost) | **POST** /alerts/{alert_id}/{action} | 
 [*AlertsApi*](doc/AlertsApi.md) | [**alertsGet**](doc/AlertsApi.md#alertsget) | **GET** /alerts | 
 [*AuthApi*](doc/AuthApi.md) | [**authLogoutPost**](doc/AuthApi.md#authlogoutpost) | **POST** /auth/logout | 
@@ -114,6 +120,7 @@ Class | Method | HTTP request | Description
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsRequestIdCandidatesGet**](doc/DispatchApi.md#dispatchrequestsrequestidcandidatesget) | **GET** /dispatch/requests/{request_id}/candidates | Candidate vehicles with ETA and load (Phase 1); with cost and reasons (Phase 2)
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsRequestIdModeGet**](doc/DispatchApi.md#dispatchrequestsrequestidmodeget) | **GET** /dispatch/requests/{request_id}/mode | Which mode governs this request, and why (Phase 2)
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsRequestIdSuggestionsGet**](doc/DispatchApi.md#dispatchrequestsrequestidsuggestionsget) | **GET** /dispatch/requests/{request_id}/suggestions | The system&#39;s top recommendations for this request (Phase 2)
+[*DispatchApi*](doc/DispatchApi.md) | [**dispatchSuggestionsGet**](doc/DispatchApi.md#dispatchsuggestionsget) | **GET** /dispatch/suggestions | Offers the system is waiting for an answer to
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchSuggestionsSuggestionIdDecisionPost**](doc/DispatchApi.md#dispatchsuggestionssuggestioniddecisionpost) | **POST** /dispatch/suggestions/{suggestion_id}/decision | Answer one of the system&#39;s suggestions (Phase 2)
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchTripsGet**](doc/DispatchApi.md#dispatchtripsget) | **GET** /dispatch/trips | Every trip for the operator, with stops - one read for a whole board
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchVehiclesGet**](doc/DispatchApi.md#dispatchvehiclesget) | **GET** /dispatch/vehicles | Snapshot of vehicles with live position and state
@@ -146,17 +153,22 @@ Class | Method | HTTP request | Description
  - [AdminModeSettingsGet200Response](doc/AdminModeSettingsGet200Response.md)
  - [AdminUsersInvitePostRequest](doc/AdminUsersInvitePostRequest.md)
  - [AdminVehiclesGet200Response](doc/AdminVehiclesGet200Response.md)
+ - [AdminZonesGet200Response](doc/AdminZonesGet200Response.md)
  - [Alert](doc/Alert.md)
  - [AuthRefreshPostRequest](doc/AuthRefreshPostRequest.md)
  - [Candidate](doc/Candidate.md)
  - [CandidateAddedMinutesExistingInner](doc/CandidateAddedMinutesExistingInner.md)
  - [Client](doc/Client.md)
  - [ClientInput](doc/ClientInput.md)
+ - [ClientPolicy](doc/ClientPolicy.md)
+ - [ClientPolicyAllOfEffective](doc/ClientPolicyAllOfEffective.md)
+ - [ClientPolicyInput](doc/ClientPolicyInput.md)
  - [DeviceRegister](doc/DeviceRegister.md)
  - [Direction](doc/Direction.md)
  - [DispatchAssignPostRequest](doc/DispatchAssignPostRequest.md)
  - [DispatchAutomationGet200Response](doc/DispatchAutomationGet200Response.md)
  - [DispatchAutomationPutRequest](doc/DispatchAutomationPutRequest.md)
+ - [DispatchSuggestionsGet200Response](doc/DispatchSuggestionsGet200Response.md)
  - [DispatchSuggestionsSuggestionIdDecisionPostRequest](doc/DispatchSuggestionsSuggestionIdDecisionPostRequest.md)
  - [DispatchTripsGet200Response](doc/DispatchTripsGet200Response.md)
  - [Driver](doc/Driver.md)
@@ -201,6 +213,7 @@ Class | Method | HTTP request | Description
  - [SimctlResetPostRequest](doc/SimctlResetPostRequest.md)
  - [SosPostRequest](doc/SosPostRequest.md)
  - [StopStatus](doc/StopStatus.md)
+ - [Suggestion](doc/Suggestion.md)
  - [SuggestionDecisionResult](doc/SuggestionDecisionResult.md)
  - [TokenPair](doc/TokenPair.md)
  - [TrackerType](doc/TrackerType.md)
@@ -214,6 +227,9 @@ Class | Method | HTTP request | Description
  - [VehicleLive](doc/VehicleLive.md)
  - [VehicleStatus](doc/VehicleStatus.md)
  - [VehicleType](doc/VehicleType.md)
+ - [Zone](doc/Zone.md)
+ - [ZoneInput](doc/ZoneInput.md)
+ - [ZoneUpdate](doc/ZoneUpdate.md)
 
 
 ## Documentation For Authorization

@@ -278,7 +278,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   a literal, the `User-Agent` is the library default, the attribution is missing or covered, or a search
   field is present; a network test shows only on-screen tiles are requested (no prefetch) and that a second
   view of the same area serves from cache.
-  Built `AppMap` widget (`lib/features/common/app_map.dart`) utilizing MapLibre GL raster style dynamically loaded from `TILES_URL` (`Env.tilesUrl`), identifying User-Agent with contact email (`buildTileUserAgent()`), bottom-right "© OpenStreetMap contributors" attribution (`Key('map-attribution')`), draggable pin picker returning coordinates via `onPinMoved`, markers and route polyline support. No address search field present. All unit and widget tests passing (81 total tests) and `flutter analyze` clean.
+  Built `AppMap` widget (`lib/features/common/app_map.dart`) utilizing MapLibre GL raster style dynamically loaded from `TILES_URL` (`Env.tilesUrl`), identifying User-Agent with contact email (`buildTileUserAgent()`), bottom-right "© OpenStreetMap contributors" attribution (`Key('map-attribution')`), draggable pin picker returning coordinates via `onPinMoved`, markers and route polyline support. No address search field present. Per ADR-0024 and OQ-35 resolution, map tiles are served from our self-hosted tile server (I02b, `TILES_URL` via `--dart-define`), permitting parent-tile prefetching on our own infrastructure without violating public OSM tile usage policies. All unit and widget tests passing (118 total tests) and `flutter analyze` clean.
 
 - [x] **A06 · Employee: request + confirmation + home** · deps A04, A05, B09
   Screens: E-01..E-03 · Stories: EMP-02, EMP-06

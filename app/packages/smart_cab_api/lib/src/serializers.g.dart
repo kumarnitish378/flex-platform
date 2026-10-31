@@ -8,18 +8,21 @@ part of 'serializers.dart';
 
 Serializers _$serializers = (Serializers().toBuilder()
       ..add($ClientInput.serializer)
+      ..add($ClientPolicyInput.serializer)
       ..add($DriverInput.serializer)
       ..add($EmployeeInput.serializer)
       ..add($ModeSettingInput.serializer)
       ..add($OfficeInput.serializer)
       ..add($Vehicle.serializer)
       ..add($VehicleInput.serializer)
+      ..add($ZoneInput.serializer)
       ..add(AdminClientsClientIdEmployeesGet200Response.serializer)
       ..add(AdminDriversGet200Response.serializer)
       ..add(AdminModeSettingsGet200Response.serializer)
       ..add(AdminUsersInvitePostRequest.serializer)
       ..add(AdminUsersInvitePostRequestRoleEnum.serializer)
       ..add(AdminVehiclesGet200Response.serializer)
+      ..add(AdminZonesGet200Response.serializer)
       ..add(Alert.serializer)
       ..add(AlertSeverityEnum.serializer)
       ..add(AlertStatusEnum.serializer)
@@ -28,12 +31,15 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(Candidate.serializer)
       ..add(CandidateAddedMinutesExistingInner.serializer)
       ..add(Client.serializer)
+      ..add(ClientPolicy.serializer)
+      ..add(ClientPolicyAllOfEffective.serializer)
       ..add(DeviceRegister.serializer)
       ..add(DeviceRegisterPlatformEnum.serializer)
       ..add(Direction.serializer)
       ..add(DispatchAssignPostRequest.serializer)
       ..add(DispatchAutomationGet200Response.serializer)
       ..add(DispatchAutomationPutRequest.serializer)
+      ..add(DispatchSuggestionsGet200Response.serializer)
       ..add(DispatchSuggestionsSuggestionIdDecisionPostRequest.serializer)
       ..add(DispatchSuggestionsSuggestionIdDecisionPostRequestDecisionEnum
           .serializer)
@@ -82,9 +88,11 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(SimctlResetPostRequest.serializer)
       ..add(SosPostRequest.serializer)
       ..add(StopStatus.serializer)
+      ..add(Suggestion.serializer)
       ..add(SuggestionDecisionResult.serializer)
       ..add(SuggestionDecisionResultDecisionEnum.serializer)
       ..add(SuggestionDecisionResultStatusEnum.serializer)
+      ..add(SuggestionStatusEnum.serializer)
       ..add(TokenPair.serializer)
       ..add(TrackerType.serializer)
       ..add(Trip.serializer)
@@ -97,6 +105,8 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(VehicleLive.serializer)
       ..add(VehicleStatus.serializer)
       ..add(VehicleType.serializer)
+      ..add(Zone.serializer)
+      ..add(ZoneUpdate.serializer)
       ..addBuilderFactory(
           const FullType(BuiltList, const [
             const FullType(BuiltMap, const [
@@ -136,6 +146,15 @@ Serializers _$serializers = (Serializers().toBuilder()
               BuiltList, const [const FullType(ImportReportErrorsInner)]),
           () => ListBuilder<ImportReportErrorsInner>())
       ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(LatLng)]),
+          () => ListBuilder<LatLng>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(LatLng)]),
+          () => ListBuilder<LatLng>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(LatLng)]),
+          () => ListBuilder<LatLng>())
+      ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(MeRolesInner)]),
           () => ListBuilder<MeRolesInner>())
       ..addBuilderFactory(
@@ -153,6 +172,12 @@ Serializers _$serializers = (Serializers().toBuilder()
           const FullType(BuiltList, const [const FullType(String)]),
           () => ListBuilder<String>())
       ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(String)]),
+          () => ListBuilder<String>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(Suggestion)]),
+          () => ListBuilder<Suggestion>())
+      ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(Trip)]),
           () => ListBuilder<Trip>())
       ..addBuilderFactory(
@@ -161,6 +186,9 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(Vehicle)]),
           () => ListBuilder<Vehicle>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(Zone)]),
+          () => ListBuilder<Zone>())
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(int)]),
           () => ListBuilder<int>())

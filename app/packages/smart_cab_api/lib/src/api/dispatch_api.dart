@@ -14,6 +14,7 @@ import 'package:smart_cab_api/src/model/candidate.dart';
 import 'package:smart_cab_api/src/model/dispatch_assign_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_put_request.dart';
+import 'package:smart_cab_api/src/model/dispatch_suggestions_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_suggestions_suggestion_id_decision_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/error.dart';
@@ -290,7 +291,7 @@ class DispatchApi {
   }
 
   /// Apply an override action
-  /// 
+  /// &#x60;control-model.md&#x60; section 3. Every override carries a reason code, gets an &#x60;expires_at&#x60;, and writes an &#x60;override_log&#x60; row holding who, what, before, after, reason and time.  Refused with 422 when the action does not name what it would change (&#x60;reassign&#x60; without &#x60;target_vehicle_id&#x60;), when &#x60;reason_code&#x60; is &#x60;other&#x60; without a note, or when the override waives a hard rule without &#x60;safety&#x60;, &#x60;client_request&#x60; or &#x60;other&#x60; **and** a note - rule 4, and those are the overrides reports flag. Refused with 409 when it would waive a rule nobody may waive: a cab with no driver, or another supervisor&#39;s lock. 
   ///
   /// Parameters:
   /// * [overrideInput] 
@@ -391,7 +392,7 @@ class DispatchApi {
   }
 
   /// Impact preview without applying
-  /// 
+  /// Section 3 rule 2&#39;s confirm screen: added minutes for riders already aboard, the ETA change for the rider being moved, the riders a cancellation would put back in the queue, and any zone whose only available cab this would take off the road.  A dry run - nothing is written. It is the same computation the apply path runs, so the screen a supervisor confirms is not a different answer from the one they get. An empty impact is a real answer: &#x60;lock&#x60;, &#x60;unlock&#x60;, &#x60;force_priority&#x60;, &#x60;block_pooling&#x60; and &#x60;hold&#x60; change what the platform may do next, not where any cab is going now. 
   ///
   /// Parameters:
   /// * [overrideInput] 
@@ -819,6 +820,95 @@ class DispatchApi {
     }
 
     return Response<BuiltList<Candidate>>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// Offers the system is waiting for an answer to
+  /// The stored offers a &#x60;semi_auto&#x60; scope has made (&#x60;control-model.md&#x60; §1 and §4), newest first. &#x60;GET /dispatch/requests/{id}/suggestions&#x60; answers a different question - it **recomputes** the best cabs for one request, which is what a supervisor wants when they are choosing - whereas this returns what was already offered, with the &#x60;id&#x60; the decision endpoint takes and the moment the failsafe fires.  Without it the offer record is unreachable: the decision endpoint needs a &#x60;suggestion_id&#x60; that nothing else returns, and the countdown a supervisor sees needs &#x60;failsafe_due_at&#x60;. 
+  ///
+  /// Parameters:
+  /// * [status] 
+  /// * [requestId] 
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [DispatchSuggestionsGet200Response] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<DispatchSuggestionsGet200Response>> dispatchSuggestionsGet({ 
+    String? status = 'offered',
+    String? requestId,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/dispatch/suggestions';
+    final _options = Options(
+      method: r'GET',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'http',
+            'scheme': 'bearer',
+            'name': 'bearerAuth',
+          },
+        ],
+        ...?extra,
+      },
+      validateStatus: validateStatus,
+    );
+
+    final _queryParameters = <String, dynamic>{
+      if (status != null) r'status': encodeQueryParameter(_serializers, status, const FullType(String)),
+      if (requestId != null) r'request_id': encodeQueryParameter(_serializers, requestId, const FullType(String)),
+    };
+
+    final _response = await _dio.request<Object>(
+      _path,
+      options: _options,
+      queryParameters: _queryParameters,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    DispatchSuggestionsGet200Response? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(DispatchSuggestionsGet200Response),
+      ) as DispatchSuggestionsGet200Response;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<DispatchSuggestionsGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

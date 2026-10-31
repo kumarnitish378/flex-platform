@@ -10,39 +10,45 @@ import 'package:built_value/serializer.dart';
 
 part 'override_input.g.dart';
 
-/// OverrideInput
+/// The override set of `control-model.md` section 3. The ninth row of that table, emergency pause, is `PUT /dispatch/automation` instead: it is operator-wide and names no request, trip or vehicle. 
 ///
 /// Properties:
 /// * [action] 
-/// * [requestId] 
-/// * [tripId] 
-/// * [vehicleId] 
-/// * [targetVehicleId] 
-/// * [holdUntil] 
-/// * [expiresAt] 
+/// * [requestId] - Required by every action except block_pooling and vehicle_out_of_service.
+/// * [tripId] - The subject of `block_pooling`, and of a `cancel` that cancels a whole trip rather than one rider - send exactly one of `request_id` or `trip_id` with `cancel`. On `reassign` it names the existing trip to join, if any. 
+/// * [vehicleId] - The subject of `vehicle_out_of_service`, and the cab to pin to on `lock` (defaulting to the one the request is already on). 
+/// * [targetVehicleId] - Required by reassign - the cab to move the rider to.
+/// * [holdUntil] - Required by hold. For a hold with no fixed end, send expires_at as null.
+/// * [expiresAt] - Section 3 rule 5. **Omit** the field for the default, which is the end of the current shift in the operator's own timezone. Send it explicitly as `null` for \"until the trip ends\". The two are different requests, so an app that always sends the field - with `null` when the user picked nothing - makes every override open-ended, which is the failure rule 5 exists to prevent.  Ignored by the actions that happen once and are over: reassign, unlock and cancel. Recorded but advisory for vehicle_out_of_service - a cab comes back on the road when somebody says so, never because a timestamp passed. 
 /// * [reasonCode] 
-/// * [note] 
+/// * [note] - Required with `other`, and with any override that waives a hard rule (rule 4).
 @BuiltValue()
 abstract class OverrideInput implements Built<OverrideInput, OverrideInputBuilder> {
   @BuiltValueField(wireName: r'action')
   OverrideInputActionEnum get action;
   // enum actionEnum {  reassign,  lock,  unlock,  force_priority,  block_pooling,  hold,  cancel,  vehicle_out_of_service,  };
 
+  /// Required by every action except block_pooling and vehicle_out_of_service.
   @BuiltValueField(wireName: r'request_id')
   String? get requestId;
 
+  /// The subject of `block_pooling`, and of a `cancel` that cancels a whole trip rather than one rider - send exactly one of `request_id` or `trip_id` with `cancel`. On `reassign` it names the existing trip to join, if any. 
   @BuiltValueField(wireName: r'trip_id')
   String? get tripId;
 
+  /// The subject of `vehicle_out_of_service`, and the cab to pin to on `lock` (defaulting to the one the request is already on). 
   @BuiltValueField(wireName: r'vehicle_id')
   String? get vehicleId;
 
+  /// Required by reassign - the cab to move the rider to.
   @BuiltValueField(wireName: r'target_vehicle_id')
   String? get targetVehicleId;
 
+  /// Required by hold. For a hold with no fixed end, send expires_at as null.
   @BuiltValueField(wireName: r'hold_until')
   DateTime? get holdUntil;
 
+  /// Section 3 rule 5. **Omit** the field for the default, which is the end of the current shift in the operator's own timezone. Send it explicitly as `null` for \"until the trip ends\". The two are different requests, so an app that always sends the field - with `null` when the user picked nothing - makes every override open-ended, which is the failure rule 5 exists to prevent.  Ignored by the actions that happen once and are over: reassign, unlock and cancel. Recorded but advisory for vehicle_out_of_service - a cab comes back on the road when somebody says so, never because a timestamp passed. 
   @BuiltValueField(wireName: r'expires_at')
   DateTime? get expiresAt;
 
@@ -50,6 +56,7 @@ abstract class OverrideInput implements Built<OverrideInput, OverrideInputBuilde
   ReasonCode get reasonCode;
   // enum reasonCodeEnum {  driver_issue,  local_knowledge,  client_request,  traffic,  vehicle_issue,  safety,  other,  };
 
+  /// Required with `other`, and with any override that waives a hard rule (rule 4).
   @BuiltValueField(wireName: r'note')
   String? get note;
 

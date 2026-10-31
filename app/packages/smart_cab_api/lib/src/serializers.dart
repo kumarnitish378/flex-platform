@@ -19,17 +19,22 @@ import 'package:smart_cab_api/src/model/admin_drivers_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_mode_settings_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_users_invite_post_request.dart';
 import 'package:smart_cab_api/src/model/admin_vehicles_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_zones_get200_response.dart';
 import 'package:smart_cab_api/src/model/alert.dart';
 import 'package:smart_cab_api/src/model/auth_refresh_post_request.dart';
 import 'package:smart_cab_api/src/model/candidate.dart';
 import 'package:smart_cab_api/src/model/candidate_added_minutes_existing_inner.dart';
 import 'package:smart_cab_api/src/model/client.dart';
 import 'package:smart_cab_api/src/model/client_input.dart';
+import 'package:smart_cab_api/src/model/client_policy.dart';
+import 'package:smart_cab_api/src/model/client_policy_all_of_effective.dart';
+import 'package:smart_cab_api/src/model/client_policy_input.dart';
 import 'package:smart_cab_api/src/model/device_register.dart';
 import 'package:smart_cab_api/src/model/direction.dart';
 import 'package:smart_cab_api/src/model/dispatch_assign_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_put_request.dart';
+import 'package:smart_cab_api/src/model/dispatch_suggestions_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_suggestions_suggestion_id_decision_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/driver.dart';
@@ -74,6 +79,7 @@ import 'package:smart_cab_api/src/model/simctl_release_post_request.dart';
 import 'package:smart_cab_api/src/model/simctl_reset_post_request.dart';
 import 'package:smart_cab_api/src/model/sos_post_request.dart';
 import 'package:smart_cab_api/src/model/stop_status.dart';
+import 'package:smart_cab_api/src/model/suggestion.dart';
 import 'package:smart_cab_api/src/model/suggestion_decision_result.dart';
 import 'package:smart_cab_api/src/model/token_pair.dart';
 import 'package:smart_cab_api/src/model/tracker_type.dart';
@@ -87,6 +93,9 @@ import 'package:smart_cab_api/src/model/vehicle_input.dart';
 import 'package:smart_cab_api/src/model/vehicle_live.dart';
 import 'package:smart_cab_api/src/model/vehicle_status.dart';
 import 'package:smart_cab_api/src/model/vehicle_type.dart';
+import 'package:smart_cab_api/src/model/zone.dart';
+import 'package:smart_cab_api/src/model/zone_input.dart';
+import 'package:smart_cab_api/src/model/zone_update.dart';
 
 part 'serializers.g.dart';
 
@@ -96,17 +105,22 @@ part 'serializers.g.dart';
   AdminModeSettingsGet200Response,
   AdminUsersInvitePostRequest,
   AdminVehiclesGet200Response,
+  AdminZonesGet200Response,
   Alert,
   AuthRefreshPostRequest,
   Candidate,
   CandidateAddedMinutesExistingInner,
   Client,
   ClientInput,$ClientInput,
+  ClientPolicy,
+  ClientPolicyAllOfEffective,
+  ClientPolicyInput,$ClientPolicyInput,
   DeviceRegister,
   Direction,
   DispatchAssignPostRequest,
   DispatchAutomationGet200Response,
   DispatchAutomationPutRequest,
+  DispatchSuggestionsGet200Response,
   DispatchSuggestionsSuggestionIdDecisionPostRequest,
   DispatchTripsGet200Response,
   Driver,
@@ -151,6 +165,7 @@ part 'serializers.g.dart';
   SimctlResetPostRequest,
   SosPostRequest,
   StopStatus,
+  Suggestion,
   SuggestionDecisionResult,
   TokenPair,
   TrackerType,
@@ -164,6 +179,9 @@ part 'serializers.g.dart';
   VehicleLive,
   VehicleStatus,
   VehicleType,
+  Zone,
+  ZoneInput,$ZoneInput,
+  ZoneUpdate,
 ])
 Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
@@ -215,12 +233,14 @@ Serializers serializers = (_$serializers.toBuilder()
         () => MapBuilder<String, JsonObject>(),
       )
       ..add(ClientInput.serializer)
+      ..add(ClientPolicyInput.serializer)
       ..add(DriverInput.serializer)
       ..add(EmployeeInput.serializer)
       ..add(ModeSettingInput.serializer)
       ..add(OfficeInput.serializer)
       ..add(Vehicle.serializer)
       ..add(VehicleInput.serializer)
+      ..add(ZoneInput.serializer)
       ..add(const OneOfSerializer())
       ..add(const AnyOfSerializer())
       ..add(const DateSerializer())

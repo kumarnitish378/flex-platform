@@ -10,13 +10,24 @@ class _$ImpactAffectedRequestsInner extends ImpactAffectedRequestsInner {
   @override
   final String? requestId;
   @override
+  final String? employeeName;
+  @override
+  final num? addedMinutes;
+  @override
   final num? etaChangeMinutes;
+  @override
+  final bool? requeued;
 
   factory _$ImpactAffectedRequestsInner(
           [void Function(ImpactAffectedRequestsInnerBuilder)? updates]) =>
       (ImpactAffectedRequestsInnerBuilder()..update(updates))._build();
 
-  _$ImpactAffectedRequestsInner._({this.requestId, this.etaChangeMinutes})
+  _$ImpactAffectedRequestsInner._(
+      {this.requestId,
+      this.employeeName,
+      this.addedMinutes,
+      this.etaChangeMinutes,
+      this.requeued})
       : super._();
   @override
   ImpactAffectedRequestsInner rebuild(
@@ -32,14 +43,20 @@ class _$ImpactAffectedRequestsInner extends ImpactAffectedRequestsInner {
     if (identical(other, this)) return true;
     return other is ImpactAffectedRequestsInner &&
         requestId == other.requestId &&
-        etaChangeMinutes == other.etaChangeMinutes;
+        employeeName == other.employeeName &&
+        addedMinutes == other.addedMinutes &&
+        etaChangeMinutes == other.etaChangeMinutes &&
+        requeued == other.requeued;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, requestId.hashCode);
+    _$hash = $jc(_$hash, employeeName.hashCode);
+    _$hash = $jc(_$hash, addedMinutes.hashCode);
     _$hash = $jc(_$hash, etaChangeMinutes.hashCode);
+    _$hash = $jc(_$hash, requeued.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -48,7 +65,10 @@ class _$ImpactAffectedRequestsInner extends ImpactAffectedRequestsInner {
   String toString() {
     return (newBuiltValueToStringHelper(r'ImpactAffectedRequestsInner')
           ..add('requestId', requestId)
-          ..add('etaChangeMinutes', etaChangeMinutes))
+          ..add('employeeName', employeeName)
+          ..add('addedMinutes', addedMinutes)
+          ..add('etaChangeMinutes', etaChangeMinutes)
+          ..add('requeued', requeued))
         .toString();
   }
 }
@@ -63,10 +83,22 @@ class ImpactAffectedRequestsInnerBuilder
   String? get requestId => _$this._requestId;
   set requestId(String? requestId) => _$this._requestId = requestId;
 
+  String? _employeeName;
+  String? get employeeName => _$this._employeeName;
+  set employeeName(String? employeeName) => _$this._employeeName = employeeName;
+
+  num? _addedMinutes;
+  num? get addedMinutes => _$this._addedMinutes;
+  set addedMinutes(num? addedMinutes) => _$this._addedMinutes = addedMinutes;
+
   num? _etaChangeMinutes;
   num? get etaChangeMinutes => _$this._etaChangeMinutes;
   set etaChangeMinutes(num? etaChangeMinutes) =>
       _$this._etaChangeMinutes = etaChangeMinutes;
+
+  bool? _requeued;
+  bool? get requeued => _$this._requeued;
+  set requeued(bool? requeued) => _$this._requeued = requeued;
 
   ImpactAffectedRequestsInnerBuilder() {
     ImpactAffectedRequestsInner._defaults(this);
@@ -76,7 +108,10 @@ class ImpactAffectedRequestsInnerBuilder
     final $v = _$v;
     if ($v != null) {
       _requestId = $v.requestId;
+      _employeeName = $v.employeeName;
+      _addedMinutes = $v.addedMinutes;
       _etaChangeMinutes = $v.etaChangeMinutes;
+      _requeued = $v.requeued;
       _$v = null;
     }
     return this;
@@ -99,7 +134,10 @@ class ImpactAffectedRequestsInnerBuilder
     final _$result = _$v ??
         _$ImpactAffectedRequestsInner._(
           requestId: requestId,
+          employeeName: employeeName,
+          addedMinutes: addedMinutes,
           etaChangeMinutes: etaChangeMinutes,
+          requeued: requeued,
         );
     replace(_$result);
     return _$result;

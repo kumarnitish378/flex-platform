@@ -11,11 +11,17 @@ class _$OverrideResult extends OverrideResult {
   final String? overrideId;
   @override
   final Impact? impact;
+  @override
+  final DateTime? expiresAt;
+  @override
+  final String? tripId;
 
   factory _$OverrideResult([void Function(OverrideResultBuilder)? updates]) =>
       (OverrideResultBuilder()..update(updates))._build();
 
-  _$OverrideResult._({this.overrideId, this.impact}) : super._();
+  _$OverrideResult._(
+      {this.overrideId, this.impact, this.expiresAt, this.tripId})
+      : super._();
   @override
   OverrideResult rebuild(void Function(OverrideResultBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -28,7 +34,9 @@ class _$OverrideResult extends OverrideResult {
     if (identical(other, this)) return true;
     return other is OverrideResult &&
         overrideId == other.overrideId &&
-        impact == other.impact;
+        impact == other.impact &&
+        expiresAt == other.expiresAt &&
+        tripId == other.tripId;
   }
 
   @override
@@ -36,6 +44,8 @@ class _$OverrideResult extends OverrideResult {
     var _$hash = 0;
     _$hash = $jc(_$hash, overrideId.hashCode);
     _$hash = $jc(_$hash, impact.hashCode);
+    _$hash = $jc(_$hash, expiresAt.hashCode);
+    _$hash = $jc(_$hash, tripId.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -44,7 +54,9 @@ class _$OverrideResult extends OverrideResult {
   String toString() {
     return (newBuiltValueToStringHelper(r'OverrideResult')
           ..add('overrideId', overrideId)
-          ..add('impact', impact))
+          ..add('impact', impact)
+          ..add('expiresAt', expiresAt)
+          ..add('tripId', tripId))
         .toString();
   }
 }
@@ -61,6 +73,14 @@ class OverrideResultBuilder
   ImpactBuilder get impact => _$this._impact ??= ImpactBuilder();
   set impact(ImpactBuilder? impact) => _$this._impact = impact;
 
+  DateTime? _expiresAt;
+  DateTime? get expiresAt => _$this._expiresAt;
+  set expiresAt(DateTime? expiresAt) => _$this._expiresAt = expiresAt;
+
+  String? _tripId;
+  String? get tripId => _$this._tripId;
+  set tripId(String? tripId) => _$this._tripId = tripId;
+
   OverrideResultBuilder() {
     OverrideResult._defaults(this);
   }
@@ -70,6 +90,8 @@ class OverrideResultBuilder
     if ($v != null) {
       _overrideId = $v.overrideId;
       _impact = $v.impact?.toBuilder();
+      _expiresAt = $v.expiresAt;
+      _tripId = $v.tripId;
       _$v = null;
     }
     return this;
@@ -95,6 +117,8 @@ class OverrideResultBuilder
           _$OverrideResult._(
             overrideId: overrideId,
             impact: _impact?.build(),
+            expiresAt: expiresAt,
+            tripId: tripId,
           );
     } catch (_) {
       late String _$failedField;
