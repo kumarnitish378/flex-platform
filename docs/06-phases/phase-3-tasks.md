@@ -137,10 +137,11 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   scope shows the optimizer's hint without applying it.
   Updated Trips Board screen S-04 (`lib/features/supervisor/trips_board_screen.dart`) to render multi-rider pooled trips with stop sequence, pooling badge, and each rider's added detour minutes (`addedMinutes`). Updated Suggestions Panel screen S-05 (`lib/features/supervisor/suggestions_panel_screen.dart`) to fetch and render optimizer hint cards (`RequestHint` via `/dispatch/hints`) in manual scopes with manual apply action. Wired `getDispatchHints` in `SupervisorRepository`. All unit and widget tests passing green (119 total tests) and `flutter analyze` clean.
 
-- [ ] **A18 · Admin: full auto and the mode prompt** · deps B34, B35
+- [x] **A18 · Admin: full auto and the mode prompt** · deps B34, B35
   Screens: A-06 · Docs: control-model.md §2 and §5
   Done when: `full_auto` can be set on a scope; a `mode_prompt` alert appears as a banner that offers the
   switch and never performs it automatically.
+  Updated Admin Mode Settings screen A-06 (`lib/features/admin/mode_settings_screen.dart`) to allow selecting and saving `full_auto` mode. Updated Alerts List screen S-07 (`lib/features/supervisor/alerts_list_screen.dart`) to render `mode_prompt` alerts as prominent banners offering a manual switch button ("Switch to Manual") without automatic mode switching. Banners resolve and dismiss automatically when alert status is resolved. All unit and widget tests passing green (120 total tests) and `flutter analyze` clean.
 
 - [ ] **A19 · Reports and billing export** · deps B38, B39
   Screens: A-07 · Done when: the admin can read each Phase 3 report and download the billing export.

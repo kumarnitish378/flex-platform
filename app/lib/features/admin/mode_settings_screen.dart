@@ -4,7 +4,7 @@ import 'package:smart_cab_api/smart_cab_api.dart' as api;
 
 /// Admin mode settings management screen (A-06).
 ///
-/// Features mode settings list, mode toggle (manual, semi_auto, full_auto),
+/// Features mode settings list, mode selection (manual, semi_auto, full_auto),
 /// and overlap warning banner.
 class ModeSettingsScreen extends ConsumerStatefulWidget {
   const ModeSettingsScreen({super.key});
@@ -26,7 +26,6 @@ class _ModeSettingsScreenState extends ConsumerState<ModeSettingsScreen> {
 
   Future<void> _fetchModeSettings() async {
     try {
-      // Demo placeholder list or API fetch
       if (mounted) {
         setState(() {
           _settings = <api.ModeSetting>[
@@ -34,6 +33,11 @@ class _ModeSettingsScreenState extends ConsumerState<ModeSettingsScreen> {
               (api.ModeSettingBuilder b) => b
                 ..id = 'ms_1'
                 ..mode = api.ModeSettingInputModeEnum.semiAuto,
+            ),
+            api.ModeSetting(
+              (api.ModeSettingBuilder b) => b
+                ..id = 'ms_2'
+                ..mode = api.ModeSettingInputModeEnum.fullAuto,
             ),
           ];
           _hasOverlaps = false;
@@ -47,6 +51,18 @@ class _ModeSettingsScreenState extends ConsumerState<ModeSettingsScreen> {
         });
       }
     }
+  }
+
+  void _updateMode(String settingId, api.ModeSettingInputModeEnum newMode) {
+    setState(() {
+      final int index = _settings.indexWhere((s) => s.id == settingId);
+      if (index != -1) {
+        _settings[index] = _settings[index].rebuild((b) => b..mode = newMode);
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Mode updated to ${newMode.name.toUpperCase()}')),
+    );
   }
 
   @override
@@ -101,10 +117,40 @@ class _ModeSettingsScreenState extends ConsumerState<ModeSettingsScreen> {
                           settingId.length > 8 ? settingId.substring(0, 8) : settingId;
 
                       return Card(
-                        child: ListTile(
-                          leading: const Icon(Icons.tune),
-                          title: Text('Mode: ${ms.mode.name.toUpperCase()}'),
-                          subtitle: Text('Setting ID: $shortId'),
+                        margin: const EdgeInsets.only(bottom: 12.0),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                'Setting #$shortId',
+                                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 8),
+                              SegmentedButton<api.ModeSettingInputModeEnum>(
+                                key: Key('mode-segmented-$settingId'),
+                                segments: const <ButtonSegment<api.ModeSettingInputModeEnum>>[
+                                  ButtonSegment<api.ModeSettingInputModeEnum>(
+                                    value: api.ModeSettingInputModeEnum.manual,
+                                    label: Text('Manual'),
+                                  ),
+                                  ButtonSegment<api.ModeSettingInputModeEnum>(
+                                    value: api.ModeSettingInputModeEnum.semiAuto,
+                                    label: Text('Semi-Auto'),
+                                  ),
+                                  ButtonSegment<api.ModeSettingInputModeEnum>(
+                                    value: api.ModeSettingInputModeEnum.fullAuto,
+                                    label: Text('Full Auto'),
+                                  ),
+                                ],
+                                selected: <api.ModeSettingInputModeEnum>{ms.mode},
+                                onSelectionChanged: (Set<api.ModeSettingInputModeEnum> selection) {
+                                  _updateMode(settingId, selection.first);
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },

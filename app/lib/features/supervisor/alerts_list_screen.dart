@@ -6,7 +6,7 @@ import '../../data/api/supervisor_repository.dart';
 
 /// Supervisor alerts list screen (S-07).
 ///
-/// Shows raised alerts and SOS notifications with acknowledge/resolve actions.
+/// Shows raised alerts, SOS notifications, and mode-switch prompts with acknowledge/resolve actions.
 class AlertsListScreen extends ConsumerStatefulWidget {
   const AlertsListScreen({super.key});
 
@@ -55,20 +55,86 @@ class _AlertsListScreenState extends ConsumerState<AlertsListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    // Active alerts: not resolved
+    final List<api.Alert> activeAlerts = _alerts
+        .where((api.Alert a) => a.status != api.AlertStatusEnum.resolved)
+        .toList();
+
     return Scaffold(
       key: const Key('S-07'),
       appBar: AppBar(title: const Text('Alerts & SOS')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _alerts.isEmpty
+          : activeAlerts.isEmpty
               ? const Center(child: Text('No active alerts.'))
               : ListView.builder(
                   key: const Key('alerts-list'),
-                  itemCount: _alerts.length,
+                  itemCount: activeAlerts.length,
                   itemBuilder: (BuildContext context, int index) {
-                    final api.Alert alert = _alerts[index];
+                    final api.Alert alert = activeAlerts[index];
                     final String alertId = alert.id ?? '';
                     final bool isCritical = alert.severity == api.AlertSeverityEnum.critical;
+                    final bool isModePrompt = alert.type == api.AlertTypeEnum.modePrompt;
+
+                    if (isModePrompt) {
+                      return Card(
+                        key: Key('mode-prompt-card-$alertId'),
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        color: Colors.amber.shade50,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Row(
+                                children: <Widget>[
+                                  const Icon(Icons.mode_standby, color: Colors.amber),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Mode Switch Prompt',
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.amber.shade900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Automated dispatch thresholds exceeded (e.g. rejections/surge). System suggests switching to Manual mode.',
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: <Widget>[
+                                  OutlinedButton(
+                                    onPressed: () => _resolve(alertId),
+                                    child: const Text('Dismiss'),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  ElevatedButton(
+                                    key: Key('switch-to-manual-$alertId'),
+                                    onPressed: () async {
+                                      await _resolve(alertId);
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Switched scope to Manual mode'),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Text('Switch to Manual'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
 
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

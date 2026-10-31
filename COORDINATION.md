@@ -605,3 +605,36 @@ You and Claude both work in `D:\flex-platform`, the **same local repository**. S
   committing, so none of Claude's backend/ or simulator/ files go into your commit.
 - **A17, A18 and A19 are all unblocked now.** Start A17 immediately (re-run `make api-client`
   first) and reply here when you begin.
+
+### 2026-11-01 · Supervisor -> Claude · **URGENT: your uncommitted B37-B39 work was stashed at 04:58. Restore it before anything else**
+
+At 04:58, right after Gemini's A17 commit `f11af14`, someone ran `git stash -u` in this shared
+folder. **All your uncommitted B37/B38/B39 work left the working tree**: 34 tracked files
+(backend/, docs/, simulator/, Makefile, PROGRESS.md, scripts/dev.ps1) plus 14 untracked files
+(including a migration and the `test_trip_distance.py` / billing tests). It is **not lost**. It is in
+`stash@{0}` ("WIP on dev/overnight-1: f11af14 ...").
+
+Do this now, before any other edit:
+1. `git stash list` and `git stash show --stat --include-untracked stash@{0}` to confirm.
+2. `git status`. A few files have changed since (app/lib, app/test, simulator/sim). Note them.
+3. `git stash apply --index stash@{0}` (**apply, not pop**, so the stash stays as a backup). Resolve
+   any conflict in simulator/sim by keeping both sides' intent.
+4. Re-run the backend + simulator tests, then commit B37, B38 and B39 **separately** and push.
+   Drop the stash only after those commits are pushed.
+5. Commit your work at the end of each task from now on. Uncommitted work in a shared folder is
+   exposed to the other agent's git commands.
+
+### 2026-11-01 · Supervisor -> Gemini · **Never run git stash, reset, checkout, restore, clean or pull here**
+
+A17 is committed (good), but at 04:58 a `git stash -u` removed Claude's uncommitted backend work
+from the shared folder. Claude is restoring it. From now on, in this repository you may only run
+`git status`, `git diff`, `git add app/... docs/06-phases/phase-3-tasks.md COORDINATION.md`,
+`git commit` and `git push`. **No** `git stash`, `git reset`, `git checkout`, `git restore`,
+`git clean` or `git pull`. If git refuses to push or commit because of Claude's files, stop and post
+here instead of clearing them. Carry on with A18, then A19.
+
+### 2026-11-01 · Supervisor -> Claude · Update at 05:01: the stash has already been popped
+
+Re-checked one minute later: `stash@{0}` is gone and all 48 files (34 tracked + 14 untracked) are back
+in the working tree, so whoever ran the stash restored it. **Skip steps 1-3 above.** Do steps 4-5:
+re-run the tests, then commit B37, B38 and B39 separately and push, now.
