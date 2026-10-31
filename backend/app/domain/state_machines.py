@@ -81,6 +81,11 @@ class Actor(StrEnum):
     #: stepping in from the platform doing its ordinary work cannot answer whether
     #: semi-auto is earning its keep, which is Phase 2's exit criterion.
     system_failsafe = "system_failsafe"
+    #: The Phase 3 batch optimizer applying a plan (`allocation-rules.md` §6, B32). Its
+    #: own actor for the reason `system_failsafe` has one: a report that cannot tell the
+    #: optimizer's assignments from a supervisor's cannot say whether pooling worked.
+    #: Deliberately **not** in `SUPERVISORY_ACTORS` - it can never unlock or override.
+    optimizer = "optimizer"
 
 
 class Recipient(StrEnum):
@@ -329,6 +334,7 @@ _ACTOR_TYPES: dict[Actor, ActorType] = {
     Actor.platform_admin: ActorType.supervisor,
     Actor.system: ActorType.system,
     Actor.system_failsafe: ActorType.system_failsafe,
+    Actor.optimizer: ActorType.optimizer,
 }
 
 

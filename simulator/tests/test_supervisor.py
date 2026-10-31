@@ -72,9 +72,7 @@ class FakeDispatch:
 
     # --- semi-auto (M09) ---------------------------------------------------------
 
-    def open_offers(
-        self, token: str, request_id: uuid.UUID | None = None
-    ) -> list[dict[str, Any]]:
+    def open_offers(self, token: str, request_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
         if "offers" in self.fail_on:
             raise RuntimeError("backend said no")
         return self.offers
@@ -432,9 +430,7 @@ def test_mixed_overrides_the_share_it_does_not_approve(engine: Engine) -> None:
     other = str(uuid.uuid4())
     platform = FakeDispatch([], [candidate(eta=60, vehicle_id=other)])
     platform.offers = [offer_row() for _ in range(20)]
-    agent = supervisor_for(
-        engine, platform, policy=SupervisorPolicy.mixed, accept_rate=0.0
-    )
+    agent = supervisor_for(engine, platform, policy=SupervisorPolicy.mixed, accept_rate=0.0)
 
     engine.run()
 
@@ -451,9 +447,7 @@ def test_mixed_approves_when_there_is_nothing_else_to_choose(engine: Engine) -> 
     offered = offer_row(vehicle_id=only)
     platform = FakeDispatch([], [candidate(eta=60, vehicle_id=only)])
     platform.offers = [offered]
-    agent = supervisor_for(
-        engine, platform, policy=SupervisorPolicy.mixed, accept_rate=0.0
-    )
+    agent = supervisor_for(engine, platform, policy=SupervisorPolicy.mixed, accept_rate=0.0)
 
     engine.run()
 

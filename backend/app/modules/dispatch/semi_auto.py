@@ -194,6 +194,10 @@ class SemiAutoService:
             resolution = await self.modes.resolve_for_request(request)
             if resolution.mode is not Mode.semi_auto:
                 continue
+            if await self.dispatch.is_held(request):
+                # The evening hold window (B29): not offered until it elapses, and then
+                # immediately - the next sweep after `release_at` finds it ordinary.
+                continue
             made = await self.offer(request)
             if made:
                 offered += 1

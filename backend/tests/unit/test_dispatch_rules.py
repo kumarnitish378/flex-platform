@@ -383,6 +383,18 @@ def test_an_early_pickup_outside_the_window_is_also_flagged() -> None:
     assert Violation.pickup_window_missed in check_hard_rules(early)
 
 
+def test_the_pickup_window_binds_to_office_only() -> None:
+    """§2 rule 8 names `to_office`. A `from_office` rider is ready at their time; the
+    evening hold window (B29) delays the cab past it on purpose."""
+    late = facts(
+        direction=Direction.from_office,
+        pickup_at=NOW + timedelta(minutes=40),
+        requested_time=NOW,
+    )
+
+    assert Violation.pickup_window_missed not in check_hard_rules(late)
+
+
 def on_a_trip(**overrides: object) -> AssignmentFacts:
     """A cab that already has a trip of the rider's own direction and office."""
     office = uuid.uuid4()

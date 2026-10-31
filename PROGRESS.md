@@ -443,3 +443,12 @@ checked.
   invented data without becoming a demo pretending to be an onboarding.
 - **I02c (self-hosted Nominatim)** is deliberately not done. Phase 1 ships no geocoding
   by design; building it would be inventing a requirement (hard rule 8).
+
+---
+
+## Phase 3 log (2026-11-01 onward)
+
+| Task | Status | What changed | Tests |
+|---|---|---|---|
+| **B29** | done | `domain/hold_window.py` (pure): the four exemptions, `forced_priority` short-circuit, window from `max(queued_at, requested_time)`. `DispatchService.is_held/hold_release`; semi-auto skips held requests, `suggestions()` returns nothing for them, and `assign` refuses `system_failsafe` / `optimizer` inside the window. New `Actor.optimizer`. **Found and fixed:** rule 8 (pickup window) was applied to `from_office` too, which would have rejected every evening rider the moment their hold ended. Added `tests/integration/worlds.py` (composable builders for the pooling tests) | 1604 backend, 295 simulator |
+

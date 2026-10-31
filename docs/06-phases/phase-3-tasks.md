@@ -39,7 +39,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
 
 ## Backend
 
-- [ ] **B29 · Evening hold window** · deps B22
+- [x] **B29 · Evening hold window** · deps B22
   Docs: allocation-rules.md §6 "Evening hold window", §2 rule 10
   Do: `from_office` requests that are not VIP, not priority ≤ 2, not `urgency = high` and not `no_sharing`
   wait `hold_window_min_minutes` before becoming assignable. Phase 3 is the **fixed minimum**; Phase 4

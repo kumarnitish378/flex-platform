@@ -64,6 +64,8 @@ from app.domain.dispatch import (
 from app.domain.enums import Direction, Urgency
 from app.domain.errors import Conflict, NotFound
 from app.domain.geo import LatLng
+from app.domain.hold_window import HoldFacts
+from app.domain.hold_window import release_at as hold_release_at
 from app.domain.notifications import NotificationType
 from app.domain.overrides import still_applies
 from app.domain.policy import EffectivePolicy
@@ -101,6 +103,11 @@ LIVE_TRIP_STATUSES = (TripStatus.planned, TripStatus.dispatched, TripStatus.in_p
 ON_BOARD_STATUSES = (RequestStatus.assigned, RequestStatus.picked_up)
 #: Requests a supervisor can still assign.
 ASSIGNABLE_STATUSES = (RequestStatus.queued, RequestStatus.suggested)
+
+#: Actors that assign without a human choosing the vehicle. The evening hold window
+#: (B29) binds exactly these: a supervisor deciding by hand is allowed to send a cab
+#: early, the platform is not.
+AUTOMATIC_ACTORS = frozenset({Actor.system_failsafe, Actor.optimizer})
 
 #: How far back to look for a vehicle's last ping. Anything older is stale several times
 #: over, and the bound keeps the query off older partitions of `location_ping`.
@@ -323,6 +330,52 @@ class DispatchService:
         )
         return paused
 
+    # --- the evening hold window (B29) --------------------------------------------
+
+    async def hold_release(
+        self,
+        request: RideRequest,
+        *,
+        employee: Employee | None = None,
+        settings: dict[str, Any] | None = None,
+        policy: EffectivePolicy | None = None,
+    ) -> datetime | None:
+        """When this request stops being held, or `None` if it never was.
+
+        Derived from the request and the Clock on every read and stored nowhere, like the
+        override expiries (B26): a window has to end with nothing running, and a stored
+        flag would need a sweep to flip it back.
+        """
+        now = self.clock.now()
+        operator_id = request.operator_id
+        employee = employee or await self._employee(operator_id, request.employee_id)
+        settings = settings or await self.config.all_values(operator_id)
+        policy = (
+            policy
+            or (await self.client_policies(operator_id, {request.client_id}, settings))[
+                request.client_id
+            ]
+        )
+        return hold_release_at(
+            HoldFacts(
+                direction=Direction(request.direction),
+                queued_at=request.queued_at,
+                requested_time=request.requested_time,
+                is_vip=bool(employee.is_vip),
+                priority=employee.priority,
+                urgency=Urgency(request.urgency),
+                no_sharing=request.no_sharing or not policy.pooling_allowed,
+                forced_priority=request.forced_priority
+                and still_applies(request.override_until, now),
+            ),
+            int(settings["hold_window_min_minutes"]),
+        )
+
+    async def is_held(self, request: RideRequest) -> bool:
+        """True while the evening hold window is still open for this request."""
+        released = await self.hold_release(request)
+        return released is not None and self.clock.now() < released
+
     # --- candidates -------------------------------------------------------------
 
     async def candidates(self, operator_id: uuid.UUID, request_id: uuid.UUID) -> list[Candidate]:
@@ -439,7 +492,12 @@ class DispatchService:
         An empty list therefore means the opposite of "no cabs": it means none of them
         is allowed. `candidates()` carries the reasons, each naming the config key that
         excluded it.
+
+        A request still inside its evening hold window is not offered anything (B29): the
+        platform is deliberately waiting for a rider to share with.
         """
+        if await self.is_held(await self._request(operator_id, request_id)):
+            return []
         scored = await self.candidates(operator_id, request_id)
         return [candidate for candidate in scored if assignable(candidate.violations)][:limit]
 
@@ -570,6 +628,14 @@ class DispatchService:
                 f"A request that is {request.status} cannot be assigned",
                 {"request_id": str(request_id), "status": request.status},
             )
+
+        if actor in AUTOMATIC_ACTORS:
+            released = await self.hold_release(request, employee=employee, settings=settings)
+            if released is not None and now < released:
+                raise Conflict(
+                    "This request is inside its evening hold window",
+                    {"request_id": str(request_id), "held_until": released.isoformat()},
+                )
 
         trip = await self._target_trip(operator_id, trip_id, vehicle)
         on_board = await self._riders_of(trip) if trip is not None else []

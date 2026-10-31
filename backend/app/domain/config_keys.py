@@ -248,8 +248,9 @@ STRICTER_ONLY_KEYS = frozenset(key.name for key in CONFIG_KEYS.values() if key.s
 #: weights and urgency factors the moment `domain/cost.py` began reading them.
 #:
 #: What is left, and what will claim it: `batch_window_seconds` belongs to
-#: micro-batching and the hold window to pooling (Phase 3, `allocation-rules.md`
-#: section 6). B25 took the failsafe pair and B28 took the night-safety trio, which is
+#: micro-batching (B30) and `hold_window_max_minutes` to the dynamic hold window of
+#: Phase 4. B29 took `hold_window_min_minutes` - Phase 3's fixed window.
+#: B25 took the failsafe pair and B28 took the night-safety trio, which is
 #: now read by `domain/policy.py` and rule 11 - OQ-10 remains open about the exact
 #: client policy, which is why `night_safety_positions` is a key and not a constant.
 #:
@@ -263,7 +264,6 @@ PHASE_2_KEYS = frozenset(
     {
         "batch_window_seconds",
         "hold_window_max_minutes",
-        "hold_window_min_minutes",
     }
 )
 

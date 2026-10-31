@@ -344,10 +344,15 @@ def check_hard_rules(
     ):
         violations.append(Violation.night_safety_breach)
 
-    # 8. Time window.
-    drift = abs((facts.pickup_at - facts.requested_time).total_seconds())
-    if drift > facts.pickup_window_minutes * 60:
-        violations.append(Violation.pickup_window_missed)
+    # 8. Time window - `to_office` only (`allocation-rules.md` §2 rule 8). A `from_office`
+    # rider is ready at their requested time and nothing promised them a cab inside a
+    # window around it; it is also the direction the evening hold window (B29) delays on
+    # purpose, so applying the window here would make the hold and the rule contradict
+    # each other the moment the hold ends - exactly what the first B29 test found.
+    if facts.direction is Direction.to_office:
+        drift = abs((facts.pickup_at - facts.requested_time).total_seconds())
+        if drift > facts.pickup_window_minutes * 60:
+            violations.append(Violation.pickup_window_missed)
 
     # 9. Opt-out of sharing.
     if (

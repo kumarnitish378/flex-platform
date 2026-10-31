@@ -118,7 +118,7 @@ Each suggestion lists: ETA to pickup, seats free after assignment, added minutes
 
 ### Evening hold window
 - `from_office` requests (not VIP, not high priority/urgency, not opt-out) wait between `hold_window_min_minutes` and `hold_window_max_minutes`.
-- Phase 3: fixed at the min value.
+- Phase 3: fixed at the min value (B29). The window runs from the later of `queued_at` and the requested time, ends at the instant it elapses, and binds automatic assignment only - a supervisor may still send a cab early. A client policy that forbids pooling is exempt, as is any request under `forced_priority` (§3.1).
 - Phase 4: dynamic — hold while predicted probability of a compatible rider arriving in the next *t* minutes × expected savings > rider's weighted wait cost.
 
 ## 7. Ride offers (Phase 4)
