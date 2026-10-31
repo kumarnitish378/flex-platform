@@ -378,6 +378,22 @@ def price_route(
     )
 
 
+def excess_minutes(
+    problem: Problem, direction: Direction, office_id: uuid.UUID, route: RouteEval
+) -> dict[uuid.UUID, float]:
+    """Minutes each rider spends in the cab beyond riding alone."""
+    office = problem.offices[office_id]
+    return {
+        person.request_id: max(
+            route.ride_seconds[person.request_id]
+            - direct_seconds(problem, person, direction, office),
+            0.0,
+        )
+        / 60.0
+        for person in route.order
+    }
+
+
 def baseline_rides(
     problem: Problem, veh: Veh, direction: Direction, office_id: uuid.UUID
 ) -> dict[uuid.UUID, float]:

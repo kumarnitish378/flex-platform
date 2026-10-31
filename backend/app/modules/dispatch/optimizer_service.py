@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
@@ -30,7 +30,10 @@ from app.core.logging import get_logger
 from app.domain.cost import CostWeights, effective_rider
 from app.domain.dispatch import DetourLimits, Place, widened_candidate_eta_minutes
 from app.domain.enums import Direction, Urgency
+from app.domain.errors import Conflict, InvalidTransition, NotFound
+from app.domain.failsafe import SuggestionStatus
 from app.domain.geo import LatLng
+from app.domain.modes import Mode
 from app.domain.optimizer import (
     NightPolicy,
     OptimizerParams,
@@ -45,13 +48,23 @@ from app.domain.optimizer import (
 )
 from app.domain.overrides import still_applies
 from app.domain.policy import EffectivePolicy
-from app.domain.state_machines import RequestStatus, StopKind, StopStatus, TripStatus
+from app.domain.state_machines import Actor, RequestStatus, StopKind, StopStatus, TripStatus
+from app.domain.suggestions import SuggestionFacts, named_riders
+from app.domain.suggestions import reasons as render_reasons
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import Trip, TripStop
-from app.modules.dispatch.optimizer_models import OptimizerRun
-from app.modules.dispatch.service import DispatchService, haversine_seconds, rider_of
+from app.modules.dispatch.optimizer_models import OptimizerHint, OptimizerRun
+from app.modules.dispatch.semi_auto import SemiAutoService
+from app.modules.dispatch.service import (
+    DispatchService,
+    PlannedAssignment,
+    haversine_seconds,
+    rider_of,
+)
+from app.modules.dispatch.suggestion_models import Suggestion
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Vehicle
+from app.modules.modes.service import ModeService
 from app.modules.people.models import Employee
 from app.modules.requests.models import RideRequest
 from app.modules.tenancy.models import Office
@@ -78,6 +91,18 @@ class BatchSweep:
     hinted: int = 0
     failed: int = 0
 
+    def __add__(self, other: BatchSweep) -> BatchSweep:
+        return BatchSweep(
+            runs=self.runs + other.runs,
+            requests=self.requests + other.requests,
+            placed=self.placed + other.placed,
+            unplaced=self.unplaced + other.unplaced,
+            applied=self.applied + other.applied,
+            suggested=self.suggested + other.suggested,
+            hinted=self.hinted + other.hinted,
+            failed=self.failed + other.failed,
+        )
+
 
 class OptimizerService:
     def __init__(
@@ -103,17 +128,7 @@ class OptimizerService:
         """
         total = BatchSweep()
         for operator in await self._operators_with_ready_requests(operator_id):
-            result = await self._run_if_due(operator)
-            total = BatchSweep(
-                runs=total.runs + result.runs,
-                requests=total.requests + result.requests,
-                placed=total.placed + result.placed,
-                unplaced=total.unplaced + result.unplaced,
-                applied=total.applied + result.applied,
-                suggested=total.suggested + result.suggested,
-                hinted=total.hinted + result.hinted,
-                failed=total.failed + result.failed,
-            )
+            total = total + await self._run_if_due(operator)
         return total
 
     async def _operators_with_ready_requests(
@@ -168,8 +183,14 @@ class OptimizerService:
             .scalars()
             .all()
         )
+        # A request a supervisor has been asked about is waiting for an answer, not for
+        # the optimizer: re-planning it every window would pile up offers and restart the
+        # failsafe timer under the person reading them.
+        offered = await self._with_live_offers({request.id for request in rows})
         ready: list[tuple[RideRequest, datetime]] = []
         for request in rows:
+            if request.id in offered:
+                continue
             if request.hold_until is not None and request.hold_until > now:
                 continue
             released = await self.dispatch.hold_release(request)
@@ -195,10 +216,35 @@ class OptimizerService:
     # --- one batch -----------------------------------------------------------
 
     async def run_batch(self, operator_id: uuid.UUID, requests: list[RideRequest]) -> BatchSweep:
-        """Solve these requests together, once, and record the run.
+        """Solve these requests, once per control mode, and deliver each plan its own way.
+
+        `allocation-rules.md` §6: "In `full_auto` scopes they are applied; in `semi_auto`
+        they become suggestions; in `manual` they are shown as hints only." Which of the
+        three a request gets is `resolve_mode`'s answer for that request, so the requests
+        are partitioned by it and each partition is **one solver call**. `full_auto` goes
+        first: what it commits is visible to the next partition's problem, so an offer or
+        a hint is never made for a cab the batch has just taken.
+        """
+        modes = ModeService(self.session, self.clock)
+        partitions: dict[Mode, list[RideRequest]] = {}
+        for request in requests:
+            resolution = await modes.resolve_for_request(request)
+            partitions.setdefault(resolution.mode, []).append(request)
+
+        total = BatchSweep()
+        for mode in (Mode.full_auto, Mode.semi_auto, Mode.manual):
+            subset = partitions.get(mode)
+            if subset:
+                total = total + await self._run_partition(operator_id, mode, subset)
+        return total
+
+    async def _run_partition(
+        self, operator_id: uuid.UUID, mode: Mode, requests: list[RideRequest]
+    ) -> BatchSweep:
+        """One solver call, one `optimizer_run` row, one delivery.
 
         A solver that raises, or one that places nothing, leaves **every request exactly
-        as it was**: nothing below the `solve` call runs unless there is a plan to apply,
+        as it was**: nothing below the `solve` call runs unless there is a plan to deliver,
         and the run row is the only thing written.
         """
         started = self.clock.now()
@@ -229,14 +275,18 @@ class OptimizerService:
             request_ids=[str(request.id) for request in requests],
             plan=_plan_summary(plan),
             error=error,
+            mode=str(mode),
         )
         self.session.add(run)
         await self.session.flush()
 
-        outcome = await self.deliver(operator_id, run, plan, requests)
+        outcome = await self.deliver(operator_id, run, mode, plan, requests)
+        run.applied, run.suggested, run.hinted = outcome.applied, outcome.suggested, outcome.hinted
+        await self.session.flush()
         logger.info(
             "optimizer_run",
             operator_id=str(operator_id),
+            mode=str(mode),
             status=status,
             requests=len(requests),
             placed=run.placed,
@@ -257,12 +307,170 @@ class OptimizerService:
         self,
         operator_id: uuid.UUID,
         run: OptimizerRun,
+        mode: Mode,
         plan: Plan,
         requests: list[RideRequest],
     ) -> BatchSweep:
-        """What to do with a plan. B30 records it; B32 applies, suggests or hints."""
-        del operator_id, run, plan, requests
-        return BatchSweep()
+        """One solver, three destinations (B32): applied, offered, or hinted."""
+        by_id = {request.id: request for request in requests}
+        if mode is Mode.full_auto:
+            return BatchSweep(applied=await self._apply(operator_id, plan, by_id))
+        if mode is Mode.semi_auto:
+            return BatchSweep(suggested=await self._suggest(plan, by_id))
+        return BatchSweep(hinted=await self._hint(operator_id, run, plan, by_id))
+
+    async def _apply(
+        self, operator_id: uuid.UUID, plan: Plan, requests: dict[uuid.UUID, RideRequest]
+    ) -> int:
+        """`full_auto`: assign, one state-machine transition per rider.
+
+        **Never a bulk write.** Each rider goes through `DispatchService.assign`, which
+        runs the request through `transition_request`, honours a lock's guard, checks the
+        driver and the seats, and records the event with actor `optimizer`. Each is
+        wrapped in a savepoint, so one refusal rolls back that rider's partial writes and
+        nothing else; if a placement's first rider is refused, the riders who were to
+        share with them are left queued for the next batch rather than put on a route
+        the solver did not plan.
+        """
+        applied = 0
+        for placement in plan.placements:
+            planned = PlannedAssignment(
+                order=placement.order,
+                pickup_eta_seconds=placement.pickup_eta_seconds,
+                excess_minutes=placement.excess_minutes,
+                mode_used=str(Mode.full_auto),
+            )
+            trip_id = placement.trip_id
+            for request_id in placement.order:
+                if request_id not in placement.new_request_ids or request_id not in requests:
+                    continue
+                try:
+                    async with self.session.begin_nested():
+                        trip = await self.dispatch.assign(
+                            operator_id,
+                            request_id,
+                            placement.vehicle_id,
+                            Actor.optimizer,
+                            None,
+                            trip_id=trip_id,
+                            plan=planned,
+                        )
+                except (Conflict, NotFound, InvalidTransition) as exc:
+                    logger.info(
+                        "optimizer_assignment_refused",
+                        request_id=str(request_id),
+                        vehicle_id=str(placement.vehicle_id),
+                        reason=type(exc).__name__,
+                        detail=str(exc),
+                    )
+                    break
+                trip_id = trip.id
+                applied += 1
+        return applied
+
+    async def _suggest(self, plan: Plan, requests: dict[uuid.UUID, RideRequest]) -> int:
+        """`semi_auto`: each placed rider becomes an offer a supervisor answers."""
+        semi = SemiAutoService(self.session, self.clock, self.dispatch)
+        offered = 0
+        for placement in plan.placements:
+            for request_id in placement.new_request_ids:
+                request = requests.get(request_id)
+                if request is None:
+                    continue
+                reasons = await self._reasons(placement, request_id)
+                made = await semi.offer_planned(request, placement, reasons)
+                offered += 1 if made else 0
+        return offered
+
+    async def _hint(
+        self,
+        operator_id: uuid.UUID,
+        run: OptimizerRun,
+        plan: Plan,
+        requests: dict[uuid.UUID, RideRequest],
+    ) -> int:
+        """`manual`: record what the optimizer would do and change nothing."""
+        now = self.clock.now()
+        await self.session.execute(
+            update(OptimizerHint)
+            .where(OptimizerHint.request_id.in_(list(requests)))
+            .where(OptimizerHint.superseded_at.is_(None))
+            .values(superseded_at=now)
+        )
+        hinted = 0
+        for placement in plan.placements:
+            for request_id in placement.new_request_ids:
+                if request_id not in requests:
+                    continue
+                self.session.add(
+                    OptimizerHint(
+                        id=uuid.uuid4(),
+                        operator_id=operator_id,
+                        run_id=run.id,
+                        request_id=request_id,
+                        vehicle_id=placement.vehicle_id,
+                        trip_id=placement.trip_id,
+                        rider_order=[str(rid) for rid in placement.order],
+                        pickup_eta_seconds=placement.pickup_eta_seconds.get(request_id, 0.0),
+                        cost=placement.cost,
+                        reasons=await self._reasons(placement, request_id),
+                    )
+                )
+                hinted += 1
+        await self.session.flush()
+        return hinted
+
+    async def hints(self, operator_id: uuid.UUID) -> list[OptimizerHint]:
+        """The live hints: not replaced, and for a request still waiting in the queue."""
+        rows = await self.session.execute(
+            select(OptimizerHint)
+            .join(RideRequest, RideRequest.id == OptimizerHint.request_id)
+            .where(OptimizerHint.operator_id == operator_id)
+            .where(OptimizerHint.superseded_at.is_(None))
+            .where(RideRequest.status == str(RequestStatus.queued))
+            .order_by(OptimizerHint.created_at, OptimizerHint.id)
+        )
+        return list(rows.scalars())
+
+    async def _reasons(self, placement: Placement, request_id: uuid.UUID) -> list[str]:
+        """The §5 phrases for a planned placement, e.g. "8 min away, +4 min for Rahul"."""
+        vehicle = await self.session.get(Vehicle, placement.vehicle_id)
+        seats_after = (vehicle.seat_capacity if vehicle else 0) - len(placement.order)
+        ids = [rid for rid in placement.order if rid != request_id]
+        names: dict[str, str] = {}
+        if ids:
+            rows = await self.session.execute(
+                select(RideRequest.id, Employee.name)
+                .join(Employee, Employee.id == RideRequest.employee_id)
+                .where(RideRequest.id.in_(ids))
+            )
+            names = {str(row[0]): row[1] for row in rows}
+        added = {
+            str(rid): minutes
+            for rid, minutes in placement.added_minutes.items()
+            if rid != request_id and rid not in placement.new_request_ids
+        }
+        return render_reasons(
+            SuggestionFacts(
+                eta_to_pickup_seconds=placement.pickup_eta_seconds.get(request_id, 0.0),
+                seats_free_after=max(seats_after, 0),
+                empty_km_added=0.0,
+                new_trip=placement.trip_id is None,
+                riders=tuple(named_riders(added, names)),
+                trip_label=f"T-{placement.trip_id.hex[-4:].upper()}" if placement.trip_id else None,
+                eta_approximate=False,
+            )
+        )
+
+    async def _with_live_offers(self, request_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+        if not request_ids:
+            return set()
+        rows = await self.session.execute(
+            select(Suggestion.request_id)
+            .where(Suggestion.request_id.in_(request_ids))
+            .where(Suggestion.status == str(SuggestionStatus.offered))
+        )
+        return set(rows.scalars())
 
     # --- loading the problem ---------------------------------------------------
 

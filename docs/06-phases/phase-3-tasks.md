@@ -65,7 +65,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   that makes the solver fail; the solver is **pure** of the database — it takes a problem and returns a
   plan, so the same inputs always give the same plan and a scenario can be replayed.
 
-- [ ] **B32 · Applying a solution, per mode** · deps B31, B24
+- [x] **B32 · Applying a solution, per mode** · deps B31, B24
   Docs: allocation-rules.md §6 "Output", control-model.md §1
   Do: proposed trips are **applied** in a `full_auto` scope, become **suggestions** in `semi_auto`, and are
   **hints only** in `manual`. One solver, three destinations, decided by `resolve_mode` per request.

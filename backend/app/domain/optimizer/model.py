@@ -160,6 +160,9 @@ class Placement:
     cost: float
     #: True when the order differs from the trip's current one (a rearrangement).
     reorders_existing: bool = False
+    #: Minutes each rider on the resulting trip spends in the cab beyond riding alone.
+    #: What pooling costs them; stored on the request and shown beside the rider (A17).
+    excess_minutes: dict[uuid.UUID, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

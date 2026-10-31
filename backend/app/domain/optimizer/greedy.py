@@ -24,6 +24,7 @@ from app.domain.optimizer.route import (
     RouteEval,
     baseline_rides,
     check_route,
+    excess_minutes,
     new_person,
     price_route,
     refusal_for,
@@ -117,7 +118,9 @@ def solve_greedy(problem: Problem, *, only: frozenset[uuid.UUID] | None = None) 
         slot.new_ids.append(req.request_id)
 
     placements = [
-        _placement(slot) for slot in slots.values() if slot.new_ids and slot.route and slot.cost
+        _placement(problem, slot)
+        for slot in slots.values()
+        if slot.new_ids and slot.route and slot.cost
     ]
     placements.sort(key=lambda placement: str(placement.vehicle_id))
     return Plan(
@@ -152,9 +155,12 @@ def _refusal(problem: Problem, slot: _Slot, req: Req) -> str | None:
     return None
 
 
-def _placement(slot: _Slot) -> Placement:
+def _placement(problem: Problem, slot: _Slot) -> Placement:
     assert slot.route is not None and slot.cost is not None
     route = slot.route
+    first = next(p for p in route.order if p.is_new and p.req is not None)
+    assert first.req is not None
+    direction, office_id = first.req.direction, first.req.office_id
     return Placement(
         vehicle_id=slot.veh.vehicle_id,
         trip_id=slot.veh.trip.trip_id if slot.veh.trip else None,
@@ -164,4 +170,5 @@ def _placement(slot: _Slot) -> Placement:
         added_minutes=dict(slot.cost.added_minutes),
         cost=slot.cost.total,
         reorders_existing=False,
+        excess_minutes=excess_minutes(problem, direction, office_id, route),
     )

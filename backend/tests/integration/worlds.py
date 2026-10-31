@@ -10,10 +10,11 @@ Coordinates are `(lat, lng)` throughout, matching `app.core.geo.to_point`.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import FakeClock
@@ -23,6 +24,8 @@ from app.domain.enums import Direction, Urgency, VehicleType
 from app.domain.modes import Mode
 from app.domain.state_machines import RequestStatus, VehicleStatus
 from app.modules.config.service import ConfigService
+from app.modules.dispatch.optimizer_service import BatchSweep, OptimizerService
+from app.modules.dispatch.semi_auto import SemiAutoService, SemiAutoSweep
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.modes.models import ModeSetting
@@ -93,6 +96,30 @@ async def build_world(
     return World(operator=operator, client=client, office=office, clock=clock)
 
 
+async def add_client(
+    session: AsyncSession, world: World, name: str, mode: Mode
+) -> tuple[Client, Office]:
+    """Another client, at the same office address, whose riders are governed by `mode`."""
+    client = make_client(world.operator_id, name=name)
+    session.add(client)
+    await session.flush()
+    office = make_office(world.operator_id, client.id, name=f"{name} office")
+    session.add(office)
+    await session.flush()
+    session.add(
+        ModeSetting(
+            id=uuid.uuid4(),
+            operator_id=world.operator_id,
+            client_id=client.id,
+            mode=str(mode),
+            created_at=world.clock.now(),
+            updated_at=world.clock.now(),
+        )
+    )
+    await session.flush()
+    return client, office
+
+
 async def set_config(session: AsyncSession, world: World, **values: object) -> None:
     await ConfigService(session, world.clock).update(world.operator_id, dict(values))
 
@@ -102,12 +129,15 @@ async def add_employee(
     world: World,
     home: tuple[float, float],
     name: str = "Rider",
+    *,
+    client: Client | None = None,
+    office: Office | None = None,
     **fields: Any,
 ) -> Employee:
     employee = make_employee(
         world.operator_id,
-        world.client.id,
-        world.office.id,
+        (client or world.client).id,
+        (office or world.office).id,
         name=name,
         phone=unique_phone(),
         **fields,
@@ -188,10 +218,10 @@ async def add_request(
     request = RideRequest(
         id=uuid.uuid4(),
         operator_id=world.operator_id,
-        client_id=world.client.id,
+        client_id=employee.client_id,
         employee_id=employee.id,
         direction=str(direction),
-        office_id=world.office.id,
+        office_id=employee.office_id,
         location=to_point(*coords(employee.home_location)),
         requested_time=now + requested_in,
         urgency=str(Urgency.medium),
@@ -204,3 +234,29 @@ async def add_request(
     session.add(request)
     await session.flush()
     return request
+
+
+async def due_work(
+    semi_auto: SemiAutoService, operator_id: uuid.UUID | None = None
+) -> SemiAutoSweep:
+    """The platform's request-handling due work, once, with the batch window waived.
+
+    Since B32 a `semi_auto` scope is offered suggestions by the batch optimizer, and the
+    semi-auto sweep only fires the failsafes. Tests written before that asked the sweep to
+    do both; this is the two halves in the order `/simctl/clock` runs them, so they keep
+    asking the question they were written to ask. The window is skipped by calling
+    `run_batch` on whatever is ready: the window has its own tests (`test_micro_batching`).
+    """
+    optimizer = OptimizerService(semi_auto.session, semi_auto.clock, semi_auto.dispatch)
+    from app.modules.requests.models import RideRequest as _Request
+
+    query = select(_Request.operator_id).where(_Request.status == str(RequestStatus.queued))
+    if operator_id is not None:
+        query = query.where(_Request.operator_id == operator_id)
+    batch = BatchSweep()
+    for operator in sorted((await semi_auto.session.execute(query.distinct())).scalars(), key=str):
+        ready = await optimizer.ready_requests(operator)
+        if ready:
+            batch = batch + await optimizer.run_batch(operator, [r for r, _ in ready])
+    fired = await semi_auto.run_due_semi_auto(operator_id)
+    return replace(fired, offered=batch.suggested)

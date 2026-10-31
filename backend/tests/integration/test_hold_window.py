@@ -35,6 +35,7 @@ from tests.integration.worlds import (
     add_employee,
     add_request,
     build_world,
+    due_work,
     eta_service,
     near,
     ping,
@@ -91,16 +92,16 @@ async def test_a_held_request_is_not_offered_before_its_window_and_is_straight_a
 ) -> None:
     request = await evening(db_session, world, rider)
 
-    assert (await semi_auto.run_due_semi_auto(world.operator_id)).offered == 0
+    assert (await due_work(semi_auto, world.operator_id)).offered == 0
     assert await offers_for(db_session, request.id) == []
 
     world.clock.advance(timedelta(minutes=9, seconds=59))
     await ping(db_session, world, cab, OFFICE)
-    assert (await semi_auto.run_due_semi_auto(world.operator_id)).offered == 0
+    assert (await due_work(semi_auto, world.operator_id)).offered == 0
 
     world.clock.advance(timedelta(seconds=1))
     await ping(db_session, world, cab, OFFICE)
-    after = await semi_auto.run_due_semi_auto(world.operator_id)
+    after = await due_work(semi_auto, world.operator_id)
 
     assert after.offered == 1
     assert await offers_for(db_session, request.id)
@@ -155,7 +156,7 @@ async def test_forced_priority_short_circuits_the_window(
     await db_session.flush()
 
     assert not await dispatch.is_held(request)
-    assert (await semi_auto.run_due_semi_auto(world.operator_id)).offered == 1
+    assert (await due_work(semi_auto, world.operator_id)).offered == 1
 
 
 async def test_an_expired_force_priority_no_longer_short_circuits(

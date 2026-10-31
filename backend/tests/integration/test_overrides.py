@@ -51,6 +51,7 @@ from tests.builders import (
     make_zone,
     unique_phone,
 )
+from tests.integration.worlds import due_work
 
 pytestmark = pytest.mark.requires_db
 
@@ -610,11 +611,11 @@ async def test_a_held_request_is_not_offered_until_the_hold_passes(
     )
 
     semi_auto = SemiAutoService(db_session, clock, dispatch)
-    assert (await semi_auto.run_due_semi_auto()).offered == 0
+    assert (await due_work(semi_auto)).offered == 0
 
     clock.advance(timedelta(minutes=6))
     await keep_gps_fresh(db_session, world, clock)
-    assert (await semi_auto.run_due_semi_auto()).offered == 1
+    assert (await due_work(semi_auto)).offered == 1
 
 
 async def test_cancelling_a_trip_requeues_its_riders_rather_than_cancelling_them(
@@ -819,7 +820,7 @@ async def test_no_automatic_path_moves_a_locked_request_or_pools_a_blocked_trip(
         vehicle_id=world["vehicle"].id,
     )
 
-    sweep = await SemiAutoService(db_session, clock, dispatch).run_due_semi_auto()
+    sweep = await due_work(SemiAutoService(db_session, clock, dispatch))
 
     # Nothing may be offered: the only cab they are allowed on is closed to pooling,
     # and the open cab is the one they are locked away from. Both halves of rule 1 hold

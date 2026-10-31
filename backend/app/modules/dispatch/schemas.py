@@ -63,6 +63,27 @@ class TripStopOut(BaseModel):
     done_at: datetime | None = None
 
 
+class TripRiderOut(BaseModel):
+    """One rider on a trip, and what pooling cost them (`api-spec.yaml` TripRider)."""
+
+    request_id: uuid.UUID
+    rider_first_name: str
+    added_minutes: float | None = None
+
+
+class RequestHintOut(BaseModel):
+    """What the optimizer would do for a queued request in a `manual` scope."""
+
+    request_id: uuid.UUID
+    vehicle_id: uuid.UUID
+    trip_id: uuid.UUID | None = None
+    rider_order: list[uuid.UUID] = Field(default_factory=list)
+    pickup_eta_minutes: float
+    cost: float
+    reasons: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class TripOut(BaseModel):
     id: uuid.UUID
     vehicle_id: uuid.UUID
@@ -73,6 +94,8 @@ class TripOut(BaseModel):
     pooling_blocked: bool
     mode_used: str
     stops: list[TripStopOut] = Field(default_factory=list)
+    #: Everyone on the trip, in stop order, with what pooling cost them (B32).
+    riders: list[TripRiderOut] = Field(default_factory=list)
     #: Hard rules this assignment broke and the supervisor accepted (ADR-0011).
     violations: list[str] = Field(default_factory=list)
 

@@ -269,6 +269,10 @@ async def test_the_default_solver_places_a_request_and_records_the_plan(
     sweep = await optimizer.run_due_batches(world.operator_id)
 
     assert sweep.placed == 1
+    # The world is `full_auto`, so the plan was applied (B32), not merely recorded.
+    assert sweep.applied == 1
+    await db_session.refresh(request)
+    assert request.status == str(RequestStatus.assigned)
     (run,) = await runs(db_session, world)
     assert run.status == "solved" and run.solver in ("greedy", "darp")
     assert run.plan is not None

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -91,6 +91,10 @@ class RideRequest(TenantEntity):
     #: supervisor is told once however many times the sweep runs. The *widening* of the
     #: candidate search is derived from the wait and needs no column.
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Minutes this rider spends in the cab beyond riding alone, as of the last plan that
+    #: touched their trip (B32). `NULL` until a plan has measured it. What pooling cost
+    #: them, shown to the supervisor beside each rider (A17).
+    pooling_added_minutes: Mapped[float | None] = mapped_column(Float)
 
     @property
     def is_locked(self) -> bool:

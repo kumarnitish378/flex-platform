@@ -43,6 +43,7 @@ from tests.builders import (
     make_operator,
     unique_phone,
 )
+from tests.integration.worlds import due_work
 
 pytestmark = pytest.mark.requires_db
 
@@ -202,7 +203,7 @@ async def test_a_queued_request_in_semi_auto_is_offered_suggestions(
 ) -> None:
     request = await queued_request(db_session, world)
 
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.offered == 1
     offers = await offers_for(db_session, request.id)
@@ -217,9 +218,9 @@ async def test_a_request_already_offered_is_not_offered_again(
 ) -> None:
     """Otherwise every sweep would pile up a fresh set and the timer would never fire."""
     await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
-    second = await service.run_due_semi_auto(world["operator"].id)
+    second = await due_work(service, world["operator"].id)
 
     assert second.offered == 0
 
@@ -241,7 +242,7 @@ async def test_a_manual_scope_is_never_offered_anything(
     await db_session.flush()
     await queued_request(db_session, world)
 
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.offered == 0
 
@@ -253,7 +254,7 @@ async def test_approving_assigns_the_offered_vehicle(
     db_session: AsyncSession, world: dict[str, Any], service: SemiAutoService
 ) -> None:
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
     offer = (await offers_for(db_session, request.id))[0]
 
     result = await service.decide_on(
@@ -275,7 +276,7 @@ async def test_rejecting_leaves_the_request_queued(
 ) -> None:
     """Turning down the first choice is not turning down all three."""
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
     offer = (await offers_for(db_session, request.id))[0]
 
     await service.decide_on(
@@ -300,7 +301,7 @@ async def test_answering_twice_is_refused(
     from app.domain.errors import Conflict
 
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
     offer = (await offers_for(db_session, request.id))[0]
     await service.decide_on(
         world["operator"].id,
@@ -327,10 +328,10 @@ async def test_before_the_timeout_nothing_fires(
     db_session: AsyncSession, world: dict[str, Any], service: SemiAutoService, clock: FakeClock
 ) -> None:
     await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS - 10))
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.assigned == 0
     assert sweep.escalated == 0
@@ -341,11 +342,11 @@ async def test_auto_assign_fires_once_the_timeout_passes(
 ) -> None:
     """`failsafe_action = auto_assign`, the default. The rider gets a cab."""
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS + 1))
     await keep_gps_fresh(db_session, world, clock)
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.assigned == 1
     await db_session.refresh(request)
@@ -361,10 +362,10 @@ async def test_the_failsafe_assignment_is_attributed_to_the_system(
     answer whether semi-auto is working.
     """
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS + 1))
     await keep_gps_fresh(db_session, world, clock)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     trip = (
         (await db_session.execute(select(Trip).where(Trip.operator_id == world["operator"].id)))
@@ -389,11 +390,11 @@ async def test_escalate_alerts_first_and_assigns_on_the_second_timeout(
         world["operator"].id, {"failsafe_action": "escalate"}
     )
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS + 1))
     await keep_gps_fresh(db_session, world, clock)
-    first = await service.run_due_semi_auto(world["operator"].id)
+    first = await due_work(service, world["operator"].id)
 
     assert first.escalated == 1
     assert first.assigned == 0
@@ -414,7 +415,7 @@ async def test_escalate_alerts_first_and_assigns_on_the_second_timeout(
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS + 1))
     await keep_gps_fresh(db_session, world, clock)
-    second = await service.run_due_semi_auto(world["operator"].id)
+    second = await due_work(service, world["operator"].id)
 
     assert second.assigned == 1
     await db_session.refresh(request)
@@ -429,11 +430,11 @@ async def test_high_urgency_gets_half_the_timeout(
     The people least able to wait get the least waiting.
     """
     await queued_request(db_session, world, urgency=Urgency.high)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS // 2 + 1))
     await keep_gps_fresh(db_session, world, clock)
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.assigned == 1
 
@@ -444,11 +445,11 @@ async def test_an_ordinary_request_is_not_fired_at_the_half_timeout(
     """The other half of the previous test: without it, a bug that halved *every*
     timeout would pass unnoticed."""
     await queued_request(db_session, world, urgency=Urgency.medium)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS // 2 + 1))
     await keep_gps_fresh(db_session, world, clock)
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.assigned == 0
 
@@ -472,7 +473,7 @@ async def test_semi_auto_never_offers_for_a_vip(
     await db_session.flush()
     await queued_request(db_session, world)
 
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.offered == 0
     assert sweep.no_candidate == 0, "skipped by mode, not by a lack of cabs"
@@ -487,7 +488,7 @@ async def test_an_offer_whose_cab_stopped_being_usable_is_withdrawn_not_assigned
     the failure a human reading the screen would have caught.
     """
     await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
 
     world["vehicle"].status = str(VehicleStatus.out_of_service)
     await db_session.flush()
@@ -497,7 +498,7 @@ async def test_an_offer_whose_cab_stopped_being_usable_is_withdrawn_not_assigned
     # silent, not because it went out of service, and would keep passing if the
     # out-of-service rule were deleted.
     await keep_gps_fresh(db_session, world, clock)
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.assigned == 0
     assert sweep.superseded >= 1
@@ -508,13 +509,13 @@ async def test_an_offer_for_a_request_someone_assigned_by_hand_is_closed(
 ) -> None:
     """A supervisor who used the manual board has already answered the question."""
     request = await queued_request(db_session, world)
-    await service.run_due_semi_auto(world["operator"].id)
+    await due_work(service, world["operator"].id)
     request.status = str(RequestStatus.cancelled)
     await db_session.flush()
 
     clock.advance(timedelta(seconds=FAILSAFE_SECONDS + 1))
     await keep_gps_fresh(db_session, world, clock)
-    sweep = await service.run_due_semi_auto(world["operator"].id)
+    sweep = await due_work(service, world["operator"].id)
 
     assert sweep.assigned == 0
     offers = await offers_for(db_session, request.id)

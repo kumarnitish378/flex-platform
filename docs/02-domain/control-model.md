@@ -11,6 +11,7 @@ Principle: **modes decide who normally assigns; overrides let a human step in on
 
 - Modes control **assignment only**. Tracking, ETA and notifications work in every mode.
 - Phase 1 supports `manual` only. Phase 2 adds `semi_auto`. Phase 3 adds `full_auto`.
+- Since Phase 3 one batch optimizer serves all three (`allocation-rules.md` §6): its plan is **applied** (actor `optimizer`, one state-machine transition per rider) in `full_auto`, **offered** as the rank-1 suggestion in `semi_auto`, and **recorded as a hint** in `manual`.
 
 ## 2. Mode scopes and precedence
 A `mode_setting` row has optional `client_id`, `zone_id`, `direction`, `weekdays`, `start_time`, `end_time` and a `mode`. For a request, the **most specific matching** setting wins:

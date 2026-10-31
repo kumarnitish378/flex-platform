@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Protocol
 
@@ -24,6 +25,7 @@ from app.domain.state_machines import Actor
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
 from app.modules.dispatch.models import Trip, TripStop
+from app.modules.dispatch.optimizer_service import OptimizerService
 from app.modules.dispatch.override_service import Impact, OverrideService
 from app.modules.dispatch.schemas import (
     AddedMinutes,
@@ -35,12 +37,19 @@ from app.modules.dispatch.schemas import (
     ImpactOut,
     OverrideInput,
     OverrideResultOut,
+    RequestHintOut,
     TripOut,
+    TripRiderOut,
     TripStopOut,
     VehicleLiveOut,
 )
 from app.modules.dispatch.semi_auto import SemiAutoService, SupervisorDecision
-from app.modules.dispatch.service import Candidate, DispatchService, VehicleLive
+from app.modules.dispatch.service import (
+    Candidate,
+    DispatchService,
+    TripRiderView,
+    VehicleLive,
+)
 from app.modules.notifications.service import NotificationService
 from app.modules.requests.router import _out as _request_out
 from app.modules.requests.schemas import LatLng, RideRequestOut
@@ -326,7 +335,42 @@ async def list_trips(
     trips = await service.trips(operator_id, status)
     # One stop query for every trip, not one per trip: see `stops_by_trip`.
     stops = await service.stops_by_trip([trip.id for trip in trips])
-    return {"items": [_trip_with_stops(trip, stops.get(trip.id, [])) for trip in trips]}
+    riders = await service.riders_by_trip(stops)
+    return {
+        "items": [
+            _trip_with_stops(trip, stops.get(trip.id, []), riders.get(trip.id, []))
+            for trip in trips
+        ]
+    }
+
+
+@router.get(
+    "/hints",
+    summary="The optimizer's hints for requests in manual scopes (Phase 3)",
+    dependencies=[Depends(require(Permission.request_queue_view))],
+)
+async def list_hints(
+    service: ServiceDep, current_user: CurrentUserDep
+) -> dict[str, list[RequestHintOut]]:
+    """What the optimizer would do, for the requests it is not allowed to act on."""
+    hints = await OptimizerService(service.session, service.clock, service).hints(
+        _operator_id(current_user)
+    )
+    return {
+        "items": [
+            RequestHintOut(
+                request_id=hint.request_id,
+                vehicle_id=hint.vehicle_id,
+                trip_id=hint.trip_id,
+                rider_order=[uuid.UUID(rid) for rid in hint.rider_order],
+                pickup_eta_minutes=round(hint.pickup_eta_seconds / 60.0, 1),
+                cost=round(hint.cost, 2),
+                reasons=list(hint.reasons),
+                created_at=hint.created_at,
+            )
+            for hint in hints
+        ]
+    }
 
 
 @router.get(
@@ -426,10 +470,18 @@ class HasStops(Protocol):
 
 
 async def _trip_out(service: HasStops, trip: Trip) -> TripOut:
-    return _trip_with_stops(trip, await service.stops_of(trip.id))
+    stops = await service.stops_of(trip.id)
+    # Only the dispatch service knows what pooling cost each rider; the driver's own view
+    # of a trip has no use for it.
+    riders: list[TripRiderView] = []
+    if isinstance(service, DispatchService):
+        riders = (await service.riders_by_trip({trip.id: stops})).get(trip.id, [])
+    return _trip_with_stops(trip, stops, riders)
 
 
-def _trip_with_stops(trip: Trip, stops: list[TripStop]) -> TripOut:
+def _trip_with_stops(
+    trip: Trip, stops: list[TripStop], riders: Sequence[TripRiderView] = ()
+) -> TripOut:
     return TripOut(
         id=trip.id,
         vehicle_id=trip.vehicle_id,
@@ -439,6 +491,16 @@ def _trip_with_stops(trip: Trip, stops: list[TripStop]) -> TripOut:
         status=trip.status,
         pooling_blocked=trip.pooling_blocked,
         mode_used=trip.mode_used,
+        riders=[
+            TripRiderOut(
+                request_id=rider.request_id,
+                rider_first_name=rider.rider_first_name,
+                added_minutes=(
+                    round(rider.added_minutes, 1) if rider.added_minutes is not None else None
+                ),
+            )
+            for rider in riders
+        ],
         stops=[
             TripStopOut(
                 id=stop.id,

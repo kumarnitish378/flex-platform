@@ -52,6 +52,7 @@ from app.domain.optimizer.route import (
     baseline_rides,
     check_route,
     direct_seconds,
+    excess_minutes,
     new_person,
     price_route,
     refusal_for,
@@ -455,6 +456,7 @@ def _solve_group(
                 added_minutes=dict(cost_parts.added_minutes),
                 cost=cost_parts.total,
                 reorders_existing=proposed_existing != current,
+                excess_minutes=excess_minutes(problem, direction, office_id, checked.route),
             )
         )
         served.update(p.request_id for p in new_here)

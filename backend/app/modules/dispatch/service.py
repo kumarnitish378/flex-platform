@@ -115,6 +115,26 @@ POSITION_LOOKBACK = timedelta(hours=1)
 
 
 @dataclass(frozen=True, slots=True)
+class TripRiderView:
+    request_id: uuid.UUID
+    rider_first_name: str
+    added_minutes: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedAssignment:
+    """What the optimizer decided about one placement, handed to `assign` (B32)."""
+
+    #: Every request on the resulting trip, in stop order.
+    order: tuple[uuid.UUID, ...]
+    #: Seconds from now until each *new* rider is collected.
+    pickup_eta_seconds: dict[uuid.UUID, float]
+    #: Minutes beyond riding alone, for everyone on the trip.
+    excess_minutes: dict[uuid.UUID, float]
+    mode_used: str = "full_auto"
+
+
+@dataclass(frozen=True, slots=True)
 class Position:
     lat: float
     lng: float
@@ -608,11 +628,19 @@ class DispatchService:
         reason_code: str | None = None,
         note: str | None = None,
         is_override: bool = False,
+        plan: PlannedAssignment | None = None,
     ) -> Trip:
         """Put a request on a vehicle: a new trip, or a seat on an existing one (SUP-03).
 
         Refuses on capacity, on an unknown id, and on any transition the state machine
         does not allow. Everything else is recorded as an accepted violation (ADR-0011).
+
+        `plan` is the optimizer's decision, already judged against every hard rule by the
+        evaluator it shares with manual assignment (B32). It carries the stop order and the
+        pickup ETA the solver worked out; everything else - the state machine, the lock
+        guard, capacity, the driver on duty, the hold window - is checked here exactly as
+        for a person, because those are the parts a plan computed a moment ago cannot vouch
+        for.
         """
         request = await self._request(operator_id, request_id)
         vehicle = await self._vehicle(operator_id, vehicle_id)
@@ -657,10 +685,14 @@ class DispatchService:
 
         position = (await self.latest_positions(operator_id)).get(vehicle_id)
         eta_seconds, eta_approximate = await self._eta_to_pickup(position, request, office)
+        if plan is not None and request.id in plan.pickup_eta_seconds:
+            # The solver's own figure: for the third rider on a route it is the time to
+            # reach *them*, not the time from the cab's position straight to their door.
+            eta_seconds = plan.pickup_eta_seconds[request.id]
 
         insertion = (
             await self._insertion_for(trip, on_board, request, office)
-            if trip is not None and on_board
+            if trip is not None and on_board and plan is None
             else None
         )
         facts = await self._facts(
@@ -679,8 +711,12 @@ class DispatchService:
             timezone=await self.operator_timezone(operator_id),
         )
         inputs = await self._detour_inputs(operator_id, request, on_board, office)
-        violations = check_hard_rules(
-            facts, insertion, inputs.limits, inputs.direct, inputs.night_escort_required
+        violations = (
+            []
+            if plan is not None
+            else check_hard_rules(
+                facts, insertion, inputs.limits, inputs.direct, inputs.night_escort_required
+            )
         )
 
         created = trip is None
@@ -694,7 +730,7 @@ class DispatchService:
                 status=TripStatus.planned,
                 pooling_blocked=request.no_sharing or employee.is_vip,
                 planned_start=now,
-                mode_used=MODE_MANUAL,
+                mode_used=plan.mode_used if plan is not None else MODE_MANUAL,
             )
             self.session.add(trip)
             await self.session.flush()
@@ -702,7 +738,12 @@ class DispatchService:
         riders = [*on_board, _rider_of(request)]
         if insertion is not None:
             riders = list(insertion.plan.order)
+        if plan is not None:
+            by_id = {rider.request_id: rider for rider in riders}
+            ordered = [by_id[rid] for rid in plan.order if rid in by_id]
+            riders = ordered + [rider for rider in riders if rider not in ordered]
         await self._write_stops(trip, riders, office, eta_seconds, eta_approximate, now)
+        await self._record_pooling_cost(riders, insertion, inputs.direct, plan)
 
         # The request moves through the state machine; nothing writes `status` directly.
         event = transition_request(
@@ -766,6 +807,7 @@ class DispatchService:
                 "reason_code": reason_code,
                 # Recorded so an override against the rules stays visible (ADR-0011).
                 "violations_accepted": [str(violation) for violation in violations],
+                "planned_by": "optimizer" if plan is not None else None,
             },
         )
         await self.session.flush()
@@ -780,6 +822,41 @@ class DispatchService:
             violations=[str(violation) for violation in violations],
         )
         return trip
+
+    async def _record_pooling_cost(
+        self,
+        riders: list[Rider],
+        insertion: Insertion | None,
+        direct: dict[uuid.UUID, float],
+        plan: PlannedAssignment | None,
+    ) -> None:
+        """Store what pooling cost each rider on the trip, in minutes beyond riding alone.
+
+        Measured the way the plan that placed them measured it - the optimizer's own times
+        for its plans, the dispatch service's for a person's - so the figure on the board
+        is the figure the decision was made on. A lone rider is zero by definition.
+        """
+        ids = [rider.request_id for rider in riders]
+        excess: dict[uuid.UUID, float | None]
+        if plan is not None and plan.excess_minutes:
+            excess = {rid: plan.excess_minutes.get(rid) for rid in ids}
+        elif insertion is not None:
+            excess = {
+                rid: max(insertion.plan.ride_seconds.get(rid, 0.0) - direct.get(rid, 0.0), 0.0)
+                / 60.0
+                for rid in ids
+            }
+        else:
+            excess = {rid: 0.0 for rid in ids}
+        rows = (
+            (await self.session.execute(select(RideRequest).where(RideRequest.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            value = excess.get(row.id)
+            if value is not None:
+                row.pooling_added_minutes = value
 
     async def _notify_assigned(
         self,
@@ -1330,6 +1407,42 @@ class DispatchService:
         grouped: dict[uuid.UUID, list[TripStop]] = {}
         for stop in rows.scalars().all():
             grouped.setdefault(stop.trip_id, []).append(stop)
+        return grouped
+
+    async def riders_by_trip(
+        self, stops: dict[uuid.UUID, list[TripStop]]
+    ) -> dict[uuid.UUID, list[TripRiderView]]:
+        """Who is on each trip, in stop order, and what pooling cost them (B32).
+
+        One query for every trip's riders, for the same reason `stops_by_trip` is one:
+        the board reads every live trip at once.
+        """
+        request_ids = {stop.request_id for trip_stops in stops.values() for stop in trip_stops}
+        if not request_ids:
+            return {}
+        rows = await self.session.execute(
+            select(RideRequest.id, Employee.name, RideRequest.pooling_added_minutes)
+            .join(Employee, Employee.id == RideRequest.employee_id)
+            .where(RideRequest.id.in_(request_ids))
+        )
+        known = {row[0]: row for row in rows}
+        grouped: dict[uuid.UUID, list[TripRiderView]] = {}
+        for trip_id, trip_stops in stops.items():
+            seen: set[uuid.UUID] = set()
+            riders: list[TripRiderView] = []
+            for stop in sorted(trip_stops, key=lambda s: s.sequence):
+                if stop.request_id in seen or stop.request_id not in known:
+                    continue
+                seen.add(stop.request_id)
+                _, name, added = known[stop.request_id]
+                riders.append(
+                    TripRiderView(
+                        request_id=stop.request_id,
+                        rider_first_name=str(name).split(" ")[0],
+                        added_minutes=added,
+                    )
+                )
+            grouped[trip_id] = riders
         return grouped
 
     async def stops_of(self, trip_id: uuid.UUID) -> list[TripStop]:

@@ -43,7 +43,7 @@ from app.domain.failsafe import (
     decide,
     timeout_for,
 )
-from app.domain.modes import Mode
+from app.domain.optimizer import Placement
 from app.domain.state_machines import Actor, RequestStatus
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.service import DispatchService
@@ -82,6 +82,8 @@ class DecisionResult:
 class SemiAutoSweep:
     """What one pass did. Every number is something an operator could ask about."""
 
+    #: Always 0 since B32: offers are made by the batch optimizer, not by this sweep.
+    #: Kept so the field the schema and the tests already name does not vanish.
     offered: int = 0
     assigned: int = 0
     escalated: int = 0
@@ -145,65 +147,92 @@ class SemiAutoService:
         Named `run_due_*` so the schedule guard sees it: any sweep reachable from a
         clock jump must also be reachable from the beat.
         """
-        offered, no_candidate = await self._offer_due(operator_id)
+        # Offers are no longer made here. Since B32 the batch optimizer proposes trips
+        # for a `semi_auto` scope and `offer_planned` records them, so that a suggestion
+        # can pool riders - which a request-at-a-time offer cannot. This sweep keeps the
+        # other half: acting on an offer nobody answered.
         fired = await self._fire_due(operator_id)
 
         sweep = SemiAutoSweep(
-            offered=offered,
-            no_candidate=no_candidate,
             assigned=fired.assigned,
             escalated=fired.escalated,
             superseded=fired.superseded,
         )
-        if any((sweep.offered, sweep.assigned, sweep.escalated, sweep.superseded)):
+        if any((sweep.assigned, sweep.escalated, sweep.superseded)):
             logger.info(
                 "semi_auto_sweep",
-                offered=sweep.offered,
                 assigned=sweep.assigned,
                 escalated=sweep.escalated,
                 superseded=sweep.superseded,
             )
         return sweep
 
-    async def _offer_due(self, operator_id: uuid.UUID | None) -> tuple[int, int]:
-        """Suggest vehicles for queued requests in a `semi_auto` scope."""
+    async def offer_planned(
+        self, request: RideRequest, placement: Placement, reasons: list[str]
+    ) -> list[Suggestion]:
+        """Record the optimizer's proposal for this request as offers, and start the timer.
+
+        Rank 1 is the **planned** placement: the cab and trip the batch chose, which may
+        pool this rider with others in a way no single-request ranking could. Ranks 2 and 3
+        are the best single-insertion alternatives from the Phase 2 candidate scoring, so
+        the supervisor still has somebody else to pick - `control-model.md` §1 promises the
+        top three, and a plan is one answer.
+
+        Returns an empty list only when there is nothing to offer, which cannot happen for
+        a placed request; it is the caller's cue that the request is not queued any more.
+        """
+        if request.status not in OFFERABLE_STATUSES:
+            return []
         now = self.clock.now()
-        query = (
-            select(RideRequest)
-            .where(RideRequest.status.in_(OFFERABLE_STATUSES))
-            .where(
-                # A held request waits where the supervisor put it (`control-model.md` §3,
-                # B26). This is the automatic path the hold exists to stop: without it the
-                # sweep offers a cab the next time it runs and the hold means nothing.
-                (RideRequest.hold_until.is_(None)) | (RideRequest.hold_until <= now)
+        due_at = now + await self._timeout_for(request)
+        made = [
+            Suggestion(
+                id=uuid.uuid4(),
+                operator_id=request.operator_id,
+                request_id=request.id,
+                vehicle_id=placement.vehicle_id,
+                trip_id=placement.trip_id,
+                rank=1,
+                cost=placement.cost,
+                reasons=reasons,
+                status=str(SuggestionStatus.offered),
+                offered_at=now,
+                failsafe_due_at=due_at,
             )
+        ]
+        alternatives = [
+            candidate
+            for candidate in await self.dispatch.suggestions(
+                request.operator_id, request.id, limit=OFFER_COUNT
+            )
+            if candidate.vehicle.id != placement.vehicle_id
+        ][: OFFER_COUNT - 1]
+        for rank, candidate in enumerate(alternatives, start=2):
+            made.append(
+                Suggestion(
+                    id=uuid.uuid4(),
+                    operator_id=request.operator_id,
+                    request_id=request.id,
+                    vehicle_id=candidate.vehicle.id,
+                    trip_id=candidate.trip_id,
+                    rank=rank,
+                    cost=candidate.cost or 0.0,
+                    reasons=list(candidate.reasons),
+                    status=str(SuggestionStatus.offered),
+                    offered_at=now,
+                    failsafe_due_at=due_at,
+                )
+            )
+        self.session.add_all(made)
+        await self.session.flush()
+        logger.info(
+            "suggestions_offered",
+            request_id=str(request.id),
+            count=len(made),
+            due_at=due_at.isoformat(),
+            planned_by="optimizer",
         )
-        if operator_id is not None:
-            query = query.where(RideRequest.operator_id == operator_id)
-        requests = list((await self.session.execute(query)).scalars().all())
-        if not requests:
-            return 0, 0
-
-        with_offers = await self._requests_with_live_offers({request.id for request in requests})
-
-        offered = 0
-        no_candidate = 0
-        for request in requests:
-            if request.id in with_offers:
-                continue
-            resolution = await self.modes.resolve_for_request(request)
-            if resolution.mode is not Mode.semi_auto:
-                continue
-            if await self.dispatch.is_held(request):
-                # The evening hold window (B29): not offered until it elapses, and then
-                # immediately - the next sweep after `release_at` finds it ordinary.
-                continue
-            made = await self.offer(request)
-            if made:
-                offered += 1
-            else:
-                no_candidate += 1
-        return offered, no_candidate
+        return made
 
     async def offers(
         self,
@@ -548,18 +577,6 @@ class SemiAutoService:
         """
         del operator_id
         return True
-
-    async def _requests_with_live_offers(self, request_ids: set[uuid.UUID]) -> set[uuid.UUID]:
-        if not request_ids:
-            return set()
-        rows = (
-            await self.session.execute(
-                select(Suggestion.request_id)
-                .where(Suggestion.request_id.in_(request_ids))
-                .where(Suggestion.status == str(SuggestionStatus.offered))
-            )
-        ).scalars()
-        return set(rows)
 
     async def _open_suggestion(
         self, operator_id: uuid.UUID, suggestion_id: uuid.UUID

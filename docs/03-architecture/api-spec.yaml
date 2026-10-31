@@ -214,7 +214,7 @@ paths:
           description: Clients
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Client'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Client'}}}}
     post:
       tags: [admin]
       requestBody:
@@ -237,7 +237,7 @@ paths:
           description: Offices
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Office'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Office'}}}}
     post:
       tags: [admin]
       requestBody:
@@ -601,7 +601,7 @@ paths:
           description: Own trips
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Trip'}}}}
   /driver/trips/{trip_id}/start:
     parameters: [{$ref: '#/components/parameters/TripId'}]
     post:
@@ -673,7 +673,7 @@ paths:
           description: Requests
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/RideRequest'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/RideRequest'}}}}
   /dispatch/requests/{request_id}/candidates:
     parameters: [{$ref: '#/components/parameters/RequestId'}]
     get:
@@ -684,7 +684,7 @@ paths:
           description: Candidates, best first
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Candidate'}}}}
   /admin/mode-settings:
     get:
       tags: [admin]
@@ -794,7 +794,7 @@ paths:
           description: Suggestions, best first
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Candidate'}}}}
   /dispatch/assign:
     post:
       tags: [dispatch]
@@ -825,7 +825,7 @@ paths:
           description: Vehicles
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/VehicleLive'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/VehicleLive'}}}}
   /dispatch/trips:
     get:
       tags: [dispatch]
@@ -968,6 +968,25 @@ paths:
                 type: object
                 properties:
                   items: {type: array, items: {$ref: '#/components/schemas/Suggestion'}}
+  /dispatch/hints:
+    get:
+      tags: [dispatch]
+      summary: The optimizer's hints for requests in `manual` scopes (Phase 3)
+      description: >
+        One hint per queued request the latest batch could place, newest batch only. A
+        hint disappears when its request is assigned, cancelled or re-planned, and an
+        empty list means the optimizer has nothing to say, not that it is off. Requires
+        `request_queue_view` and a non-client-scoped caller, like `/dispatch/requests`.
+      responses:
+        '200':
+          description: Hints
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/RequestHint'}}
   /dispatch/suggestions/{suggestion_id}/decision:
     parameters: [{name: suggestion_id, in: path, required: true, schema: {type: string, format: uuid}}]
     post:
@@ -1022,7 +1041,7 @@ paths:
           description: Alerts
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Alert'}}}}
   /alerts/{alert_id}/{action}:
     parameters:
       - {name: alert_id, in: path, required: true, schema: {type: string, format: uuid}}
@@ -1440,6 +1459,42 @@ components:
         pooling_blocked: {type: boolean}
         mode_used: {type: string, enum: [manual, semi_auto, full_auto, failsafe]}
         stops: {type: array, items: {$ref: '#/components/schemas/TripStop'}}
+        riders:
+          type: array
+          description: >
+            Everyone on the trip, in stop order, with what pooling cost them (B32,
+            Phase 3). `added_minutes` is minutes spent in the cab beyond riding alone,
+            as of the last plan that touched this trip; `null` until a plan has
+            measured it (trips assigned before Phase 3).
+          items: {$ref: '#/components/schemas/TripRider'}
+    TripRider:
+      type: object
+      properties:
+        request_id: {type: string, format: uuid}
+        rider_first_name: {type: string}
+        added_minutes: {type: [number, 'null'], description: minutes beyond riding alone}
+    RequestHint:
+      type: object
+      description: >
+        What the optimizer would do with a queued request in a `manual` scope
+        (`allocation-rules.md` §6: in `manual` the proposed trips "are shown as hints
+        only"). Nothing has been assigned and nothing will be: acting on it is the
+        supervisor's call, through `/dispatch/assign`.
+      properties:
+        request_id: {type: string, format: uuid}
+        vehicle_id: {type: string, format: uuid}
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: the trip it would join, or null if it would open a new one
+        rider_order:
+          type: array
+          items: {type: string, format: uuid}
+          description: every request on the resulting trip, in stop order
+        pickup_eta_minutes: {type: number}
+        cost: {type: number, description: the plan's cost for this trip, minutes-equivalent}
+        reasons: {type: array, items: {type: string}}
+        created_at: {type: string, format: date-time}
     SuggestionDecisionResult:
       type: object
       properties:
