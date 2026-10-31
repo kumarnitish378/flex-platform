@@ -170,4 +170,17 @@ class _FakeAdminRepository implements AdminRepository {
 
   @override
   Future<List<api.Employee>> getEmployees(String clientId) async => <api.Employee>[];
+
+  @override
+  Future<api.OperationsReport?> getOperationsReport({
+    required DateTime from,
+    required DateTime to,
+    String? clientId,
+  }) async => null;
+
+  @override
+  Future<api.BillingExport?> getBillingExport({
+    required String month,
+    String? clientId,
+  }) async => null;
 }

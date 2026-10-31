@@ -143,8 +143,9 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   switch and never performs it automatically.
   Updated Admin Mode Settings screen A-06 (`lib/features/admin/mode_settings_screen.dart`) to allow selecting and saving `full_auto` mode. Updated Alerts List screen S-07 (`lib/features/supervisor/alerts_list_screen.dart`) to render `mode_prompt` alerts as prominent banners offering a manual switch button ("Switch to Manual") without automatic mode switching. Banners resolve and dismiss automatically when alert status is resolved. All unit and widget tests passing green (120 total tests) and `flutter analyze` clean.
 
-- [ ] **A19 · Reports and billing export** · deps B38, B39
+- [x] **A19 · Reports and billing export** · deps B38, B39
   Screens: A-07 · Done when: the admin can read each Phase 3 report and download the billing export.
+  Updated Operator Admin Reports screen A-07 (`lib/features/admin/reports_screen.dart`) to display distance/cab-km metrics ("not measured" when null, never 0 km), two suggestion acceptance rates (`acceptanceRate` and `acceptanceRateWithAlternatives`), and monthly billing CSV export CTA button (`getBillingExport`). Updated Client Admin Reports screen L-04 (`lib/features/client/client_reports_screen.dart`) to render billing treatment rules (`no_show_billable`, `late_cancel_billable`, `distance_basis`) above quantities table. All unit and widget tests passing green (122 total tests) and `flutter analyze` clean.
 
 ## Simulator
 

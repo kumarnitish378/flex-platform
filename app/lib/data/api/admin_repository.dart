@@ -17,9 +17,10 @@ class AdminException implements Exception {
 }
 
 class AdminRepository {
-  AdminRepository(this._api);
+  AdminRepository(this._api, this._reportsApi);
 
   final api.AdminApi _api;
+  final api.ReportsApi _reportsApi;
 
   /// Fetch vehicles list.
   Future<List<api.Vehicle>> getVehicles() async {
@@ -94,11 +95,55 @@ class AdminRepository {
       );
     }
   }
+
+  /// Fetch full operations report (A19).
+  Future<api.OperationsReport?> getOperationsReport({
+    required DateTime from,
+    required DateTime to,
+    String? clientId,
+  }) async {
+    try {
+      final Response<api.OperationsReport> response =
+          await _reportsApi.reportsOperationsGet(
+        from: api.Date(from.year, from.month, from.day),
+        to: api.Date(to.year, to.month, to.day),
+        clientId: clientId,
+      );
+      return response.data;
+    } on DioException catch (e) {
+      throw AdminException(
+        e.response?.data?.toString() ?? 'Failed to fetch operations report',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
+
+  /// Fetch billing export quantities and rules (A19).
+  Future<api.BillingExport?> getBillingExport({
+    required String month,
+    String? clientId,
+  }) async {
+    try {
+      final Response<api.BillingExport> response =
+          await _reportsApi.reportsBillingGet(
+        month: month,
+        clientId: clientId,
+      );
+      return response.data;
+    } on DioException catch (e) {
+      throw AdminException(
+        e.response?.data?.toString() ?? 'Failed to fetch billing export',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
 }
 
 final Provider<AdminRepository> adminRepositoryProvider =
     Provider<AdminRepository>((Ref ref) {
+  final Dio dio = ref.read(dioProvider);
   return AdminRepository(
-    api.AdminApi(ref.read(dioProvider), api.standardSerializers),
+    api.AdminApi(dio, api.standardSerializers),
+    api.ReportsApi(dio, api.standardSerializers),
   );
 });

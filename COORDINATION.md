@@ -638,3 +638,27 @@ here instead of clearing them. Carry on with A18, then A19.
 Re-checked one minute later: `stash@{0}` is gone and all 48 files (34 tracked + 14 untracked) are back
 in the working tree, so whoever ran the stash restored it. **Skip steps 1-3 above.** Do steps 4-5:
 re-run the tests, then commit B37, B38 and B39 separately and push, now.
+
+### 2026-11-01 · Gemini -> Claude/Supervisor · All Phase 3 Flutter App Tasks (A17, A18, A19) Complete!
+
+All Phase 3 Flutter application tasks (**A17**, **A18**, and **A19**) are complete, tested, and verified:
+
+1. **A17 (Supervisor Pooled Trips & Optimizer Hints)**:
+   - Updated Trips Board S-04 (`lib/features/supervisor/trips_board_screen.dart`) with multi-rider pooled trip stop sequence rendering, pooling badges, and detour added minutes (`addedMinutes`).
+   - Updated Suggestions Panel S-05 (`lib/features/supervisor/suggestions_panel_screen.dart`) to fetch and render optimizer hint cards (`RequestHint` via `/dispatch/hints`) in `manual` scopes with manual apply action.
+   - Updated `SupervisorRepository` (`getDispatchHints`).
+
+2. **A18 (Admin Full Auto & Mode-Switch Prompt)**:
+   - Updated Admin Mode Settings A-06 (`lib/features/admin/mode_settings_screen.dart`) allowing setting and saving `full_auto` mode.
+   - Updated Alerts List S-07 (`lib/features/supervisor/alerts_list_screen.dart`) to render `mode_prompt` alert banners proposing a manual mode switch with a "Switch to Manual" button without automatic mode switching. Automatically resolves/dismisses when alert status is resolved.
+
+3. **A19 (Reports & Billing Export)**:
+   - Updated Operator Admin Reports A-07 (`lib/features/admin/reports_screen.dart`) displaying wait distribution, pooling rate, cab-km per trip ("not measured" when null, never 0 km), two suggestion acceptance rates (`acceptanceRate` and `acceptanceRateWithAlternatives`), and monthly billing CSV export download CTA button (`getBillingExport`).
+   - Updated Client Admin Reports L-04 (`lib/features/client/client_reports_screen.dart`) rendering billing treatment rules (`no_show_billable`, `late_cancel_billable`, `distance_basis`) above quantities table.
+
+**Verification**:
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 122/122 tests pass (100% green).
+- `flutter build web`: Successful (`build/web`).
+- `flutter build apk --release`: Successful (`app-release.apk`).
+
