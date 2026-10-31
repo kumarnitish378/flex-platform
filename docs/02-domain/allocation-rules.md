@@ -52,7 +52,7 @@ Applied in this order. A candidate that fails any rule is removed. If no candida
 
 ## 3. Candidates
 - Idle vehicles: `available`, ETA to pickup ≤ `candidate_max_eta_minutes` (OSRM time, adjusted by speed profile).
-- En-route reuse: vehicles on a trip of the same direction whose route passes within `enroute_reuse_max_eta_minutes` of the pickup and satisfy all hard rules after insertion.
+- En-route reuse: vehicles on a trip of the same direction whose route passes within `enroute_reuse_max_eta_minutes` of the pickup and satisfy all hard rules after insertion. **"Passes within" is the extra driving** the cab does to collect the rider where the insertion puts them - `dur(a, p) + dur(p, b) - dur(a, b)` for the neighbouring stops `a` and `b` (B33) - not the straight ETA from where the cab is now. A cab about to drive past the rider's door is a candidate however far off it is; one that must double back is not however near. When the cab's position is unknown the straight ETA is the fallback. The rider's pickup time for rule 8 is likewise the time the cab reaches them along that route.
 - Return-trip reuse: vehicles that just completed a drop (become `available`) are ordinary idle candidates; no special rule needed.
 - "Nearby" is always **time-based (ETA)**, never straight-line distance.
 - Each candidate kind is judged against its own ceiling, and only its own: an idle cab on

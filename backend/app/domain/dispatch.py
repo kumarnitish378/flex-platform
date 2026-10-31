@@ -122,6 +122,16 @@ class Insertion:
     position: int
     #: Extra minutes each *existing* rider now spends in the cab. Never negative.
     added_minutes: dict[uuid.UUID, float]
+    #: Extra driving, in seconds, the cab does to collect the newcomer **where this
+    #: insertion puts them** (B33): how far off its route the rider really is. `None` when
+    #: the caller did not say where the cab is, in which case the en-route ceiling falls back
+    #: to the straight ETA from its position, which is Phase 1's behaviour.
+    slot_detour_seconds: float | None = None
+    #: Seconds from now until the cab reaches the newcomer **along this insertion's route**
+    #: (B33), so rule 8's window is judged against when they would really be collected and
+    #: not against the straight ETA from where the cab happens to be. `None` without an
+    #: origin.
+    pickup_arrival_seconds: float | None = None
 
     @property
     def worst_added_minutes(self) -> float:
@@ -187,12 +197,26 @@ def build_plan(
     return Plan(tuple(riders), tuple(stops), ride, elapsed)
 
 
+def slot_detour_seconds(duration: Duration, before: Place, pickup: Place, after: Place) -> float:
+    """Extra driving to call at `pickup` between `before` and `after` (B33).
+
+    `dur(before, pickup) + dur(pickup, after) - dur(before, after)`: zero for a rider
+    exactly on the way, about twice the distance for one the cab must double back for.
+    This, not the straight ETA from where the cab is now, is what "the cab's route passes
+    within `enroute_reuse_max_eta_minutes` of the rider" means (`allocation-rules.md` §3):
+    a cab five minutes from a rider but pointed the other way has a large detour, and one
+    twenty minutes away that is about to drive past their door has none.
+    """
+    return max(duration(before, pickup) + duration(pickup, after) - duration(before, after), 0.0)
+
+
 def best_insertion(
     direction: Direction,
     office: Place,
     existing: Sequence[Rider],
     newcomer: Rider,
     duration: Duration,
+    origin: Place | None = None,
 ) -> Insertion:
     """Insert `newcomer` where it adds the least time for the riders already on board.
 
@@ -215,13 +239,54 @@ def best_insertion(
             )
             for rider in existing
         }
-        candidate = Insertion(plan, position, added)
+        detour = arrival = None
+        if origin is not None:
+            detour = _slot_detour(direction, office, existing, newcomer, position, duration, origin)
+            arrival = _slot_arrival(
+                direction, office, existing, newcomer, position, duration, origin
+            )
+        candidate = Insertion(plan, position, added, detour, arrival)
         if best is None or _insertion_key(candidate) < _insertion_key(best):
             best = candidate
 
     # range(len+1) always yields position 0, so a best always exists.
     assert best is not None
     return best
+
+
+def _slot_detour(
+    direction: Direction,
+    office: Place,
+    existing: Sequence[Rider],
+    newcomer: Rider,
+    position: int,
+    duration: Duration,
+    origin: Place,
+) -> float:
+    """The detour for the newcomer's pickup at this position in the rider order."""
+    if direction is Direction.from_office:
+        # Every pickup is the office, which the cab is already going to.
+        return 0.0
+    stops = [origin, *[rider.pickup_place(direction, office) for rider in existing], office]
+    pickup = newcomer.pickup_place(direction, office)
+    return slot_detour_seconds(duration, stops[position], pickup, stops[position + 1])
+
+
+def _slot_arrival(
+    direction: Direction,
+    office: Place,
+    existing: Sequence[Rider],
+    newcomer: Rider,
+    position: int,
+    duration: Duration,
+    origin: Place,
+) -> float:
+    """Seconds until the cab reaches the newcomer's pickup if they take this position."""
+    if direction is Direction.from_office:
+        return duration(origin, office)
+    stops = [origin, *[rider.pickup_place(direction, office) for rider in existing]]
+    elapsed = sum(duration(stops[i], stops[i + 1]) for i in range(position))
+    return elapsed + duration(stops[position], newcomer.pickup_place(direction, office))
 
 
 def _insertion_key(insertion: Insertion) -> tuple[float, float]:
@@ -366,11 +431,20 @@ def check_hard_rules(
     # describes them: an idle cab is judged on how long it takes to arrive, an en-route
     # one on whether it is really passing by. Flagging both at once would say the same
     # thing twice and tell the supervisor nothing extra.
+    #
+    # "Passing by" is route-aware (B33): the extra driving the cab does to collect this
+    # rider where the insertion puts them, when the caller could say where the cab is.
     if facts.trip_direction is None:
         if facts.eta_to_pickup_seconds > facts.candidate_max_eta_minutes * 60:
             violations.append(Violation.eta_over_candidate_limit)
-    elif facts.eta_to_pickup_seconds > facts.enroute_reuse_max_eta_minutes * 60:
-        violations.append(Violation.enroute_reuse_eta_exceeded)
+    else:
+        proximity = (
+            insertion.slot_detour_seconds
+            if insertion is not None and insertion.slot_detour_seconds is not None
+            else facts.eta_to_pickup_seconds
+        )
+        if proximity > facts.enroute_reuse_max_eta_minutes * 60:
+            violations.append(Violation.enroute_reuse_eta_exceeded)
 
     return violations
 

@@ -50,13 +50,13 @@ from app.domain.optimizer.model import Placement, Plan, Problem, Req, Unplaced, 
 from app.domain.optimizer.route import (
     Person,
     baseline_rides,
+    best_slot_detour_seconds,
     check_route,
     direct_seconds,
     excess_minutes,
     new_person,
     price_route,
     refusal_for,
-    route_proximity_seconds,
     seated_people,
 )
 
@@ -529,7 +529,7 @@ def _ceiling_refusal(
         if approach > req.candidate_max_eta_minutes * 60:
             return "eta_over_candidate_limit"
         return None
-    proximity = route_proximity_seconds(
+    proximity = best_slot_detour_seconds(
         problem, veh, direction, office, seated_people(veh.trip.riders), new_person(req)
     )
     if proximity > problem.params.enroute_reuse_max_eta_minutes * 60:

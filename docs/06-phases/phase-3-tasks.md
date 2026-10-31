@@ -73,7 +73,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   locked request and a `pooling_blocked` trip come out of all three untouched; applying is a sequence of
   state-machine transitions and every one is logged with actor `optimizer`.
 
-- [ ] **B33 · En-route reuse as a real candidate** · deps B31
+- [x] **B33 · En-route reuse as a real candidate** · deps B31
   Docs: allocation-rules.md §3
   Do: §3's second bullet — a cab already on a trip of the same direction whose route passes within
   `enroute_reuse_max_eta_minutes` of the pickup. Phase 1 computes the ETA and the ceiling; what is missing

@@ -34,6 +34,7 @@ from app.domain.dispatch import (
     Rider,
     Violation,
     check_hard_rules,
+    slot_detour_seconds,
 )
 from app.domain.dispatch import Plan as StopPlan
 from app.domain.enums import Direction, Urgency
@@ -188,7 +189,7 @@ def evaluate_route(
     return RouteEval(tuple(order), pickup_arrival, ride, approach, approach_m, elapsed)
 
 
-def route_proximity_seconds(
+def best_slot_detour_seconds(
     problem: Problem,
     veh: Veh,
     direction: Direction,
@@ -196,7 +197,11 @@ def route_proximity_seconds(
     existing: Sequence[Person],
     newcomer: Person,
 ) -> float:
-    """How far off its route the cab must go to collect this rider (B33).
+    """The least extra driving any slot in the cab's route offers for this rider (B33).
+
+    An optimistic bound, used to rule a cab out before searching: if even the best slot
+    is further off the route than the ceiling allows, no order will do. The exact figure
+    for the slot an order really uses is `slot_detour_for_order`.
 
     `allocation-rules.md` §3: an en-route cab is a candidate if its **route** passes within
     `enroute_reuse_max_eta_minutes` of the pickup. The Phase 1 number was the straight ETA
@@ -220,10 +225,38 @@ def route_proximity_seconds(
     stops.append(office)
     best = float("inf")
     for index in range(len(stops) - 1):
-        a, b = stops[index], stops[index + 1]
-        extra = problem.duration(a, pickup) + problem.duration(pickup, b) - problem.duration(a, b)
-        best = min(best, max(extra, 0.0))
+        best = min(
+            best, slot_detour_seconds(problem.duration, stops[index], pickup, stops[index + 1])
+        )
     return best
+
+
+def slot_detour_for_order(
+    problem: Problem,
+    veh: Veh,
+    direction: Direction,
+    office: Place,
+    order: Sequence[Person],
+    newcomer: Person,
+) -> float:
+    """Extra driving to collect `newcomer` at the place this `order` gives them (B33)."""
+    if direction is Direction.from_office:
+        return 0.0
+    stops = [veh.position]
+    index = 0
+    for person in order:
+        if person.request_id == newcomer.request_id:
+            index = len(stops) - 1
+            continue
+        if not person.picked_up:
+            stops.append(person.rider.pickup_place(direction, office))
+    stops.append(office)
+    return slot_detour_seconds(
+        problem.duration,
+        stops[index],
+        newcomer.rider.pickup_place(direction, office),
+        stops[index + 1],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,10 +308,7 @@ def check_route(
         if trip is None:
             eta_for_ceiling = route.approach_seconds
         else:
-            existing = [other for other in order if other.request_id != req.request_id]
-            eta_for_ceiling = route_proximity_seconds(
-                problem, veh, direction, office, existing, person
-            )
+            eta_for_ceiling = slot_detour_for_order(problem, veh, direction, office, order, person)
         facts = AssignmentFacts(
             vehicle_id=veh.vehicle_id,
             vehicle_status=veh.status,

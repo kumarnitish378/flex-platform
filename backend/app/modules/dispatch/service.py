@@ -456,7 +456,9 @@ class DispatchService:
             on_board = loads.get(trip.id, []) if trip else []
             insertion = None
             if trip is not None and on_board:
-                insertion = await self._insertion_for(trip, on_board, request, office)
+                insertion = await self._insertion_for(
+                    trip, on_board, request, office, positions[vehicle.id].place
+                )
 
             facts = await self._facts(
                 request=request,
@@ -470,6 +472,7 @@ class DispatchService:
                 now=now,
                 policy=policy,
                 timezone=timezone,
+                insertion=insertion,
             )
             inputs = await self._detour_inputs(operator_id, request, on_board, office)
             candidates.append(
@@ -691,7 +694,9 @@ class DispatchService:
             eta_seconds = plan.pickup_eta_seconds[request.id]
 
         insertion = (
-            await self._insertion_for(trip, on_board, request, office)
+            await self._insertion_for(
+                trip, on_board, request, office, position.place if position else None
+            )
             if trip is not None and on_board and plan is None
             else None
         )
@@ -709,6 +714,7 @@ class DispatchService:
                 request.client_id
             ],
             timezone=await self.operator_timezone(operator_id),
+            insertion=insertion,
         )
         inputs = await self._detour_inputs(operator_id, request, on_board, office)
         violations = (
@@ -1067,7 +1073,12 @@ class DispatchService:
         return by_trip.get(trip.id, [])
 
     async def _insertion_for(
-        self, trip: Trip, on_board: list[Rider], request: RideRequest, office: Office
+        self,
+        trip: Trip,
+        on_board: list[Rider],
+        request: RideRequest,
+        office: Office,
+        origin: Place | None = None,
     ) -> Insertion:
         """Where the new rider fits, and what it costs the others.
 
@@ -1081,6 +1092,9 @@ class DispatchService:
             [rider.place for rider in riders]
             + [rider.pickup for rider in riders if rider.pickup is not None]
             + [office_place]
+            # The cab itself, so the route-aware en-route ceiling can be judged from the
+            # same single matrix call (B33) instead of costing a second one.
+            + ([origin] if origin is not None else [])
         )
         duration = await self._duration_table(places)
         return best_insertion(
@@ -1089,6 +1103,7 @@ class DispatchService:
             on_board,
             newcomer,
             duration,
+            origin,
         )
 
     async def _duration_table(self, places: list[Place]) -> Duration:
@@ -1119,11 +1134,20 @@ class DispatchService:
         now: datetime,
         policy: EffectivePolicy | None = None,
         timezone: str = "UTC",
+        insertion: Insertion | None = None,
     ) -> AssignmentFacts:
         # A client with no policy gets the operator's numbers, which is every client
         # today; resolving here keeps the callers that have not loaded one working.
         effective = policy or resolve_policy(settings)
-        pickup_at = pickup_time(now, eta_seconds)
+        # When the rider would really be collected: along the insertion's route if there
+        # is one (B33), otherwise straight from the cab. Rule 8 is about that moment, not
+        # about how far away the cab is now.
+        arrival = (
+            insertion.pickup_arrival_seconds
+            if insertion is not None and insertion.pickup_arrival_seconds is not None
+            else eta_seconds
+        )
+        pickup_at = pickup_time(now, arrival)
         return AssignmentFacts(
             vehicle_id=vehicle.id,
             vehicle_status=vehicle.status,
