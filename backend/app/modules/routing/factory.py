@@ -27,6 +27,7 @@ from app.modules.routing.rate_limit import (
     RedisRateLimiter,
     UnlimitedRateLimiter,
 )
+from app.modules.routing.service import EtaService
 from app.modules.routing.types import GeocodingProvider, RoutingProvider
 
 logger = get_logger(__name__)
@@ -73,6 +74,25 @@ def build_routing_provider(
     return MeteredRoutingProvider(
         CachedRoutingProvider(osrm, redis, ttl_seconds=settings.routing_cache_ttl_seconds)
     )
+
+
+def build_bulk_eta_service(
+    settings: Settings, clock: Clock, redis: RedisLike | None = None
+) -> EtaService:
+    """An ETA service for callers that ask for **matrices** - the optimizer.
+
+    CLAUDE.md hard rule 7: "Bulk callers (simulator, optimizer) always use `approx`" against
+    the public OSRM, whose shared budget is one request a second and which is not for
+    batch traffic. Against our own OSRM there is no such limit, so the configured provider
+    is used and the optimizer gets real road times.
+    """
+    if (
+        settings.routing_provider is not RoutingProviderName.approx
+        and host_of(settings.osrm_url) in PUBLIC_OSM_HOSTS
+    ):
+        approx = ApproxRoutingProvider(clock, ApproxConfig())
+        return EtaService(MeteredRoutingProvider(approx), clock)
+    return EtaService(build_routing_provider(settings, clock, redis), clock)
 
 
 def build_geocoding_provider(settings: Settings) -> GeocodingProvider:

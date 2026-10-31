@@ -48,7 +48,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   each of the four exemptions is tested separately; `forced_priority` short-circuits the window, which is
   what §3.1 already promised and Phase 1 could not deliver.
 
-- [ ] **B30 · Micro-batching** · deps B29
+- [x] **B30 · Micro-batching** · deps B29
   Docs: allocation-rules.md §6 first bullet
   Do: collect assignable requests for `batch_window_seconds` and hand them to the optimizer together,
   rather than one at a time. Driven by the Clock, so the simulator's jump produces the same batches.

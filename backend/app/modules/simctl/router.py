@@ -25,6 +25,7 @@ from app.domain.errors import Conflict, ValidationFailed
 from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
 from app.modules.dispatch.eta_refresh import EtaRefresher
+from app.modules.dispatch.optimizer_service import OptimizerService
 from app.modules.dispatch.semi_auto import SemiAutoService
 from app.modules.dispatch.service import DispatchService
 from app.modules.requests.service import RideRequestService
@@ -106,6 +107,11 @@ async def set_clock(
     semi_auto = await SemiAutoService(
         session, fake, DispatchService(session, fake, request.app.state.eta)
     ).run_due_semi_auto()
+    # The batch optimizer is due work as well: a window that closed during the jump must
+    # have been solved before the PUT returns (B30), or a scenario would race it.
+    await OptimizerService(
+        session, fake, DispatchService(session, fake, request.app.state.eta)
+    ).run_due_batches()
     return SimClockState(
         now=fake.now(),
         expired=sweep.expired,

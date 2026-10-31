@@ -36,6 +36,7 @@ DUE_WORK: dict[str, str] = {
     "refresh_due": "smart_cab.refresh_stop_etas",
     "sweep_stale_vehicles": "smart_cab.sweep_stale_vehicles",
     "run_due_semi_auto": "smart_cab.run_semi_auto",
+    "run_due_batches": "smart_cab.run_optimizer",
 }
 
 

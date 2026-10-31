@@ -27,6 +27,7 @@ from app.modules.alerts.models import Alert
 from app.modules.auth.models import AppUser, Device, OtpChallenge, RefreshToken, UserRole
 from app.modules.config.models import OperatorConfig, OperatorConfigHistory
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.dispatch.optimizer_models import OptimizerRun
 from app.modules.dispatch.override_models import OverrideLog
 from app.modules.dispatch.suggestion_models import Suggestion
 from app.modules.fleet.duty_models import DutySession
@@ -97,6 +98,8 @@ TRUNCATION_ORDER = (
     RideRequestEvent,
     # Before the request and the vehicle it names (B25).
     Suggestion,
+    # Names requests only in JSON, so it has no foreign key to order around (B30).
+    OptimizerRun,
     RideRequest,
     SavedPlace,
     Employee,

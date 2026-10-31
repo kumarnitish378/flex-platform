@@ -946,6 +946,10 @@ class DispatchService:
             for row in rows
         }
 
+    async def live_trips(self, operator_id: uuid.UUID) -> dict[uuid.UUID, Trip]:
+        """The open trip per vehicle, if any."""
+        return await self._live_trips(operator_id)
+
     async def _live_trips(self, operator_id: uuid.UUID) -> dict[uuid.UUID, Trip]:
         """The open trip per vehicle, if any."""
         trips = (
@@ -1391,3 +1395,9 @@ def _unique_places(places: list[Place]) -> list[Place]:
     for place in places:
         seen.setdefault(place, None)
     return list(seen)
+
+
+#: Public names for the helpers the optimizer's loader shares with this service, so it
+#: does not reach for underscore-prefixed functions across a module boundary.
+rider_of = _rider_of
+haversine_seconds = _haversine_seconds

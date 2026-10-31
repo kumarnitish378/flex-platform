@@ -55,6 +55,10 @@ STALE_VEHICLE_INTERVAL_SECONDS = 30
 #: so 15 is a twelfth of the shortest thing that depends on it.
 SEMI_AUTO_INTERVAL_SECONDS = 15
 
+#: The batch optimizer every 10 seconds, which is `batch_window_seconds`' own minimum: a
+#: window can be as short as 10 s, and a beat coarser than the window would stretch it.
+OPTIMIZER_INTERVAL_SECONDS = 10
+
 
 def create_celery(settings: Settings | None = None) -> Celery:
     """The Celery app. Broker and result backend are the Redis we already run."""
@@ -79,6 +83,10 @@ def create_celery(settings: Settings | None = None) -> Celery:
             "sweep-stale-vehicles": {
                 "task": "smart_cab.sweep_stale_vehicles",
                 "schedule": float(STALE_VEHICLE_INTERVAL_SECONDS),
+            },
+            "run-optimizer": {
+                "task": "smart_cab.run_optimizer",
+                "schedule": float(OPTIMIZER_INTERVAL_SECONDS),
             },
             "run-semi-auto": {
                 "task": "smart_cab.run_semi_auto",
@@ -161,6 +169,34 @@ async def _run_semi_auto() -> dict[str, int]:
     }
 
 
+async def _run_optimizer() -> dict[str, int]:
+    from app.modules.dispatch.optimizer_service import OptimizerService
+    from app.modules.dispatch.service import DispatchService
+    from app.modules.routing import build_bulk_eta_service
+
+    settings = get_settings()
+    clock = SystemClock()
+    redis = create_redis(settings)
+    try:
+        # A bulk caller: it asks for one big matrix, which the public OSRM must never be
+        # given (CLAUDE.md hard rule 7), so this is the `approx` provider there.
+        eta = build_bulk_eta_service(settings, clock, redis)
+        async with _session_factory(settings)() as session:
+            sweep = await OptimizerService(
+                session, clock, DispatchService(session, clock, eta)
+            ).run_due_batches()
+            await session.commit()
+    finally:
+        await redis.aclose()
+    return {
+        "runs": sweep.runs,
+        "requests": sweep.requests,
+        "placed": sweep.placed,
+        "applied": sweep.applied,
+        "failed": sweep.failed,
+    }
+
+
 async def _sweep_stale_vehicles() -> dict[str, int]:
     from app.modules.alerts.service import AlertService
 
@@ -220,6 +256,12 @@ def expire_requests() -> dict[str, int]:
 def refresh_stop_etas() -> dict[str, int]:
     """Keep the ETA a rider is watching honest (B15)."""
     return _run("stop_etas", _refresh_stop_etas)
+
+
+@celery_app.task(name="smart_cab.run_optimizer")
+def run_optimizer() -> dict[str, int]:
+    """Solve the requests whose batch window has closed together (B30)."""
+    return _run("optimizer", _run_optimizer)
 
 
 @celery_app.task(name="smart_cab.run_semi_auto")

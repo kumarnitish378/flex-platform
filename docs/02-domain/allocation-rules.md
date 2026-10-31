@@ -19,6 +19,7 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `retry_eta_widen_minutes` | 10 | 0–30 | no | Each escalation widens `candidate_max_eta_minutes` for that request by this. |
 | `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
+| `optimizer_time_limit_seconds` | 10 | 1–60 | no | Hard cap on one DARP run. No solution within it falls back to single-insertion greedy. |
 | `failsafe_timeout_seconds` | 180 | 30–900 | no | Semi-auto suggestion timeout. |
 | `failsafe_action` | `auto_assign` | `auto_assign` / `escalate` | no | What happens on timeout. |
 | `alert_wait_minutes` | 20 | 5–60 | no | A waiting request has waited too long: the board turns it red **and escalation starts** (ADR-0023). |
@@ -109,7 +110,7 @@ Examples: priority 1 + high = 3.0 · priority 5 + medium = 0.9 · priority 10 + 
 Each suggestion lists: ETA to pickup, seats free after assignment, added minutes per existing rider, empty km added, whether it opens a new trip, and cost. Shown as plain text, e.g. "8 min away · 2 seats left · +4 min for Rahul · reuses trip T-102".
 
 ## 6. Pooling optimizer (Phase 3)
-- Runs every `batch_window_seconds` for each operator on all `queued` requests whose hold window has elapsed or which are no-hold, plus modifiable (`planned`/`dispatched`, not locked) trips.
+- Runs when a batch window closes (B30): the window opens when the oldest ready request became ready and lasts `batch_window_seconds`, with at least one window between runs. Each run covers, for the operator, all `queued` requests whose hold window has elapsed or which are no-hold, plus modifiable (`planned`/`dispatched`, not locked) trips.
 - Model: Pickup-and-Delivery Problem with Time Windows and capacities (Dial-a-Ride), solved with **Google OR-Tools routing** using OSRM time matrices.
 - Objective matches the cost function; hard rules become constraints (capacity, time windows, max ride time per rider, vehicle types, exclusivity).
 - Time limit per run: 10 s (config `optimizer_time_limit_seconds`). If no solution, fall back to single-insertion greedy using §4.
