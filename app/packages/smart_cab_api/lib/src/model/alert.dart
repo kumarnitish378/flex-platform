@@ -21,7 +21,7 @@ part 'alert.g.dart';
 /// * [requestId] 
 /// * [tripId] 
 /// * [vehicleId] 
-/// * [data] 
+/// * [data] - Type-specific detail. For `mode_prompt` (B35, `control-model.md` §5): `setting_id` (the mode setting - the scope - being suggested for), `mode` (what it is on now), `suggest` (always `manual`), `window_minutes`, and `conditions`: `[{condition, observed, threshold, samples}]` with `condition` one of `suggestions_rejected`, `eta_error`, `pending_surge`, `fleet_degraded`.  **A prompt is a suggestion and nothing more.** The platform never changes a mode by itself; the app offers a button that calls the ordinary `PUT /admin/mode-settings/{setting_id}`. The alert resolves itself, with no acknowledgement, once the conditions clear. 
 @BuiltValue()
 abstract class Alert implements Built<Alert, AlertBuilder> {
   @BuiltValueField(wireName: r'id')
@@ -51,6 +51,7 @@ abstract class Alert implements Built<Alert, AlertBuilder> {
   @BuiltValueField(wireName: r'vehicle_id')
   String? get vehicleId;
 
+  /// Type-specific detail. For `mode_prompt` (B35, `control-model.md` §5): `setting_id` (the mode setting - the scope - being suggested for), `mode` (what it is on now), `suggest` (always `manual`), `window_minutes`, and `conditions`: `[{condition, observed, threshold, samples}]` with `condition` one of `suggestions_rejected`, `eta_error`, `pending_surge`, `fleet_degraded`.  **A prompt is a suggestion and nothing more.** The platform never changes a mode by itself; the app offers a button that calls the ordinary `PUT /admin/mode-settings/{setting_id}`. The alert resolves itself, with no acknowledgement, once the conditions clear. 
   @BuiltValueField(wireName: r'data')
   BuiltMap<String, JsonObject?>? get data;
 

@@ -19,6 +19,7 @@ part 'trip_report.g.dart';
 /// * [p90WaitMinutes] 
 /// * [noShows] 
 /// * [cancellations] 
+/// * [assignmentsByActor] - How many requests each kind of actor assigned (`supervisor`, `system_failsafe`, `optimizer`), from each request's own event log (B34). Whether `full_auto` is doing the work is a number here, not an inference. Each row also carries `assigned_by`. 
 /// * [rows] 
 @BuiltValue()
 abstract class TripReport implements Built<TripReport, TripReportBuilder> {
@@ -39,6 +40,10 @@ abstract class TripReport implements Built<TripReport, TripReportBuilder> {
 
   @BuiltValueField(wireName: r'cancellations')
   int? get cancellations;
+
+  /// How many requests each kind of actor assigned (`supervisor`, `system_failsafe`, `optimizer`), from each request's own event log (B34). Whether `full_auto` is doing the work is a number here, not an inference. Each row also carries `assigned_by`. 
+  @BuiltValueField(wireName: r'assignments_by_actor')
+  BuiltMap<String, int>? get assignmentsByActor;
 
   @BuiltValueField(wireName: r'rows')
   BuiltList<BuiltMap<String, JsonObject?>>? get rows;
@@ -106,6 +111,13 @@ class _$TripReportSerializer implements PrimitiveSerializer<TripReport> {
       yield serializers.serialize(
         object.cancellations,
         specifiedType: const FullType(int),
+      );
+    }
+    if (object.assignmentsByActor != null) {
+      yield r'assignments_by_actor';
+      yield serializers.serialize(
+        object.assignmentsByActor,
+        specifiedType: const FullType(BuiltMap, [FullType(String), FullType(int)]),
       );
     }
     if (object.rows != null) {
@@ -179,6 +191,13 @@ class _$TripReportSerializer implements PrimitiveSerializer<TripReport> {
             specifiedType: const FullType(int),
           ) as int;
           result.cancellations = valueDes;
+          break;
+        case r'assignments_by_actor':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltMap, [FullType(String), FullType(int)]),
+          ) as BuiltMap<String, int>;
+          result.assignmentsByActor.replace(valueDes);
           break;
         case r'rows':
           final valueDes = serializers.deserialize(

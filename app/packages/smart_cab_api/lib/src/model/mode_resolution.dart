@@ -13,7 +13,7 @@ part 'mode_resolution.g.dart';
 ///
 /// Properties:
 /// * [mode] 
-/// * [reason] - which level of control-model.md section 2 decided it
+/// * [reason] - which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
 /// * [settingId] - null for the pause, the VIP rule and the operator default
 @BuiltValue()
 abstract class ModeResolution implements Built<ModeResolution, ModeResolutionBuilder> {
@@ -21,10 +21,10 @@ abstract class ModeResolution implements Built<ModeResolution, ModeResolutionBui
   ModeResolutionModeEnum? get mode;
   // enum modeEnum {  manual,  semi_auto,  full_auto,  };
 
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueField(wireName: r'reason')
   ModeResolutionReasonEnum? get reason;
-  // enum reasonEnum {  automation_paused,  vip,  client_zone_time,  client_time,  zone_time,  client_zone,  client,  zone,  operator_default,  };
+  // enum reasonEnum {  automation_paused,  optimizer_down,  vip,  client_zone_time,  client_time,  zone_time,  client_zone,  client,  zone,  operator_default,  };
 
   /// null for the pause, the VIP rule and the operator default
   @BuiltValueField(wireName: r'setting_id')
@@ -167,31 +167,34 @@ class ModeResolutionModeEnum extends EnumClass {
 
 class ModeResolutionReasonEnum extends EnumClass {
 
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'automation_paused')
   static const ModeResolutionReasonEnum automationPaused = _$modeResolutionReasonEnum_automationPaused;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
+  @BuiltValueEnumConst(wireName: r'optimizer_down')
+  static const ModeResolutionReasonEnum optimizerDown = _$modeResolutionReasonEnum_optimizerDown;
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'vip')
   static const ModeResolutionReasonEnum vip = _$modeResolutionReasonEnum_vip;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'client_zone_time')
   static const ModeResolutionReasonEnum clientZoneTime = _$modeResolutionReasonEnum_clientZoneTime;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'client_time')
   static const ModeResolutionReasonEnum clientTime = _$modeResolutionReasonEnum_clientTime;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'zone_time')
   static const ModeResolutionReasonEnum zoneTime = _$modeResolutionReasonEnum_zoneTime;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'client_zone')
   static const ModeResolutionReasonEnum clientZone = _$modeResolutionReasonEnum_clientZone;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'client')
   static const ModeResolutionReasonEnum client = _$modeResolutionReasonEnum_client;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'zone')
   static const ModeResolutionReasonEnum zone = _$modeResolutionReasonEnum_zone;
-  /// which level of control-model.md section 2 decided it
+  /// which level of control-model.md section 2 decided it. `optimizer_down` (B36) is not a level: it means the scope is configured for automation but the optimizer is unavailable, so the request is being served as `manual`. 
   @BuiltValueEnumConst(wireName: r'operator_default')
   static const ModeResolutionReasonEnum operatorDefault = _$modeResolutionReasonEnum_operatorDefault;
 

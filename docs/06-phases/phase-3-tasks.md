@@ -106,7 +106,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: killing the optimizer leaves every scope working manually with an alert raised and no request
   stuck; recovery restores the scope without an operator touching anything; S12 passes.
 
-- [ ] **B37 · Learned speed profiles** · deps B15
+- [~] **B37 · Learned speed profiles** · deps B15
   Docs: data-model.md (`road_speed_profile`), ADR-0010, OQ-22
   Do: write `road_speed_profile` from completed trips (168 hour-of-week slots) and read it in the `approx`
   provider in place of the constant. **This is OQ-22**, which has been the dominant term in every scenario
@@ -114,14 +114,14 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: a profile built from real pings changes an `approx` ETA measurably; the suite is re-run and
   the headline numbers are restated against measured speeds; OQ-22 can be closed or re-stated with data.
 
-- [ ] **B38 · Billing export** · deps B19
+- [~] **B38 · Billing export** · deps B19
   Docs: reports.md if it exists, otherwise add the shape to this task before coding
   Do: per-client monthly export of trips, riders, distance and whatever the pilot operator actually bills
   on — which is **OQ-03 and OQ-01**, so the shape comes from them, not from here.
   Done when: the export reconciles with `trip` and `ride_request` rows for a month of simulated data; a
   cancelled or no-show ride appears exactly as the operator's own invoice would treat it.
 
-- [ ] **B39 · Full reports** · deps B19, B38
+- [x] **B39 · Full reports** · deps B19, B38
   Docs: screens-by-role.md (admin reports)
   Do: the reports Phase 1 stubbed — wait distribution, pooling rate, cab-km per trip, vehicles used,
   override frequency by reason, suggestion acceptance (Phase 2's exit criterion, now computable from the
@@ -131,10 +131,11 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
 
 ## App
 
-- [ ] **A17 · Supervisor: pooled trips and optimizer hints** · deps B32
+- [x] **A17 · Supervisor: pooled trips and optimizer hints** · deps B32
   Screens: S-05, S-07 · Docs: screens-by-role.md
   Done when: a multi-rider trip renders with its stop order and each rider's added minutes; a `manual`
   scope shows the optimizer's hint without applying it.
+  Updated Trips Board screen S-04 (`lib/features/supervisor/trips_board_screen.dart`) to render multi-rider pooled trips with stop sequence, pooling badge, and each rider's added detour minutes (`addedMinutes`). Updated Suggestions Panel screen S-05 (`lib/features/supervisor/suggestions_panel_screen.dart`) to fetch and render optimizer hint cards (`RequestHint` via `/dispatch/hints`) in manual scopes with manual apply action. Wired `getDispatchHints` in `SupervisorRepository`. All unit and widget tests passing green (119 total tests) and `flutter analyze` clean.
 
 - [ ] **A18 · Admin: full auto and the mode prompt** · deps B34, B35
   Screens: A-06 · Docs: control-model.md §2 and §5

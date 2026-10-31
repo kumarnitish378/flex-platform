@@ -8,8 +8,8 @@ import '../../data/api/supervisor_repository.dart';
 
 /// Supervisor suggestions & overrides panel (S-05).
 ///
-/// Displays top scored suggestions with reasons, failsafe countdown, and one-tap
-/// approval or override/reject decision actions.
+/// Displays top scored suggestions with reasons, failsafe countdown, optimizer hints for manual scopes,
+/// and one-tap approval or override/reject decision actions.
 class SuggestionsPanelScreen extends ConsumerStatefulWidget {
   const SuggestionsPanelScreen({required this.requestId, super.key});
 
@@ -22,6 +22,7 @@ class SuggestionsPanelScreen extends ConsumerStatefulWidget {
 class _SuggestionsPanelScreenState extends ConsumerState<SuggestionsPanelScreen> {
   bool _loading = true;
   List<api.Candidate> _suggestions = <api.Candidate>[];
+  api.RequestHint? _hint;
   int _failsafeSeconds = 60;
   Timer? _failsafeTimer;
   bool _submitting = false;
@@ -30,7 +31,7 @@ class _SuggestionsPanelScreenState extends ConsumerState<SuggestionsPanelScreen>
   @override
   void initState() {
     super.initState();
-    _fetchSuggestions();
+    _fetchSuggestionsAndHints();
     _startFailsafeCountdown();
   }
 
@@ -40,14 +41,21 @@ class _SuggestionsPanelScreenState extends ConsumerState<SuggestionsPanelScreen>
     super.dispose();
   }
 
-  Future<void> _fetchSuggestions() async {
+  Future<void> _fetchSuggestionsAndHints() async {
     try {
-      final List<api.Candidate> list = await ref
-          .read(supervisorRepositoryProvider)
-          .getSuggestions(widget.requestId);
+      final SupervisorRepository repo = ref.read(supervisorRepositoryProvider);
+      final List<api.Candidate> list = await repo.getSuggestions(widget.requestId);
+      final List<api.RequestHint> hints = await repo.getDispatchHints();
+
+      final api.RequestHint? matchingHint = hints.cast<api.RequestHint?>().firstWhere(
+            (api.RequestHint? h) => h?.requestId == widget.requestId,
+            orElse: () => null,
+          );
+
       if (mounted) {
         setState(() {
           _suggestions = list;
+          _hint = matchingHint;
           _loading = false;
         });
       }
@@ -171,7 +179,9 @@ class _SuggestionsPanelScreenState extends ConsumerState<SuggestionsPanelScreen>
 
     return Scaffold(
       key: const Key('S-05'),
-      appBar: AppBar(title: Text('Suggestions #${widget.requestId.length > 8 ? widget.requestId.substring(0, 8) : widget.requestId}')),
+      appBar: AppBar(
+        title: Text('Suggestions #${widget.requestId.length > 8 ? widget.requestId.substring(0, 8) : widget.requestId}'),
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -204,6 +214,59 @@ class _SuggestionsPanelScreenState extends ConsumerState<SuggestionsPanelScreen>
                   ),
                   const SizedBox(height: 16),
 
+                  // Optimizer Hint Banner for Manual Scopes (A17)
+                  if (_hint != null) ...<Widget>[
+                    Card(
+                      key: const Key('optimizer-hint-card'),
+                      color: Colors.blue.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Row(
+                              children: <Widget>[
+                                const Icon(Icons.auto_awesome, color: Colors.blue),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Optimizer Hint (Manual Scope)',
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    color: Colors.blue.shade900,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text('Proposed Cab: ${_hint!.vehicleId ?? 'N/A'}'),
+                            Text('Pickup ETA: ${_hint!.pickupEtaMinutes ?? 0} mins'),
+                            if (_hint!.reasons != null && _hint!.reasons!.isNotEmpty) ...<Widget>[
+                              const SizedBox(height: 4),
+                              Text('Reasons: ${_hint!.reasons!.join(' • ')}'),
+                            ],
+                            const SizedBox(height: 12),
+                            ElevatedButton(
+                              key: const Key('apply-hint-button'),
+                              onPressed: () {
+                                if (_hint!.vehicleId != null) {
+                                  ref
+                                      .read(supervisorRepositoryProvider)
+                                      .assignRequest(
+                                        requestId: widget.requestId,
+                                        vehicleId: _hint!.vehicleId,
+                                      );
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                              child: const Text('Apply Optimizer Hint'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
                   if (_error != null) ...<Widget>[
                     Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
                     const SizedBox(height: 16),
@@ -229,8 +292,8 @@ class _SuggestionsPanelScreenState extends ConsumerState<SuggestionsPanelScreen>
                         final api.Candidate c = _suggestions[index];
                         final String vId = c.vehicleId ?? 'v_$index';
                         final int etaMins = (c.etaToPickupSeconds ?? 300) ~/ 60;
-                        final List<String> reasonsList =
-                            c.reasons?.toList() ?? <String>['$etaMins min away', '${c.seatsFreeAfter ?? 4} seats free'];
+                        final List<String> reasonsList = c.reasons?.toList() ??
+                            <String>['$etaMins min away', '${c.seatsFreeAfter ?? 4} seats free'];
 
                         return Card(
                           elevation: 3,

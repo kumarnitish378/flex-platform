@@ -17,6 +17,8 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add($VehicleInput.serializer)
       ..add($ZoneInput.serializer)
       ..add(AdminClientsClientIdEmployeesGet200Response.serializer)
+      ..add(AdminClientsClientIdOfficesGet200Response.serializer)
+      ..add(AdminClientsGet200Response.serializer)
       ..add(AdminDriversGet200Response.serializer)
       ..add(AdminModeSettingsGet200Response.serializer)
       ..add(AdminUsersInvitePostRequest.serializer)
@@ -27,7 +29,13 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(AlertSeverityEnum.serializer)
       ..add(AlertStatusEnum.serializer)
       ..add(AlertTypeEnum.serializer)
+      ..add(AlertsGet200Response.serializer)
       ..add(AuthRefreshPostRequest.serializer)
+      ..add(BillingExport.serializer)
+      ..add(BillingExportRowsInner.serializer)
+      ..add(BillingExportSummary.serializer)
+      ..add(BillingExportTreatment.serializer)
+      ..add(BillingExportTreatmentDistanceBasisEnum.serializer)
       ..add(Candidate.serializer)
       ..add(CandidateAddedMinutesExistingInner.serializer)
       ..add(Client.serializer)
@@ -39,15 +47,20 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(DispatchAssignPostRequest.serializer)
       ..add(DispatchAutomationGet200Response.serializer)
       ..add(DispatchAutomationPutRequest.serializer)
+      ..add(DispatchHintsGet200Response.serializer)
+      ..add(DispatchRequestsGet200Response.serializer)
+      ..add(DispatchRequestsRequestIdCandidatesGet200Response.serializer)
       ..add(DispatchSuggestionsGet200Response.serializer)
       ..add(DispatchSuggestionsSuggestionIdDecisionPostRequest.serializer)
       ..add(DispatchSuggestionsSuggestionIdDecisionPostRequestDecisionEnum
           .serializer)
       ..add(DispatchTripsGet200Response.serializer)
+      ..add(DispatchVehiclesGet200Response.serializer)
       ..add(Driver.serializer)
       ..add(DriverDutyPostRequest.serializer)
       ..add(DriverIssuesPostRequest.serializer)
       ..add(DriverIssuesPostRequestTypeEnum.serializer)
+      ..add(DriverTripsGet200Response.serializer)
       ..add(DriverTripsTripIdStartPostRequest.serializer)
       ..add(DutyState.serializer)
       ..add(DutyStateMqtt.serializer)
@@ -68,12 +81,22 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(ModeSettingInputDirectionEnum.serializer)
       ..add(ModeSettingInputModeEnum.serializer)
       ..add(Office.serializer)
+      ..add(OperationsReport.serializer)
+      ..add(OperationsReportDistance.serializer)
+      ..add(OperationsReportOptimizer.serializer)
+      ..add(OperationsReportOverrides.serializer)
+      ..add(OperationsReportPeriod.serializer)
+      ..add(OperationsReportPooling.serializer)
+      ..add(OperationsReportRequests.serializer)
+      ..add(OperationsReportSuggestions.serializer)
+      ..add(OperationsReportWait.serializer)
       ..add(OtpRequest.serializer)
       ..add(OtpVerify.serializer)
       ..add(OverrideInput.serializer)
       ..add(OverrideInputActionEnum.serializer)
       ..add(OverrideResult.serializer)
       ..add(ReasonCode.serializer)
+      ..add(RequestHint.serializer)
       ..add(RequestStatus.serializer)
       ..add(RideRequest.serializer)
       ..add(RideRequestAssignment.serializer)
@@ -83,6 +106,7 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(RideRequestsRequestIdRatingPostRequest.serializer)
       ..add(Role.serializer)
       ..add(SimClock.serializer)
+      ..add(SimctlOptimizerPutRequest.serializer)
       ..add(SimctlReleasePost200Response.serializer)
       ..add(SimctlReleasePostRequest.serializer)
       ..add(SimctlResetPostRequest.serializer)
@@ -98,6 +122,7 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(Trip.serializer)
       ..add(TripModeUsedEnum.serializer)
       ..add(TripReport.serializer)
+      ..add(TripRider.serializer)
       ..add(TripStatus.serializer)
       ..add(TripStop.serializer)
       ..add(TripStopStopTypeEnum.serializer)
@@ -108,13 +133,15 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(Zone.serializer)
       ..add(ZoneUpdate.serializer)
       ..addBuilderFactory(
-          const FullType(BuiltList, const [
-            const FullType(BuiltMap, const [
-              const FullType(String),
-              const FullType.nullable(JsonObject)
-            ])
-          ]),
-          () => ListBuilder<BuiltMap<String, JsonObject?>>())
+          const FullType(BuiltList, const [const FullType(Alert)]),
+          () => ListBuilder<Alert>())
+      ..addBuilderFactory(
+          const FullType(
+              BuiltList, const [const FullType(BillingExportRowsInner)]),
+          () => ListBuilder<BillingExportRowsInner>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(Candidate)]),
+          () => ListBuilder<Candidate>())
       ..addBuilderFactory(
           const FullType(BuiltList,
               const [const FullType(CandidateAddedMinutesExistingInner)]),
@@ -125,6 +152,9 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(String)]),
           () => ListBuilder<String>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(Client)]),
+          () => ListBuilder<Client>())
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(Driver)]),
           () => ListBuilder<Driver>())
@@ -166,8 +196,23 @@ Serializers _$serializers = (Serializers().toBuilder()
           ]),
           () => ListBuilder<BuiltList<String>>())
       ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(Office)]),
+          () => ListBuilder<Office>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(RequestHint)]),
+          () => ListBuilder<RequestHint>())
+      ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(RideRequest)]),
           () => ListBuilder<RideRequest>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(RideRequest)]),
+          () => ListBuilder<RideRequest>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(String)]),
+          () => ListBuilder<String>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(String)]),
+          () => ListBuilder<String>())
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(String)]),
           () => ListBuilder<String>())
@@ -181,11 +226,20 @@ Serializers _$serializers = (Serializers().toBuilder()
           const FullType(BuiltList, const [const FullType(Trip)]),
           () => ListBuilder<Trip>())
       ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(Trip)]),
+          () => ListBuilder<Trip>())
+      ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(TripStop)]),
           () => ListBuilder<TripStop>())
       ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(TripRider)]),
+          () => ListBuilder<TripRider>())
+      ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(Vehicle)]),
           () => ListBuilder<Vehicle>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(VehicleLive)]),
+          () => ListBuilder<VehicleLive>())
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(Zone)]),
           () => ListBuilder<Zone>())
@@ -195,6 +249,34 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(int)]),
           () => ListBuilder<int>())
+      ..addBuilderFactory(
+          const FullType(
+              BuiltMap, const [const FullType(String), const FullType(int)]),
+          () => MapBuilder<String, int>())
+      ..addBuilderFactory(
+          const FullType(
+              BuiltMap, const [const FullType(String), const FullType(int)]),
+          () => MapBuilder<String, int>())
+      ..addBuilderFactory(
+          const FullType(
+              BuiltMap, const [const FullType(String), const FullType(int)]),
+          () => MapBuilder<String, int>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [
+            const FullType(BuiltMap, const [
+              const FullType(String),
+              const FullType.nullable(JsonObject)
+            ])
+          ]),
+          () => ListBuilder<BuiltMap<String, JsonObject?>>())
+      ..addBuilderFactory(
+          const FullType(
+              BuiltMap, const [const FullType(String), const FullType(int)]),
+          () => MapBuilder<String, int>())
+      ..addBuilderFactory(
+          const FullType(
+              BuiltMap, const [const FullType(String), const FullType(int)]),
+          () => MapBuilder<String, int>())
       ..addBuilderFactory(
           const FullType(BuiltMap, const [
             const FullType(String),

@@ -1,6 +1,5 @@
 library;
 
-import 'package:built_collection/built_collection.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:smart_cab_api/smart_cab_api.dart' as api;
@@ -71,8 +70,9 @@ class AdminRepository {
   /// Fetch clients list.
   Future<List<api.Client>> getClients() async {
     try {
-      final Response<BuiltList<api.Client>> response = await _api.adminClientsGet();
-      return response.data?.toList() ?? <api.Client>[];
+      final Response<api.AdminClientsGet200Response> response =
+          await _api.adminClientsGet();
+      return response.data?.items.toList() ?? <api.Client>[];
     } on DioException catch (e) {
       throw AdminException(
         e.response?.data?.toString() ?? 'Failed to fetch clients',

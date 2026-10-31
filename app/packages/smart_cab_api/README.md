@@ -114,6 +114,7 @@ Class | Method | HTTP request | Description
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAssignPost**](doc/DispatchApi.md#dispatchassignpost) | **POST** /dispatch/assign | Manual assign a request to a vehicle (new trip) or existing trip
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAutomationGet**](doc/DispatchApi.md#dispatchautomationget) | **GET** /dispatch/automation | 
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAutomationPut**](doc/DispatchApi.md#dispatchautomationput) | **PUT** /dispatch/automation | 
+[*DispatchApi*](doc/DispatchApi.md) | [**dispatchHintsGet**](doc/DispatchApi.md#dispatchhintsget) | **GET** /dispatch/hints | The optimizer&#39;s hints for requests in &#x60;manual&#x60; scopes (Phase 3)
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchOverridesPost**](doc/DispatchApi.md#dispatchoverridespost) | **POST** /dispatch/overrides | Apply an override action
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchOverridesPreviewPost**](doc/DispatchApi.md#dispatchoverridespreviewpost) | **POST** /dispatch/overrides/preview | Impact preview without applying
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchRequestsGet**](doc/DispatchApi.md#dispatchrequestsget) | **GET** /dispatch/requests | Pending and active requests for the operator
@@ -139,9 +140,12 @@ Class | Method | HTTP request | Description
 [*EmployeeApi*](doc/EmployeeApi.md) | [**rideRequestsRequestIdGet**](doc/EmployeeApi.md#riderequestsrequestidget) | **GET** /ride-requests/{request_id} | 
 [*EmployeeApi*](doc/EmployeeApi.md) | [**rideRequestsRequestIdRatingPost**](doc/EmployeeApi.md#riderequestsrequestidratingpost) | **POST** /ride-requests/{request_id}/rating | 
 [*EmployeeApi*](doc/EmployeeApi.md) | [**sosPost**](doc/EmployeeApi.md#sospost) | **POST** /sos | 
+[*ReportsApi*](doc/ReportsApi.md) | [**reportsBillingGet**](doc/ReportsApi.md#reportsbillingget) | **GET** /reports/billing | One client&#39;s month as quantities - rides, trips, riders, kilometres (B38, OPA-06)
+[*ReportsApi*](doc/ReportsApi.md) | [**reportsOperationsGet**](doc/ReportsApi.md#reportsoperationsget) | **GET** /reports/operations | The full operator report (B39, OPA-05)
 [*ReportsApi*](doc/ReportsApi.md) | [**reportsTripsGet**](doc/ReportsApi.md#reportstripsget) | **GET** /reports/trips | 
 [*SimctlApi*](doc/SimctlApi.md) | [**simctlClockGet**](doc/SimctlApi.md#simctlclockget) | **GET** /simctl/clock | 
 [*SimctlApi*](doc/SimctlApi.md) | [**simctlClockPut**](doc/SimctlApi.md#simctlclockput) | **PUT** /simctl/clock | Set or advance sim time (APP_ENV&#x3D;sim only; 404 otherwise)
+[*SimctlApi*](doc/SimctlApi.md) | [**simctlOptimizerPut**](doc/SimctlApi.md#simctloptimizerput) | **PUT** /simctl/optimizer | Kill or restore the optimizer (S12, B36)
 [*SimctlApi*](doc/SimctlApi.md) | [**simctlReleasePost**](doc/SimctlApi.md#simctlreleasepost) | **POST** /simctl/release | Give up this run&#39;s claim on the backend so another can start
 [*SimctlApi*](doc/SimctlApi.md) | [**simctlResetPost**](doc/SimctlApi.md#simctlresetpost) | **POST** /simctl/reset | Truncate operator data and load scenario seed
 
@@ -149,13 +153,20 @@ Class | Method | HTTP request | Description
 ## Documentation For Models
 
  - [AdminClientsClientIdEmployeesGet200Response](doc/AdminClientsClientIdEmployeesGet200Response.md)
+ - [AdminClientsClientIdOfficesGet200Response](doc/AdminClientsClientIdOfficesGet200Response.md)
+ - [AdminClientsGet200Response](doc/AdminClientsGet200Response.md)
  - [AdminDriversGet200Response](doc/AdminDriversGet200Response.md)
  - [AdminModeSettingsGet200Response](doc/AdminModeSettingsGet200Response.md)
  - [AdminUsersInvitePostRequest](doc/AdminUsersInvitePostRequest.md)
  - [AdminVehiclesGet200Response](doc/AdminVehiclesGet200Response.md)
  - [AdminZonesGet200Response](doc/AdminZonesGet200Response.md)
  - [Alert](doc/Alert.md)
+ - [AlertsGet200Response](doc/AlertsGet200Response.md)
  - [AuthRefreshPostRequest](doc/AuthRefreshPostRequest.md)
+ - [BillingExport](doc/BillingExport.md)
+ - [BillingExportRowsInner](doc/BillingExportRowsInner.md)
+ - [BillingExportSummary](doc/BillingExportSummary.md)
+ - [BillingExportTreatment](doc/BillingExportTreatment.md)
  - [Candidate](doc/Candidate.md)
  - [CandidateAddedMinutesExistingInner](doc/CandidateAddedMinutesExistingInner.md)
  - [Client](doc/Client.md)
@@ -168,13 +179,18 @@ Class | Method | HTTP request | Description
  - [DispatchAssignPostRequest](doc/DispatchAssignPostRequest.md)
  - [DispatchAutomationGet200Response](doc/DispatchAutomationGet200Response.md)
  - [DispatchAutomationPutRequest](doc/DispatchAutomationPutRequest.md)
+ - [DispatchHintsGet200Response](doc/DispatchHintsGet200Response.md)
+ - [DispatchRequestsGet200Response](doc/DispatchRequestsGet200Response.md)
+ - [DispatchRequestsRequestIdCandidatesGet200Response](doc/DispatchRequestsRequestIdCandidatesGet200Response.md)
  - [DispatchSuggestionsGet200Response](doc/DispatchSuggestionsGet200Response.md)
  - [DispatchSuggestionsSuggestionIdDecisionPostRequest](doc/DispatchSuggestionsSuggestionIdDecisionPostRequest.md)
  - [DispatchTripsGet200Response](doc/DispatchTripsGet200Response.md)
+ - [DispatchVehiclesGet200Response](doc/DispatchVehiclesGet200Response.md)
  - [Driver](doc/Driver.md)
  - [DriverDutyPostRequest](doc/DriverDutyPostRequest.md)
  - [DriverInput](doc/DriverInput.md)
  - [DriverIssuesPostRequest](doc/DriverIssuesPostRequest.md)
+ - [DriverTripsGet200Response](doc/DriverTripsGet200Response.md)
  - [DriverTripsTripIdStartPostRequest](doc/DriverTripsTripIdStartPostRequest.md)
  - [DutyState](doc/DutyState.md)
  - [DutyStateMqtt](doc/DutyStateMqtt.md)
@@ -194,11 +210,21 @@ Class | Method | HTTP request | Description
  - [ModeSettingInput](doc/ModeSettingInput.md)
  - [Office](doc/Office.md)
  - [OfficeInput](doc/OfficeInput.md)
+ - [OperationsReport](doc/OperationsReport.md)
+ - [OperationsReportDistance](doc/OperationsReportDistance.md)
+ - [OperationsReportOptimizer](doc/OperationsReportOptimizer.md)
+ - [OperationsReportOverrides](doc/OperationsReportOverrides.md)
+ - [OperationsReportPeriod](doc/OperationsReportPeriod.md)
+ - [OperationsReportPooling](doc/OperationsReportPooling.md)
+ - [OperationsReportRequests](doc/OperationsReportRequests.md)
+ - [OperationsReportSuggestions](doc/OperationsReportSuggestions.md)
+ - [OperationsReportWait](doc/OperationsReportWait.md)
  - [OtpRequest](doc/OtpRequest.md)
  - [OtpVerify](doc/OtpVerify.md)
  - [OverrideInput](doc/OverrideInput.md)
  - [OverrideResult](doc/OverrideResult.md)
  - [ReasonCode](doc/ReasonCode.md)
+ - [RequestHint](doc/RequestHint.md)
  - [RequestStatus](doc/RequestStatus.md)
  - [RideRequest](doc/RideRequest.md)
  - [RideRequestAssignment](doc/RideRequestAssignment.md)
@@ -208,6 +234,7 @@ Class | Method | HTTP request | Description
  - [RideRequestsRequestIdRatingPostRequest](doc/RideRequestsRequestIdRatingPostRequest.md)
  - [Role](doc/Role.md)
  - [SimClock](doc/SimClock.md)
+ - [SimctlOptimizerPutRequest](doc/SimctlOptimizerPutRequest.md)
  - [SimctlReleasePost200Response](doc/SimctlReleasePost200Response.md)
  - [SimctlReleasePostRequest](doc/SimctlReleasePostRequest.md)
  - [SimctlResetPostRequest](doc/SimctlResetPostRequest.md)
@@ -219,6 +246,7 @@ Class | Method | HTTP request | Description
  - [TrackerType](doc/TrackerType.md)
  - [Trip](doc/Trip.md)
  - [TripReport](doc/TripReport.md)
+ - [TripRider](doc/TripRider.md)
  - [TripStatus](doc/TripStatus.md)
  - [TripStop](doc/TripStop.md)
  - [Urgency](doc/Urgency.md)

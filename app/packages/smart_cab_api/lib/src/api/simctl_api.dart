@@ -11,6 +11,7 @@ import 'package:dio/dio.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:built_value/json_object.dart';
 import 'package:smart_cab_api/src/model/sim_clock.dart';
+import 'package:smart_cab_api/src/model/simctl_optimizer_put_request.dart';
 import 'package:smart_cab_api/src/model/simctl_release_post200_response.dart';
 import 'package:smart_cab_api/src/model/simctl_release_post_request.dart';
 import 'package:smart_cab_api/src/model/simctl_reset_post_request.dart';
@@ -150,6 +151,79 @@ class SimctlApi {
     try {
       const _type = FullType(SimClock);
       _bodyData = _serializers.serialize(simClock, specifiedType: _type);
+
+    } catch(error, stackTrace) {
+      throw DioException(
+         requestOptions: _options.compose(
+          _dio.options,
+          _path,
+        ),
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    final _response = await _dio.request<Object>(
+      _path,
+      data: _bodyData,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    return _response;
+  }
+
+  /// Kill or restore the optimizer (S12, B36)
+  /// Makes every optimizer run fail (or stops doing so). A switch on the solver and nothing else - the sweep still runs and records its failures, so the platform notices the outage the way it would a real one, from the run log. 
+  ///
+  /// Parameters:
+  /// * [simctlOptimizerPutRequest] 
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future]
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<void>> simctlOptimizerPut({ 
+    required SimctlOptimizerPutRequest simctlOptimizerPutRequest,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/simctl/optimizer';
+    final _options = Options(
+      method: r'PUT',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'http',
+            'scheme': 'bearer',
+            'name': 'bearerAuth',
+          },
+        ],
+        ...?extra,
+      },
+      contentType: 'application/json',
+      validateStatus: validateStatus,
+    );
+
+    dynamic _bodyData;
+
+    try {
+      const _type = FullType(SimctlOptimizerPutRequest);
+      _bodyData = _serializers.serialize(simctlOptimizerPutRequest, specifiedType: _type);
 
     } catch(error, stackTrace) {
       throw DioException(

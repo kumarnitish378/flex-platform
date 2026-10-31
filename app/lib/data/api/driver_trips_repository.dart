@@ -1,6 +1,5 @@
 library;
 
-import 'package:built_collection/built_collection.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:smart_cab_api/smart_cab_api.dart' as api;
@@ -25,8 +24,8 @@ class DriverTripsRepository {
   /// Fetch all assigned trips for the driver.
   Future<List<api.Trip>> getTrips() async {
     try {
-      final Response<BuiltList<api.Trip>> response = await _api.driverTripsGet();
-      return response.data?.toList() ?? <api.Trip>[];
+      final Response<api.DriverTripsGet200Response> response = await _api.driverTripsGet();
+      return response.data?.items.toList() ?? <api.Trip>[];
     } on DioException catch (e) {
       throw DriverTripsException(
         e.response?.data?.toString() ?? 'Failed to fetch driver trips',

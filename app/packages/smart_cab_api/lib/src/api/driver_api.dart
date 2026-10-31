@@ -12,6 +12,7 @@ import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/api_util.dart';
 import 'package:smart_cab_api/src/model/driver_duty_post_request.dart';
 import 'package:smart_cab_api/src/model/driver_issues_post_request.dart';
+import 'package:smart_cab_api/src/model/driver_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/driver_trips_trip_id_start_post_request.dart';
 import 'package:smart_cab_api/src/model/duty_state.dart';
 import 'package:smart_cab_api/src/model/error.dart';
@@ -470,9 +471,9 @@ class DriverApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<Trip>] as data
+  /// Returns a [Future] containing a [Response] with a [DriverTripsGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<Trip>>> driverTripsGet({ 
+  Future<Response<DriverTripsGet200Response>> driverTripsGet({ 
     String? scope = 'active',
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -513,14 +514,14 @@ class DriverApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<Trip>? _responseData;
+    DriverTripsGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(Trip)]),
-      ) as BuiltList<Trip>;
+        specifiedType: const FullType(DriverTripsGet200Response),
+      ) as DriverTripsGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -532,7 +533,7 @@ class DriverApi {
       );
     }
 
-    return Response<BuiltList<Trip>>(
+    return Response<DriverTripsGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

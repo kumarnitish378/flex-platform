@@ -12,6 +12,8 @@ import 'package:built_collection/built_collection.dart';
 import 'package:built_value/json_object.dart';
 import 'package:smart_cab_api/src/api_util.dart';
 import 'package:smart_cab_api/src/model/admin_clients_client_id_employees_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_clients_client_id_offices_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_clients_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_drivers_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_mode_settings_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_users_invite_post_request.dart';
@@ -367,9 +369,9 @@ class AdminApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<Office>] as data
+  /// Returns a [Future] containing a [Response] with a [AdminClientsClientIdOfficesGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<Office>>> adminClientsClientIdOfficesGet({ 
+  Future<Response<AdminClientsClientIdOfficesGet200Response>> adminClientsClientIdOfficesGet({ 
     required String clientId,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -405,14 +407,14 @@ class AdminApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<Office>? _responseData;
+    AdminClientsClientIdOfficesGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(Office)]),
-      ) as BuiltList<Office>;
+        specifiedType: const FullType(AdminClientsClientIdOfficesGet200Response),
+      ) as AdminClientsClientIdOfficesGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -424,7 +426,7 @@ class AdminApi {
       );
     }
 
-    return Response<BuiltList<Office>>(
+    return Response<AdminClientsClientIdOfficesGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
@@ -734,9 +736,9 @@ class AdminApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<Client>] as data
+  /// Returns a [Future] containing a [Response] with a [AdminClientsGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<Client>>> adminClientsGet({ 
+  Future<Response<AdminClientsGet200Response>> adminClientsGet({ 
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -771,14 +773,14 @@ class AdminApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<Client>? _responseData;
+    AdminClientsGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(Client)]),
-      ) as BuiltList<Client>;
+        specifiedType: const FullType(AdminClientsGet200Response),
+      ) as AdminClientsGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -790,7 +792,7 @@ class AdminApi {
       );
     }
 
-    return Response<BuiltList<Client>>(
+    return Response<AdminClientsGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

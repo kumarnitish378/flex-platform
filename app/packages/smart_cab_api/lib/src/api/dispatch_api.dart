@@ -10,24 +10,25 @@ import 'package:dio/dio.dart';
 
 import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/api_util.dart';
-import 'package:smart_cab_api/src/model/candidate.dart';
 import 'package:smart_cab_api/src/model/dispatch_assign_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_put_request.dart';
+import 'package:smart_cab_api/src/model/dispatch_hints_get200_response.dart';
+import 'package:smart_cab_api/src/model/dispatch_requests_get200_response.dart';
+import 'package:smart_cab_api/src/model/dispatch_requests_request_id_candidates_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_suggestions_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_suggestions_suggestion_id_decision_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_trips_get200_response.dart';
+import 'package:smart_cab_api/src/model/dispatch_vehicles_get200_response.dart';
 import 'package:smart_cab_api/src/model/error.dart';
 import 'package:smart_cab_api/src/model/impact.dart';
 import 'package:smart_cab_api/src/model/mode_resolution.dart';
 import 'package:smart_cab_api/src/model/override_input.dart';
 import 'package:smart_cab_api/src/model/override_result.dart';
 import 'package:smart_cab_api/src/model/request_status.dart';
-import 'package:smart_cab_api/src/model/ride_request.dart';
 import 'package:smart_cab_api/src/model/suggestion_decision_result.dart';
 import 'package:smart_cab_api/src/model/trip.dart';
 import 'package:smart_cab_api/src/model/trip_status.dart';
-import 'package:smart_cab_api/src/model/vehicle_live.dart';
 
 class DispatchApi {
 
@@ -290,6 +291,85 @@ class DispatchApi {
     return _response;
   }
 
+  /// The optimizer&#39;s hints for requests in &#x60;manual&#x60; scopes (Phase 3)
+  /// One hint per queued request the latest batch could place, newest batch only. A hint disappears when its request is assigned, cancelled or re-planned, and an empty list means the optimizer has nothing to say, not that it is off. Requires &#x60;request_queue_view&#x60; and a non-client-scoped caller, like &#x60;/dispatch/requests&#x60;. 
+  ///
+  /// Parameters:
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [DispatchHintsGet200Response] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<DispatchHintsGet200Response>> dispatchHintsGet({ 
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/dispatch/hints';
+    final _options = Options(
+      method: r'GET',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'http',
+            'scheme': 'bearer',
+            'name': 'bearerAuth',
+          },
+        ],
+        ...?extra,
+      },
+      validateStatus: validateStatus,
+    );
+
+    final _response = await _dio.request<Object>(
+      _path,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    DispatchHintsGet200Response? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(DispatchHintsGet200Response),
+      ) as DispatchHintsGet200Response;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<DispatchHintsGet200Response>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
   /// Apply an override action
   /// &#x60;control-model.md&#x60; section 3. Every override carries a reason code, gets an &#x60;expires_at&#x60;, and writes an &#x60;override_log&#x60; row holding who, what, before, after, reason and time.  Refused with 422 when the action does not name what it would change (&#x60;reassign&#x60; without &#x60;target_vehicle_id&#x60;), when &#x60;reason_code&#x60; is &#x60;other&#x60; without a note, or when the override waives a hard rule without &#x60;safety&#x60;, &#x60;client_request&#x60; or &#x60;other&#x60; **and** a note - rule 4, and those are the overrides reports flag. Refused with 409 when it would waive a rule nobody may waive: a cab with no driver, or another supervisor&#39;s lock. 
   ///
@@ -505,9 +585,9 @@ class DispatchApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<RideRequest>] as data
+  /// Returns a [Future] containing a [Response] with a [DispatchRequestsGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<RideRequest>>> dispatchRequestsGet({ 
+  Future<Response<DispatchRequestsGet200Response>> dispatchRequestsGet({ 
     BuiltList<RequestStatus>? status,
     String? clientId,
     CancelToken? cancelToken,
@@ -550,14 +630,14 @@ class DispatchApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<RideRequest>? _responseData;
+    DispatchRequestsGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(RideRequest)]),
-      ) as BuiltList<RideRequest>;
+        specifiedType: const FullType(DispatchRequestsGet200Response),
+      ) as DispatchRequestsGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -569,7 +649,7 @@ class DispatchApi {
       );
     }
 
-    return Response<BuiltList<RideRequest>>(
+    return Response<DispatchRequestsGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
@@ -593,9 +673,9 @@ class DispatchApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<Candidate>] as data
+  /// Returns a [Future] containing a [Response] with a [DispatchRequestsRequestIdCandidatesGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<Candidate>>> dispatchRequestsRequestIdCandidatesGet({ 
+  Future<Response<DispatchRequestsRequestIdCandidatesGet200Response>> dispatchRequestsRequestIdCandidatesGet({ 
     required String requestId,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -631,14 +711,14 @@ class DispatchApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<Candidate>? _responseData;
+    DispatchRequestsRequestIdCandidatesGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(Candidate)]),
-      ) as BuiltList<Candidate>;
+        specifiedType: const FullType(DispatchRequestsRequestIdCandidatesGet200Response),
+      ) as DispatchRequestsRequestIdCandidatesGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -650,7 +730,7 @@ class DispatchApi {
       );
     }
 
-    return Response<BuiltList<Candidate>>(
+    return Response<DispatchRequestsRequestIdCandidatesGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
@@ -756,9 +836,9 @@ class DispatchApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<Candidate>] as data
+  /// Returns a [Future] containing a [Response] with a [DispatchRequestsRequestIdCandidatesGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<Candidate>>> dispatchRequestsRequestIdSuggestionsGet({ 
+  Future<Response<DispatchRequestsRequestIdCandidatesGet200Response>> dispatchRequestsRequestIdSuggestionsGet({ 
     required String requestId,
     int? limit = 3,
     CancelToken? cancelToken,
@@ -800,14 +880,14 @@ class DispatchApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<Candidate>? _responseData;
+    DispatchRequestsRequestIdCandidatesGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(Candidate)]),
-      ) as BuiltList<Candidate>;
+        specifiedType: const FullType(DispatchRequestsRequestIdCandidatesGet200Response),
+      ) as DispatchRequestsRequestIdCandidatesGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -819,7 +899,7 @@ class DispatchApi {
       );
     }
 
-    return Response<BuiltList<Candidate>>(
+    return Response<DispatchRequestsRequestIdCandidatesGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
@@ -1120,9 +1200,9 @@ class DispatchApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<VehicleLive>] as data
+  /// Returns a [Future] containing a [Response] with a [DispatchVehiclesGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<VehicleLive>>> dispatchVehiclesGet({ 
+  Future<Response<DispatchVehiclesGet200Response>> dispatchVehiclesGet({ 
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -1157,14 +1237,14 @@ class DispatchApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<VehicleLive>? _responseData;
+    DispatchVehiclesGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(VehicleLive)]),
-      ) as BuiltList<VehicleLive>;
+        specifiedType: const FullType(DispatchVehiclesGet200Response),
+      ) as DispatchVehiclesGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -1176,7 +1256,7 @@ class DispatchApi {
       );
     }
 
-    return Response<BuiltList<VehicleLive>>(
+    return Response<DispatchVehiclesGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

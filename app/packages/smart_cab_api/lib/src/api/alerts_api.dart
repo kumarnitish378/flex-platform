@@ -8,9 +8,8 @@ import 'package:built_value/json_object.dart';
 import 'package:built_value/serializer.dart';
 import 'package:dio/dio.dart';
 
-import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/api_util.dart';
-import 'package:smart_cab_api/src/model/alert.dart';
+import 'package:smart_cab_api/src/model/alerts_get200_response.dart';
 
 class AlertsApi {
 
@@ -87,9 +86,9 @@ class AlertsApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [BuiltList<Alert>] as data
+  /// Returns a [Future] containing a [Response] with a [AlertsGet200Response] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<BuiltList<Alert>>> alertsGet({ 
+  Future<Response<AlertsGet200Response>> alertsGet({ 
     String? status,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -130,14 +129,14 @@ class AlertsApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    BuiltList<Alert>? _responseData;
+    AlertsGet200Response? _responseData;
 
     try {
       final rawResponse = _response.data;
       _responseData = rawResponse == null ? null : _serializers.deserialize(
         rawResponse,
-        specifiedType: const FullType(BuiltList, [FullType(Alert)]),
-      ) as BuiltList<Alert>;
+        specifiedType: const FullType(AlertsGet200Response),
+      ) as AlertsGet200Response;
 
     } catch (error, stackTrace) {
       throw DioException(
@@ -149,7 +148,7 @@ class AlertsApi {
       );
     }
 
-    return Response<BuiltList<Alert>>(
+    return Response<AlertsGet200Response>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

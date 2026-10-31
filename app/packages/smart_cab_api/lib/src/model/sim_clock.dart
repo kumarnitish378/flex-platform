@@ -13,6 +13,11 @@ part 'sim_clock.g.dart';
 /// Properties:
 /// * [now] 
 /// * [advanceSeconds] - PUT only
+/// * [optimizerRuns] - batch runs the jump caused
+/// * [optimizerApplied] 
+/// * [optimizerSuggested] 
+/// * [optimizerHinted] 
+/// * [optimizerFailed] 
 @BuiltValue()
 abstract class SimClock implements Built<SimClock, SimClockBuilder> {
   @BuiltValueField(wireName: r'now')
@@ -21,6 +26,22 @@ abstract class SimClock implements Built<SimClock, SimClockBuilder> {
   /// PUT only
   @BuiltValueField(wireName: r'advance_seconds')
   int? get advanceSeconds;
+
+  /// batch runs the jump caused
+  @BuiltValueField(wireName: r'optimizer_runs')
+  int? get optimizerRuns;
+
+  @BuiltValueField(wireName: r'optimizer_applied')
+  int? get optimizerApplied;
+
+  @BuiltValueField(wireName: r'optimizer_suggested')
+  int? get optimizerSuggested;
+
+  @BuiltValueField(wireName: r'optimizer_hinted')
+  int? get optimizerHinted;
+
+  @BuiltValueField(wireName: r'optimizer_failed')
+  int? get optimizerFailed;
 
   SimClock._();
 
@@ -56,6 +77,41 @@ class _$SimClockSerializer implements PrimitiveSerializer<SimClock> {
       yield r'advance_seconds';
       yield serializers.serialize(
         object.advanceSeconds,
+        specifiedType: const FullType(int),
+      );
+    }
+    if (object.optimizerRuns != null) {
+      yield r'optimizer_runs';
+      yield serializers.serialize(
+        object.optimizerRuns,
+        specifiedType: const FullType(int),
+      );
+    }
+    if (object.optimizerApplied != null) {
+      yield r'optimizer_applied';
+      yield serializers.serialize(
+        object.optimizerApplied,
+        specifiedType: const FullType(int),
+      );
+    }
+    if (object.optimizerSuggested != null) {
+      yield r'optimizer_suggested';
+      yield serializers.serialize(
+        object.optimizerSuggested,
+        specifiedType: const FullType(int),
+      );
+    }
+    if (object.optimizerHinted != null) {
+      yield r'optimizer_hinted';
+      yield serializers.serialize(
+        object.optimizerHinted,
+        specifiedType: const FullType(int),
+      );
+    }
+    if (object.optimizerFailed != null) {
+      yield r'optimizer_failed';
+      yield serializers.serialize(
+        object.optimizerFailed,
         specifiedType: const FullType(int),
       );
     }
@@ -95,6 +151,41 @@ class _$SimClockSerializer implements PrimitiveSerializer<SimClock> {
             specifiedType: const FullType(int),
           ) as int;
           result.advanceSeconds = valueDes;
+          break;
+        case r'optimizer_runs':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(int),
+          ) as int;
+          result.optimizerRuns = valueDes;
+          break;
+        case r'optimizer_applied':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(int),
+          ) as int;
+          result.optimizerApplied = valueDes;
+          break;
+        case r'optimizer_suggested':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(int),
+          ) as int;
+          result.optimizerSuggested = valueDes;
+          break;
+        case r'optimizer_hinted':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(int),
+          ) as int;
+          result.optimizerHinted = valueDes;
+          break;
+        case r'optimizer_failed':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(int),
+          ) as int;
+          result.optimizerFailed = valueDes;
           break;
         default:
           unhandled.add(key);

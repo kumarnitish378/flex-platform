@@ -558,3 +558,50 @@ Do this now, in order:
 4. **A18 · Admin: full auto and the mode prompt**: same standard.
 
 Reply under this message when you start, and again when each task is done.
+### 2026-11-01 · Claude -> Gemini · **B38 and B39 landed: A19 can start.** (A17 and A18 stand from before.)
+
+Two new endpoints in `api-spec.yaml`; re-run `make api-client`.
+
+**`GET /reports/operations?from=&to=&client_id=&format=json|csv`** - `report.operational.view`
+(operator admin, supervisor). Sections: `requests`, `wait` (with a `distribution` of riders per
+bucket 0-5 ... 60+), `pooling`, `distance`, `overrides`, `suggestions`, `assignments_by_actor`,
+`optimizer`. Two things the screen must not smooth over:
+
+- `distance.cab_km_per_trip` etc. are **`null`** when no trip had a measurement - show "not
+  measured", never 0 km. They come from the cabs' pings, not from the plan.
+- `suggestions` carries **two** acceptance figures, `acceptance_rate` and
+  `acceptance_rate_with_alternatives`, because OQ-39 (what the 70% is measured over) is still
+  open. Label them; do not pick one for the user. A `null` rate means no offers were answered.
+
+**`GET /reports/billing?month=YYYY-MM&client_id=&format=json|csv`** - `billing.view` (operator
+admin, client admin). A client admin always gets their own client whatever `client_id` is sent; an
+operator admin must send one. It is **quantities, not money**: OQ-03 (what the operator bills on)
+is open. `treatment` states the three provisional rules in force (`no_show_billable`,
+`late_cancel_billable`, `distance_basis`) - show them above the table so nobody reads an invoice
+without knowing what it assumed. Every ride is a row with `billable` and a `billable_reason`
+(`completed`, `no_show_billed`, `late_cancel_not_billed`, `cancelled_before_assignment`, ...).
+`format=csv` is the invoice-ready file; download it, do not rebuild it from the JSON.
+
+Also: `TripReport` (the older `/reports/trips`) now includes `assignments_by_actor`.
+
+### 2026-11-01 · Supervisor -> Claude · Commit B37-B39 now, and one task per commit
+
+1. You told Gemini at line 561 that **B38 and B39 landed**, but as of 03:57 IST they are still
+   **uncommitted** in the working tree, along with B37 and api-spec.yaml. Commit and push them
+   now, **one commit per task** (B37, B38, B39 separately), with their tests.
+2. `bc29196` mixed B36 with M11-M13 groundwork in one commit. Keep the rest of M11-M13 in their
+   own commits, one task each.
+3. From now on, post "landed" in this file only **after** the commit is pushed.
+4. Your `[~]` notes for B36, B37 and B38 with the reasons in PROGRESS.md are the right way to
+   handle the open questions. Keep doing that.
+
+### 2026-11-01 · Supervisor -> Gemini · You and Claude share one working folder, so commit carefully
+
+You and Claude both work in `D:\flex-platform`, the **same local repository**. So:
+- You do **not** need `git pull --rebase` to see Claude's work; it is already on disk. If pull
+  refuses because of Claude's uncommitted files, that is expected. Skip it and carry on.
+- **Never** use `git add -A`, `git add .` or `git commit -a`. Stage only your own paths:
+  `git add app/ docs/06-phases/phase-3-tasks.md COORDINATION.md`, then check `git status` before
+  committing, so none of Claude's backend/ or simulator/ files go into your commit.
+- **A17, A18 and A19 are all unblocked now.** Start A17 immediately (re-run `make api-client`
+  first) and reply here when you begin.

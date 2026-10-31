@@ -15,13 +15,20 @@ import 'package:smart_cab_api/src/date_serializer.dart';
 import 'package:smart_cab_api/src/model/date.dart';
 
 import 'package:smart_cab_api/src/model/admin_clients_client_id_employees_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_clients_client_id_offices_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_clients_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_drivers_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_mode_settings_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_users_invite_post_request.dart';
 import 'package:smart_cab_api/src/model/admin_vehicles_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_zones_get200_response.dart';
 import 'package:smart_cab_api/src/model/alert.dart';
+import 'package:smart_cab_api/src/model/alerts_get200_response.dart';
 import 'package:smart_cab_api/src/model/auth_refresh_post_request.dart';
+import 'package:smart_cab_api/src/model/billing_export.dart';
+import 'package:smart_cab_api/src/model/billing_export_rows_inner.dart';
+import 'package:smart_cab_api/src/model/billing_export_summary.dart';
+import 'package:smart_cab_api/src/model/billing_export_treatment.dart';
 import 'package:smart_cab_api/src/model/candidate.dart';
 import 'package:smart_cab_api/src/model/candidate_added_minutes_existing_inner.dart';
 import 'package:smart_cab_api/src/model/client.dart';
@@ -34,13 +41,18 @@ import 'package:smart_cab_api/src/model/direction.dart';
 import 'package:smart_cab_api/src/model/dispatch_assign_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_automation_put_request.dart';
+import 'package:smart_cab_api/src/model/dispatch_hints_get200_response.dart';
+import 'package:smart_cab_api/src/model/dispatch_requests_get200_response.dart';
+import 'package:smart_cab_api/src/model/dispatch_requests_request_id_candidates_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_suggestions_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_suggestions_suggestion_id_decision_post_request.dart';
 import 'package:smart_cab_api/src/model/dispatch_trips_get200_response.dart';
+import 'package:smart_cab_api/src/model/dispatch_vehicles_get200_response.dart';
 import 'package:smart_cab_api/src/model/driver.dart';
 import 'package:smart_cab_api/src/model/driver_duty_post_request.dart';
 import 'package:smart_cab_api/src/model/driver_input.dart';
 import 'package:smart_cab_api/src/model/driver_issues_post_request.dart';
+import 'package:smart_cab_api/src/model/driver_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/driver_trips_trip_id_start_post_request.dart';
 import 'package:smart_cab_api/src/model/duty_state.dart';
 import 'package:smart_cab_api/src/model/duty_state_mqtt.dart';
@@ -60,11 +72,21 @@ import 'package:smart_cab_api/src/model/mode_setting.dart';
 import 'package:smart_cab_api/src/model/mode_setting_input.dart';
 import 'package:smart_cab_api/src/model/office.dart';
 import 'package:smart_cab_api/src/model/office_input.dart';
+import 'package:smart_cab_api/src/model/operations_report.dart';
+import 'package:smart_cab_api/src/model/operations_report_distance.dart';
+import 'package:smart_cab_api/src/model/operations_report_optimizer.dart';
+import 'package:smart_cab_api/src/model/operations_report_overrides.dart';
+import 'package:smart_cab_api/src/model/operations_report_period.dart';
+import 'package:smart_cab_api/src/model/operations_report_pooling.dart';
+import 'package:smart_cab_api/src/model/operations_report_requests.dart';
+import 'package:smart_cab_api/src/model/operations_report_suggestions.dart';
+import 'package:smart_cab_api/src/model/operations_report_wait.dart';
 import 'package:smart_cab_api/src/model/otp_request.dart';
 import 'package:smart_cab_api/src/model/otp_verify.dart';
 import 'package:smart_cab_api/src/model/override_input.dart';
 import 'package:smart_cab_api/src/model/override_result.dart';
 import 'package:smart_cab_api/src/model/reason_code.dart';
+import 'package:smart_cab_api/src/model/request_hint.dart';
 import 'package:smart_cab_api/src/model/request_status.dart';
 import 'package:smart_cab_api/src/model/ride_request.dart';
 import 'package:smart_cab_api/src/model/ride_request_assignment.dart';
@@ -74,6 +96,7 @@ import 'package:smart_cab_api/src/model/ride_requests_request_id_cancel_post_req
 import 'package:smart_cab_api/src/model/ride_requests_request_id_rating_post_request.dart';
 import 'package:smart_cab_api/src/model/role.dart';
 import 'package:smart_cab_api/src/model/sim_clock.dart';
+import 'package:smart_cab_api/src/model/simctl_optimizer_put_request.dart';
 import 'package:smart_cab_api/src/model/simctl_release_post200_response.dart';
 import 'package:smart_cab_api/src/model/simctl_release_post_request.dart';
 import 'package:smart_cab_api/src/model/simctl_reset_post_request.dart';
@@ -85,6 +108,7 @@ import 'package:smart_cab_api/src/model/token_pair.dart';
 import 'package:smart_cab_api/src/model/tracker_type.dart';
 import 'package:smart_cab_api/src/model/trip.dart';
 import 'package:smart_cab_api/src/model/trip_report.dart';
+import 'package:smart_cab_api/src/model/trip_rider.dart';
 import 'package:smart_cab_api/src/model/trip_status.dart';
 import 'package:smart_cab_api/src/model/trip_stop.dart';
 import 'package:smart_cab_api/src/model/urgency.dart';
@@ -101,13 +125,20 @@ part 'serializers.g.dart';
 
 @SerializersFor([
   AdminClientsClientIdEmployeesGet200Response,
+  AdminClientsClientIdOfficesGet200Response,
+  AdminClientsGet200Response,
   AdminDriversGet200Response,
   AdminModeSettingsGet200Response,
   AdminUsersInvitePostRequest,
   AdminVehiclesGet200Response,
   AdminZonesGet200Response,
   Alert,
+  AlertsGet200Response,
   AuthRefreshPostRequest,
+  BillingExport,
+  BillingExportRowsInner,
+  BillingExportSummary,
+  BillingExportTreatment,
   Candidate,
   CandidateAddedMinutesExistingInner,
   Client,
@@ -120,13 +151,18 @@ part 'serializers.g.dart';
   DispatchAssignPostRequest,
   DispatchAutomationGet200Response,
   DispatchAutomationPutRequest,
+  DispatchHintsGet200Response,
+  DispatchRequestsGet200Response,
+  DispatchRequestsRequestIdCandidatesGet200Response,
   DispatchSuggestionsGet200Response,
   DispatchSuggestionsSuggestionIdDecisionPostRequest,
   DispatchTripsGet200Response,
+  DispatchVehiclesGet200Response,
   Driver,
   DriverDutyPostRequest,
   DriverInput,$DriverInput,
   DriverIssuesPostRequest,
+  DriverTripsGet200Response,
   DriverTripsTripIdStartPostRequest,
   DutyState,
   DutyStateMqtt,
@@ -146,11 +182,21 @@ part 'serializers.g.dart';
   ModeSettingInput,$ModeSettingInput,
   Office,
   OfficeInput,$OfficeInput,
+  OperationsReport,
+  OperationsReportDistance,
+  OperationsReportOptimizer,
+  OperationsReportOverrides,
+  OperationsReportPeriod,
+  OperationsReportPooling,
+  OperationsReportRequests,
+  OperationsReportSuggestions,
+  OperationsReportWait,
   OtpRequest,
   OtpVerify,
   OverrideInput,
   OverrideResult,
   ReasonCode,
+  RequestHint,
   RequestStatus,
   RideRequest,
   RideRequestAssignment,
@@ -160,6 +206,7 @@ part 'serializers.g.dart';
   RideRequestsRequestIdRatingPostRequest,
   Role,
   SimClock,
+  SimctlOptimizerPutRequest,
   SimctlReleasePost200Response,
   SimctlReleasePostRequest,
   SimctlResetPostRequest,
@@ -171,6 +218,7 @@ part 'serializers.g.dart';
   TrackerType,
   Trip,
   TripReport,
+  TripRider,
   TripStatus,
   TripStop,
   Urgency,
@@ -185,20 +233,8 @@ part 'serializers.g.dart';
 ])
 Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Client)]),
-        () => ListBuilder<Client>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(RequestStatus)]),
         () => ListBuilder<RequestStatus>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Alert)]),
-        () => ListBuilder<Alert>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(RideRequest)]),
-        () => ListBuilder<RideRequest>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(TripStatus)]),
@@ -207,22 +243,6 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltMap, [FullType(String), FullType.nullable(JsonObject)]),
         () => MapBuilder<String, JsonObject>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Trip)]),
-        () => ListBuilder<Trip>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(VehicleLive)]),
-        () => ListBuilder<VehicleLive>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Office)]),
-        () => ListBuilder<Office>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(Candidate)]),
-        () => ListBuilder<Candidate>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(LocationPing)]),

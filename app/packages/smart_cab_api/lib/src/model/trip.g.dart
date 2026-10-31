@@ -90,6 +90,8 @@ class _$Trip extends Trip {
   final TripModeUsedEnum? modeUsed;
   @override
   final BuiltList<TripStop>? stops;
+  @override
+  final BuiltList<TripRider>? riders;
 
   factory _$Trip([void Function(TripBuilder)? updates]) =>
       (TripBuilder()..update(updates))._build();
@@ -102,7 +104,8 @@ class _$Trip extends Trip {
       this.status,
       this.poolingBlocked,
       this.modeUsed,
-      this.stops})
+      this.stops,
+      this.riders})
       : super._();
   @override
   Trip rebuild(void Function(TripBuilder) updates) =>
@@ -122,7 +125,8 @@ class _$Trip extends Trip {
         status == other.status &&
         poolingBlocked == other.poolingBlocked &&
         modeUsed == other.modeUsed &&
-        stops == other.stops;
+        stops == other.stops &&
+        riders == other.riders;
   }
 
   @override
@@ -136,6 +140,7 @@ class _$Trip extends Trip {
     _$hash = $jc(_$hash, poolingBlocked.hashCode);
     _$hash = $jc(_$hash, modeUsed.hashCode);
     _$hash = $jc(_$hash, stops.hashCode);
+    _$hash = $jc(_$hash, riders.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -150,7 +155,8 @@ class _$Trip extends Trip {
           ..add('status', status)
           ..add('poolingBlocked', poolingBlocked)
           ..add('modeUsed', modeUsed)
-          ..add('stops', stops))
+          ..add('stops', stops)
+          ..add('riders', riders))
         .toString();
   }
 }
@@ -191,6 +197,11 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
   ListBuilder<TripStop> get stops => _$this._stops ??= ListBuilder<TripStop>();
   set stops(ListBuilder<TripStop>? stops) => _$this._stops = stops;
 
+  ListBuilder<TripRider>? _riders;
+  ListBuilder<TripRider> get riders =>
+      _$this._riders ??= ListBuilder<TripRider>();
+  set riders(ListBuilder<TripRider>? riders) => _$this._riders = riders;
+
   TripBuilder() {
     Trip._defaults(this);
   }
@@ -206,6 +217,7 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
       _poolingBlocked = $v.poolingBlocked;
       _modeUsed = $v.modeUsed;
       _stops = $v.stops?.toBuilder();
+      _riders = $v.riders?.toBuilder();
       _$v = null;
     }
     return this;
@@ -237,12 +249,15 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
             poolingBlocked: poolingBlocked,
             modeUsed: modeUsed,
             stops: _stops?.build(),
+            riders: _riders?.build(),
           );
     } catch (_) {
       late String _$failedField;
       try {
         _$failedField = 'stops';
         _stops?.build();
+        _$failedField = 'riders';
+        _riders?.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(r'Trip', _$failedField, e.toString());
       }

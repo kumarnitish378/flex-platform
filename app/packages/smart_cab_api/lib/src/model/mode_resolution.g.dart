@@ -35,6 +35,8 @@ final BuiltSet<ModeResolutionModeEnum> _$modeResolutionModeEnumValues =
 
 const ModeResolutionReasonEnum _$modeResolutionReasonEnum_automationPaused =
     const ModeResolutionReasonEnum._('automationPaused');
+const ModeResolutionReasonEnum _$modeResolutionReasonEnum_optimizerDown =
+    const ModeResolutionReasonEnum._('optimizerDown');
 const ModeResolutionReasonEnum _$modeResolutionReasonEnum_vip =
     const ModeResolutionReasonEnum._('vip');
 const ModeResolutionReasonEnum _$modeResolutionReasonEnum_clientZoneTime =
@@ -56,6 +58,8 @@ ModeResolutionReasonEnum _$modeResolutionReasonEnumValueOf(String name) {
   switch (name) {
     case 'automationPaused':
       return _$modeResolutionReasonEnum_automationPaused;
+    case 'optimizerDown':
+      return _$modeResolutionReasonEnum_optimizerDown;
     case 'vip':
       return _$modeResolutionReasonEnum_vip;
     case 'clientZoneTime':
@@ -80,6 +84,7 @@ ModeResolutionReasonEnum _$modeResolutionReasonEnumValueOf(String name) {
 final BuiltSet<ModeResolutionReasonEnum> _$modeResolutionReasonEnumValues =
     BuiltSet<ModeResolutionReasonEnum>(const <ModeResolutionReasonEnum>[
   _$modeResolutionReasonEnum_automationPaused,
+  _$modeResolutionReasonEnum_optimizerDown,
   _$modeResolutionReasonEnum_vip,
   _$modeResolutionReasonEnum_clientZoneTime,
   _$modeResolutionReasonEnum_clientTime,
@@ -129,6 +134,7 @@ class _$ModeResolutionReasonEnumSerializer
     implements PrimitiveSerializer<ModeResolutionReasonEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
     'automationPaused': 'automation_paused',
+    'optimizerDown': 'optimizer_down',
     'vip': 'vip',
     'clientZoneTime': 'client_zone_time',
     'clientTime': 'client_time',
@@ -140,6 +146,7 @@ class _$ModeResolutionReasonEnumSerializer
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
     'automation_paused': 'automationPaused',
+    'optimizer_down': 'optimizerDown',
     'vip': 'vip',
     'client_zone_time': 'clientZoneTime',
     'client_time': 'clientTime',

@@ -1,6 +1,5 @@
 library;
 
-import 'package:built_collection/built_collection.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:smart_cab_api/smart_cab_api.dart' as api;
@@ -26,9 +25,9 @@ class SupervisorRepository {
   /// Fetch live vehicles for map display.
   Future<List<api.VehicleLive>> getLiveVehicles() async {
     try {
-      final Response<BuiltList<api.VehicleLive>> response =
+      final Response<api.DispatchVehiclesGet200Response> response =
           await _dispatchApi.dispatchVehiclesGet();
-      return response.data?.toList() ?? <api.VehicleLive>[];
+      return response.data?.items.toList() ?? <api.VehicleLive>[];
     } on DioException catch (e) {
       throw SupervisorException(
         e.response?.data?.toString() ?? 'Failed to fetch live vehicles',
@@ -40,9 +39,9 @@ class SupervisorRepository {
   /// Fetch candidate cabs for a request.
   Future<List<api.Candidate>> getCandidates(String requestId) async {
     try {
-      final Response<BuiltList<api.Candidate>> response =
+      final Response<api.DispatchRequestsRequestIdCandidatesGet200Response> response =
           await _dispatchApi.dispatchRequestsRequestIdCandidatesGet(requestId: requestId);
-      return response.data?.toList() ?? <api.Candidate>[];
+      return response.data?.items.toList() ?? <api.Candidate>[];
     } on DioException catch (e) {
       throw SupervisorException(
         'Failed to fetch candidates for request $requestId',
@@ -54,12 +53,26 @@ class SupervisorRepository {
   /// Fetch top scored suggestions for a request (A13).
   Future<List<api.Candidate>> getSuggestions(String requestId) async {
     try {
-      final Response<BuiltList<api.Candidate>> response =
+      final Response<api.DispatchRequestsRequestIdCandidatesGet200Response> response =
           await _dispatchApi.dispatchRequestsRequestIdSuggestionsGet(requestId: requestId);
-      return response.data?.toList() ?? <api.Candidate>[];
+      return response.data?.items.toList() ?? <api.Candidate>[];
     } on DioException catch (e) {
       throw SupervisorException(
         'Failed to fetch suggestions for request $requestId',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
+
+  /// Fetch optimizer hints for manual scopes (A17).
+  Future<List<api.RequestHint>> getDispatchHints() async {
+    try {
+      final Response<api.DispatchHintsGet200Response> response =
+          await _dispatchApi.dispatchHintsGet();
+      return response.data?.items.toList() ?? <api.RequestHint>[];
+    } on DioException catch (e) {
+      throw SupervisorException(
+        'Failed to fetch dispatch hints',
         statusCode: e.response?.statusCode,
       );
     }
@@ -172,8 +185,8 @@ class SupervisorRepository {
   /// Fetch alerts and SOS notifications.
   Future<List<api.Alert>> getAlerts() async {
     try {
-      final Response<BuiltList<api.Alert>> response = await _alertsApi.alertsGet();
-      return response.data?.toList() ?? <api.Alert>[];
+      final Response<api.AlertsGet200Response> response = await _alertsApi.alertsGet();
+      return response.data?.items.toList() ?? <api.Alert>[];
     } on DioException catch (e) {
       throw SupervisorException(
         e.response?.data?.toString() ?? 'Failed to fetch alerts',

@@ -44,6 +44,27 @@ void main() {
       expect(find.byKey(const Key('failsafe-timer')), findsOneWidget);
     });
 
+    testWidgets('A17 S-05 renders optimizer hint banner in manual scope', (
+      WidgetTester tester,
+    ) async {
+      fakeSupervisorRepo.hintToReturn = api.RequestHint(
+        (b) => b
+          ..requestId = 'req_100'
+          ..vehicleId = 'v_cab_99'
+          ..pickupEtaMinutes = 8
+          ..reasons.replace(['8 min away', '2 seats left']),
+      );
+
+      await tester.pumpWidget(
+        buildTestableWidget(const SuggestionsPanelScreen(requestId: 'req_100')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('optimizer-hint-card')), findsOneWidget);
+      expect(find.text('Proposed Cab: v_cab_99'), findsOneWidget);
+      expect(find.byKey(const Key('apply-hint-button')), findsOneWidget);
+    });
+
     testWidgets('A-06 Mode Settings renders A-06 key', (
       WidgetTester tester,
     ) async {
@@ -56,6 +77,8 @@ void main() {
 }
 
 class _FakeSupervisorRepository implements SupervisorRepository {
+  api.RequestHint? hintToReturn;
+
   @override
   Future<List<api.VehicleLive>> getLiveVehicles() async => <api.VehicleLive>[];
 
@@ -66,6 +89,10 @@ class _FakeSupervisorRepository implements SupervisorRepository {
   @override
   Future<List<api.Candidate>> getSuggestions(String requestId) async =>
       <api.Candidate>[];
+
+  @override
+  Future<List<api.RequestHint>> getDispatchHints() async =>
+      hintToReturn != null ? <api.RequestHint>[hintToReturn!] : <api.RequestHint>[];
 
   @override
   Future<void> submitSuggestionDecision(

@@ -20,6 +20,8 @@ class _$TripReport extends TripReport {
   @override
   final int? cancellations;
   @override
+  final BuiltMap<String, int>? assignmentsByActor;
+  @override
   final BuiltList<BuiltMap<String, JsonObject?>>? rows;
 
   factory _$TripReport([void Function(TripReportBuilder)? updates]) =>
@@ -32,6 +34,7 @@ class _$TripReport extends TripReport {
       this.p90WaitMinutes,
       this.noShows,
       this.cancellations,
+      this.assignmentsByActor,
       this.rows})
       : super._();
   @override
@@ -51,6 +54,7 @@ class _$TripReport extends TripReport {
         p90WaitMinutes == other.p90WaitMinutes &&
         noShows == other.noShows &&
         cancellations == other.cancellations &&
+        assignmentsByActor == other.assignmentsByActor &&
         rows == other.rows;
   }
 
@@ -63,6 +67,7 @@ class _$TripReport extends TripReport {
     _$hash = $jc(_$hash, p90WaitMinutes.hashCode);
     _$hash = $jc(_$hash, noShows.hashCode);
     _$hash = $jc(_$hash, cancellations.hashCode);
+    _$hash = $jc(_$hash, assignmentsByActor.hashCode);
     _$hash = $jc(_$hash, rows.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -77,6 +82,7 @@ class _$TripReport extends TripReport {
           ..add('p90WaitMinutes', p90WaitMinutes)
           ..add('noShows', noShows)
           ..add('cancellations', cancellations)
+          ..add('assignmentsByActor', assignmentsByActor)
           ..add('rows', rows))
         .toString();
   }
@@ -112,6 +118,12 @@ class TripReportBuilder implements Builder<TripReport, TripReportBuilder> {
   set cancellations(int? cancellations) =>
       _$this._cancellations = cancellations;
 
+  MapBuilder<String, int>? _assignmentsByActor;
+  MapBuilder<String, int> get assignmentsByActor =>
+      _$this._assignmentsByActor ??= MapBuilder<String, int>();
+  set assignmentsByActor(MapBuilder<String, int>? assignmentsByActor) =>
+      _$this._assignmentsByActor = assignmentsByActor;
+
   ListBuilder<BuiltMap<String, JsonObject?>>? _rows;
   ListBuilder<BuiltMap<String, JsonObject?>> get rows =>
       _$this._rows ??= ListBuilder<BuiltMap<String, JsonObject?>>();
@@ -131,6 +143,7 @@ class TripReportBuilder implements Builder<TripReport, TripReportBuilder> {
       _p90WaitMinutes = $v.p90WaitMinutes;
       _noShows = $v.noShows;
       _cancellations = $v.cancellations;
+      _assignmentsByActor = $v.assignmentsByActor?.toBuilder();
       _rows = $v.rows?.toBuilder();
       _$v = null;
     }
@@ -161,11 +174,14 @@ class TripReportBuilder implements Builder<TripReport, TripReportBuilder> {
             p90WaitMinutes: p90WaitMinutes,
             noShows: noShows,
             cancellations: cancellations,
+            assignmentsByActor: _assignmentsByActor?.build(),
             rows: _rows?.build(),
           );
     } catch (_) {
       late String _$failedField;
       try {
+        _$failedField = 'assignmentsByActor';
+        _assignmentsByActor?.build();
         _$failedField = 'rows';
         _rows?.build();
       } catch (e) {

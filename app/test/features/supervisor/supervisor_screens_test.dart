@@ -104,6 +104,9 @@ class _FakeSupervisorRepository implements SupervisorRepository {
       <api.Candidate>[];
 
   @override
+  Future<List<api.RequestHint>> getDispatchHints() async => <api.RequestHint>[];
+
+  @override
   Future<void> submitSuggestionDecision(
     String suggestionId, {
     required String decision,
