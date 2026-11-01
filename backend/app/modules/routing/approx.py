@@ -16,6 +16,8 @@ from datetime import time, timedelta, timezone
 
 from app.core.clock import Clock
 from app.domain.geo import LatLng, haversine_km
+from app.domain.speed_profile import slot_of
+from app.modules.routing.speed_profile import LearnedSpeeds
 from app.modules.routing.types import RouteResult, Source, TableResult
 
 # The platform stores UTC; these windows are local Indian time (coding-standards §2.13).
@@ -70,11 +72,21 @@ class ApproxRoutingProvider:
 
     name = "approx"
 
-    def __init__(self, clock: Clock, config: ApproxConfig | None = None) -> None:
+    def __init__(
+        self,
+        clock: Clock,
+        config: ApproxConfig | None = None,
+        learned: LearnedSpeeds | None = None,
+    ) -> None:
         self._clock = clock
         self._config = config or ApproxConfig()
+        #: Speeds learned from our own trips (B37, OQ-22). When a slot has one it
+        #: replaces the constant; when it has not, the constant stands.
+        self._learned = learned
 
     async def route(self, origin: LatLng, destination: LatLng) -> RouteResult:
+        if self._learned is not None:
+            await self._learned.ensure_fresh()
         distance_m, duration_s = self._estimate(origin, destination)
         return RouteResult(
             duration_seconds=duration_s,
@@ -87,6 +99,8 @@ class ApproxRoutingProvider:
         )
 
     async def table(self, origins: list[LatLng], destinations: list[LatLng]) -> TableResult:
+        if self._learned is not None:
+            await self._learned.ensure_fresh()
         durations: list[tuple[float, ...]] = []
         distances: list[tuple[float, ...]] = []
         for origin in origins:
@@ -103,10 +117,18 @@ class ApproxRoutingProvider:
     async def close(self) -> None:
         return None
 
+    def _speed_kmh(self, local_time: time) -> float:
+        """The learned speed for this hour of the week if there is one, else the constant."""
+        if self._learned is not None:
+            learned = self._learned.speed_kph(slot_of(self._clock.now(), "Asia/Kolkata"))
+            if learned is not None and learned > 0:
+                return learned
+        return self._config.speed_kmh_at(local_time)
+
     def _estimate(self, origin: LatLng, destination: LatLng) -> tuple[float, float]:
         """Return (metres, seconds)."""
         road_km = haversine_km(origin, destination) * self._config.road_factor
         local_time = self._clock.now().astimezone(IST).time()
-        speed_kmh = self._config.speed_kmh_at(local_time)
+        speed_kmh = self._speed_kmh(local_time)
         seconds = (road_km / speed_kmh) * 3600.0 if speed_kmh > 0 else 0.0
         return road_km * 1000.0, seconds

@@ -56,7 +56,12 @@ from app.modules.realtime.router import router as realtime_router
 from app.modules.realtime.service import MembershipService
 from app.modules.reports.router import router as reports_router
 from app.modules.requests.router import router as requests_router
-from app.modules.routing import EtaService, build_geocoding_provider, build_routing_provider
+from app.modules.routing import (
+    EtaService,
+    build_geocoding_provider,
+    build_learned_speeds,
+    build_routing_provider,
+)
 from app.modules.simctl.router import router as simctl_router
 from app.modules.tenancy.policy_router import router as client_policy_router
 from app.modules.tracking.router import router as tracking_router
@@ -91,7 +96,10 @@ def create_app(
 
     # One place decides which map services are used, so switching between the public
     # OSM servers and a self-hosted stack is configuration only (ADR-0010).
-    routing = build_routing_provider(settings, clock, redis)
+    sessions = create_session_factory(engine)
+    routing = build_routing_provider(
+        settings, clock, redis, build_learned_speeds(settings, clock, sessions)
+    )
     geocoding = build_geocoding_provider(settings)
     eta = EtaService(routing, clock)
     otp_sender = build_otp_sender(settings)
@@ -130,7 +138,7 @@ def create_app(
     app.state.settings = settings
     app.state.clock = clock
     app.state.engine = engine
-    app.state.session_factory = create_session_factory(engine)
+    app.state.session_factory = sessions
     app.state.redis = redis
     app.state.routing = routing
     app.state.eta = eta

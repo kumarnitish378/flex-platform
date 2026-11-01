@@ -19,6 +19,7 @@ from app.modules.notifications import models as notification_models
 from app.modules.people import models as people_models
 from app.modules.reports import models as report_models
 from app.modules.requests import models as request_models
+from app.modules.routing import speed_models as routing_speed_models
 from app.modules.tenancy import models as tenancy_models
 from app.modules.tracking import models as tracking_models
 
@@ -37,6 +38,7 @@ __all__ = [
     "people_models",
     "report_models",
     "request_models",
+    "routing_speed_models",
     "tenancy_models",
     "tracking_models",
 ]

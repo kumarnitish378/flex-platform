@@ -37,6 +37,7 @@ from app.modules.notifications.models import Notification
 from app.modules.people.models import Employee, SavedPlace
 from app.modules.reports.models import TripRating
 from app.modules.requests.models import RideRequest, RideRequestEvent
+from app.modules.routing.speed_models import RoadSpeedProfile, SpeedProfileState
 from app.modules.simctl.schemas import ResetResult, SeededUser
 from app.modules.tenancy.models import Client, ClientPolicy, Office, Operator, Zone
 
@@ -101,6 +102,10 @@ TRUNCATION_ORDER = (
     # Names requests only in JSON, so it has no foreign key to order around (B30).
     OptimizerHint,
     OptimizerRun,
+    # Not tenant tables, but a run that inherits the speeds an earlier run learned is
+    # not the same experiment (B37): two runs of one seed must see the same world.
+    RoadSpeedProfile,
+    SpeedProfileState,
     RideRequest,
     SavedPlace,
     Employee,

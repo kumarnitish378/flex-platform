@@ -63,6 +63,10 @@ OPTIMIZER_INTERVAL_SECONDS = 10
 #: section 5), so finer than a minute would add load and no information.
 MODE_PROMPT_INTERVAL_SECONDS = 60
 
+#: The speed profile once a day (`architecture.md` 3.2 step 5: a nightly job). It reads
+#: only trips completed since its last run, so a missed night costs nothing.
+SPEED_PROFILE_INTERVAL_SECONDS = 24 * 3600
+
 
 def create_celery(settings: Settings | None = None) -> Celery:
     """The Celery app. Broker and result backend are the Redis we already run."""
@@ -87,6 +91,10 @@ def create_celery(settings: Settings | None = None) -> Celery:
             "sweep-stale-vehicles": {
                 "task": "smart_cab.sweep_stale_vehicles",
                 "schedule": float(STALE_VEHICLE_INTERVAL_SECONDS),
+            },
+            "learn-speed-profile": {
+                "task": "smart_cab.learn_speed_profile",
+                "schedule": float(SPEED_PROFILE_INTERVAL_SECONDS),
             },
             "run-mode-prompts": {
                 "task": "smart_cab.run_mode_prompts",
@@ -137,7 +145,7 @@ async def _expire_requests() -> dict[str, int]:
 
 async def _refresh_stop_etas() -> dict[str, int]:
     from app.modules.dispatch.eta_refresh import EtaRefresher
-    from app.modules.routing import EtaService, build_routing_provider
+    from app.modules.routing import EtaService, build_learned_speeds, build_routing_provider
 
     settings = get_settings()
     clock = SystemClock()
@@ -145,7 +153,15 @@ async def _refresh_stop_etas() -> dict[str, int]:
     # different process, and the shared 1 req/s limiter lives in Redis for exactly that
     # reason (ADR-0010 rule 4).
     redis = create_redis(settings)
-    eta = EtaService(build_routing_provider(settings, clock, redis), clock)
+    eta = EtaService(
+        build_routing_provider(
+            settings,
+            clock,
+            redis,
+            build_learned_speeds(settings, clock, _session_factory(settings)),
+        ),
+        clock,
+    )
     async with _session_factory(settings)() as session:
         result = await EtaRefresher(session, clock, eta).refresh_due()
         await session.commit()
@@ -155,12 +171,20 @@ async def _refresh_stop_etas() -> dict[str, int]:
 async def _run_semi_auto() -> dict[str, int]:
     from app.modules.dispatch.semi_auto import SemiAutoService
     from app.modules.dispatch.service import DispatchService
-    from app.modules.routing import EtaService, build_routing_provider
+    from app.modules.routing import EtaService, build_learned_speeds, build_routing_provider
 
     settings = get_settings()
     clock = SystemClock()
     redis = create_redis(settings)
-    eta = EtaService(build_routing_provider(settings, clock, redis), clock)
+    eta = EtaService(
+        build_routing_provider(
+            settings,
+            clock,
+            redis,
+            build_learned_speeds(settings, clock, _session_factory(settings)),
+        ),
+        clock,
+    )
     try:
         async with _session_factory(settings)() as session:
             sweep = await SemiAutoService(
@@ -177,6 +201,16 @@ async def _run_semi_auto() -> dict[str, int]:
     }
 
 
+async def _learn_speed_profile() -> dict[str, int]:
+    from app.modules.routing.speed_profile import SpeedProfileService
+
+    settings = get_settings()
+    async with _session_factory(settings)() as session:
+        result = await SpeedProfileService(session, SystemClock()).learn()
+        await session.commit()
+    return {"trips": result.trips, "legs": result.legs, "slots": result.slots_updated}
+
+
 async def _run_mode_prompts() -> dict[str, int]:
     from app.modules.modes.prompts import ModePromptService
 
@@ -190,7 +224,7 @@ async def _run_mode_prompts() -> dict[str, int]:
 async def _run_optimizer() -> dict[str, int]:
     from app.modules.dispatch.optimizer_service import OptimizerService
     from app.modules.dispatch.service import DispatchService
-    from app.modules.routing import build_bulk_eta_service
+    from app.modules.routing import build_bulk_eta_service, build_learned_speeds
 
     settings = get_settings()
     clock = SystemClock()
@@ -198,7 +232,12 @@ async def _run_optimizer() -> dict[str, int]:
     try:
         # A bulk caller: it asks for one big matrix, which the public OSRM must never be
         # given (CLAUDE.md hard rule 7), so this is the `approx` provider there.
-        eta = build_bulk_eta_service(settings, clock, redis)
+        eta = build_bulk_eta_service(
+            settings,
+            clock,
+            redis,
+            build_learned_speeds(settings, clock, _session_factory(settings)),
+        )
         async with _session_factory(settings)() as session:
             sweep = await OptimizerService(
                 session, clock, DispatchService(session, clock, eta)
@@ -274,6 +313,12 @@ def expire_requests() -> dict[str, int]:
 def refresh_stop_etas() -> dict[str, int]:
     """Keep the ETA a rider is watching honest (B15)."""
     return _run("stop_etas", _refresh_stop_etas)
+
+
+@celery_app.task(name="smart_cab.learn_speed_profile")
+def learn_speed_profile() -> dict[str, int]:
+    """Fold the day's completed trips into the learned speed profile (B37)."""
+    return _run("speed_profile", _learn_speed_profile)
 
 
 @celery_app.task(name="smart_cab.run_mode_prompts")

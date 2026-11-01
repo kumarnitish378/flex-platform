@@ -122,6 +122,15 @@ class Settings(BaseSettings):
     routing_cache_ttl_seconds: int = Field(default=900, ge=0)
     osm_request_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
+    # --- learned speeds (B37, OQ-22) -------------------------------------------
+    #: Let the `approx` provider use speeds learned from completed trips where it has
+    #: them. Off is Phase 1/2 behaviour exactly.
+    speed_profile_enabled: bool = True
+    #: Legs a slot needs before its learned speed is trusted over the constant.
+    speed_profile_min_samples: int = Field(default=20, ge=1, le=10_000)
+    #: How often a running process re-reads the profile.
+    speed_profile_refresh_seconds: int = Field(default=3600, ge=1)
+
     # --- notifications (B16) -------------------------------------------------
     #: `log` in dev and tests, `ntfy` self-hosted, `fcm` not implemented (OQ-20).
     push_provider: PushProvider = PushProvider.log
