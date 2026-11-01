@@ -84,6 +84,24 @@ class RequestHintOut(BaseModel):
     created_at: datetime
 
 
+class EscortOut(BaseModel):
+    """The night escort gate on a trip (OQ-10): flagged, and whether a supervisor has cleared it."""
+
+    required: bool
+    confirmed: bool
+    basis: str | None = None
+    confirmed_by: uuid.UUID | None = None
+    confirmed_at: datetime | None = None
+    note: str | None = None
+
+
+class EscortConfirmInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    basis: str
+    note: str | None = Field(default=None, max_length=200)
+
+
 class TripOut(BaseModel):
     id: uuid.UUID
     vehicle_id: uuid.UUID
@@ -98,6 +116,8 @@ class TripOut(BaseModel):
     riders: list[TripRiderOut] = Field(default_factory=list)
     #: Hard rules this assignment broke and the supervisor accepted (ADR-0011).
     violations: list[str] = Field(default_factory=list)
+    #: Present on the supervisor's reads; the driver's own view omits it.
+    escort: EscortOut | None = None
 
 
 class AssignInput(BaseModel):

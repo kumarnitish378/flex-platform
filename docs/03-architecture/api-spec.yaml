@@ -901,6 +901,35 @@ paths:
                 note: {type: string}
       responses:
         '200': {description: Updated}
+  /dispatch/trips/{trip_id}/escort-confirmation:
+    post:
+      tags: [dispatch]
+      summary: Confirm the night escort for a flagged trip so it can start
+      description: |
+        Night escort rule (OQ-10, owner decision 2026-11-01). After 20:00 (the client's night
+        window), if a **female rider would be the only rider in the cab**, the trip is flagged
+        (`Trip.escort.required`, an `escort_required` alert) and **the driver cannot start it** (409,
+        `details.reason = escort_confirmation_required`) until a supervisor confirms here that an
+        escort is arranged or that a male co-rider is present. A male rider on the same route sharing
+        the cab clears the flag by itself. Nothing is assigned automatically; who confirmed, when and
+        on what basis is recorded on the trip and in its event history.
+        409 `escort_not_required` if the trip is not flagged, 409 if it has already started.
+      parameters:
+        - {name: trip_id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EscortConfirmation'}
+      responses:
+        '200':
+          description: The trip, with `escort` filled in
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
   /dispatch/overrides:
     post:
       tags: [dispatch]
@@ -1460,6 +1489,10 @@ components:
         priority: {type: integer, minimum: 1, maximum: 10, default: 5}
         is_vip: {type: boolean, default: false}
         night_escort_required: {type: boolean, default: false}
+        gender:
+          type: [string, 'null']
+          enum: [female, male, other, null]
+          description: Read only by the night escort rule (OQ-10). Unknown never triggers it.
         active: {type: boolean, default: true}
     Employee:
       allOf:
@@ -1586,6 +1619,14 @@ components:
         pooling_blocked: {type: boolean}
         mode_used: {type: string, enum: [manual, semi_auto, full_auto, failsafe]}
         stops: {type: array, items: {$ref: '#/components/schemas/TripStop'}}
+        escort:
+          description: >
+            Night escort gate (OQ-10). Present on supervisor reads. `required` means a woman would be
+            the only rider at night; `confirmed` means a supervisor has cleared it. The dispatch board
+            and trip detail must show a flagged, unconfirmed trip clearly.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TripEscort'
         riders:
           type: array
           description: >
@@ -1594,6 +1635,22 @@ components:
             as of the last plan that touched this trip; `null` until a plan has
             measured it (trips assigned before Phase 3).
           items: {$ref: '#/components/schemas/TripRider'}
+    TripEscort:
+      type: object
+      required: [required, confirmed]
+      properties:
+        required: {type: boolean}
+        confirmed: {type: boolean}
+        basis: {type: [string, 'null'], enum: [escort_arranged, male_co_rider_present, null]}
+        confirmed_by: {type: [string, 'null'], format: uuid}
+        confirmed_at: {type: [string, 'null'], format: date-time}
+        note: {type: [string, 'null']}
+    EscortConfirmation:
+      type: object
+      required: [basis]
+      properties:
+        basis: {type: string, enum: [escort_arranged, male_co_rider_present]}
+        note: {type: string, maxLength: 200}
     TripRider:
       type: object
       properties:
@@ -1988,7 +2045,7 @@ components:
       type: object
       properties:
         id: {type: string, format: uuid}
-        type: {type: string, enum: [sos, driver_issue, request_unassigned, request_near_expiry, vip_no_vehicle, failsafe, stale_vehicle, mode_prompt, system]}
+        type: {type: string, enum: [sos, driver_issue, request_unassigned, request_near_expiry, vip_no_vehicle, failsafe, stale_vehicle, mode_prompt, escort_required, system]}
         severity: {type: string, enum: [critical, warning, info]}
         status: {type: string, enum: [open, acknowledged, resolved]}
         created_at: {type: string, format: date-time}

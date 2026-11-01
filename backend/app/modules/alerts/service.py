@@ -70,6 +70,8 @@ SEVERITY: dict[AlertType, AlertSeverity] = {
     AlertType.failsafe: AlertSeverity.warning,
     AlertType.stale_vehicle: AlertSeverity.warning,
     AlertType.mode_prompt: AlertSeverity.info,
+    # A woman alone in a cab at night with nobody having said an escort is arranged.
+    AlertType.escort_required: AlertSeverity.critical,
     AlertType.system: AlertSeverity.warning,
 }
 
@@ -655,6 +657,7 @@ class AlertService:
         return alert
 
     async def announce_change(self, alert: Alert) -> None:
+        """Tell subscribers an alert changed (public for sweeps owned by other modules)."""
         await self._announce_change(alert)
 
     async def _announce_change(self, alert: Alert) -> None:

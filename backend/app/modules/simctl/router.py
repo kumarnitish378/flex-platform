@@ -25,6 +25,7 @@ from app.domain.errors import Conflict, ValidationFailed
 from app.domain.optimizer import Plan, Problem
 from app.modules.alerts.service import AlertService
 from app.modules.auth.dependencies import public_route
+from app.modules.dispatch.escort import EscortService
 from app.modules.dispatch.eta_refresh import EtaRefresher
 from app.modules.dispatch.optimizer_service import OptimizerService
 from app.modules.dispatch.semi_auto import SemiAutoService
@@ -105,6 +106,8 @@ async def set_clock(
     # stop ETAs before returning (`architecture.md` section 3.2 step 4).
     refreshed = await EtaRefresher(session, fake, request.app.state.eta).refresh_due()
     stale = await AlertService(session, fake).sweep_stale_vehicles()
+    # The night window can open during a jump, and a flagged trip needs its alert (OQ-10).
+    await EscortService(session, fake).sweep()
     # Semi-auto is due work twice over: a queued request in such a scope needs an offer,
     # and an offer nobody answered needs its failsafe. Both move with the clock, so a
     # scenario that jumps an hour must see an hour's worth of both (B25).

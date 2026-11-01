@@ -12,6 +12,7 @@ from shapely.geometry import Point as ShapelyPoint
 
 from app.core.dependencies import ClockDep, CurrentUserDep, SessionDep
 from app.domain.employee_import import ImportFormatError
+from app.domain.enums import Gender
 from app.domain.errors import Forbidden, ValidationFailed
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
@@ -66,6 +67,7 @@ def _employee_out(employee: Any) -> EmployeeOut:
         priority=employee.priority,
         is_vip=employee.is_vip,
         night_escort_required=employee.night_escort_required,
+        gender=Gender(employee.gender) if employee.gender else None,
         active=employee.active,
     )
 

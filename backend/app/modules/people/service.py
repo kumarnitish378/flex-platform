@@ -201,6 +201,7 @@ class EmployeeService:
                         priority=parsed_employee.priority,
                         is_vip=parsed_employee.is_vip,
                         night_escort_required=parsed_employee.night_escort_required,
+                        gender=parsed_employee.gender,
                         zone_id=await self._zone_of(operator_id, location),
                     )
                 )
@@ -215,6 +216,8 @@ class EmployeeService:
                 current.priority = parsed_employee.priority
                 current.is_vip = parsed_employee.is_vip
                 current.night_escort_required = parsed_employee.night_escort_required
+                if parsed_employee.gender is not None:
+                    current.gender = parsed_employee.gender
                 report.updated += 1
 
         await self.session.flush()

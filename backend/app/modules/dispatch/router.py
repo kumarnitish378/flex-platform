@@ -24,6 +24,7 @@ from app.domain.errors import Forbidden
 from app.domain.state_machines import Actor
 from app.modules.auth.dependencies import require
 from app.modules.auth.permissions import Permission
+from app.modules.dispatch.escort import EscortService, EscortStatus
 from app.modules.dispatch.models import Trip, TripStop
 from app.modules.dispatch.optimizer_service import OptimizerService
 from app.modules.dispatch.override_service import Impact, OverrideService
@@ -34,6 +35,8 @@ from app.modules.dispatch.schemas import (
     AutomationInput,
     AutomationOut,
     CandidateOut,
+    EscortConfirmInput,
+    EscortOut,
     ImpactOut,
     OverrideInput,
     OverrideResultOut,
@@ -336,12 +339,35 @@ async def list_trips(
     # One stop query for every trip, not one per trip: see `stops_by_trip`.
     stops = await service.stops_by_trip([trip.id for trip in trips])
     riders = await service.riders_by_trip(stops)
+    escort = await EscortService(service.session, service.clock).assess(trips)
     return {
         "items": [
-            _trip_with_stops(trip, stops.get(trip.id, []), riders.get(trip.id, []))
+            _trip_with_stops(
+                trip, stops.get(trip.id, []), riders.get(trip.id, []), escort.get(trip.id)
+            )
             for trip in trips
         ]
     }
+
+
+@router.post(
+    "/trips/{trip_id}/escort-confirmation",
+    summary="Confirm the night escort for a flagged trip so it can start",
+    dependencies=[Depends(require(Permission.assign))],
+)
+async def confirm_escort(
+    trip_id: uuid.UUID,
+    body: EscortConfirmInput,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> TripOut:
+    """OQ-10: a woman alone in the cab at night needs a person to say who is with her."""
+    operator_id = _operator_id(current_user)
+    escorts = EscortService(service.session, service.clock)
+    trip = await escorts.confirm(
+        operator_id, current_user.claims.user_id, trip_id, body.basis, body.note
+    )
+    return await _trip_out(service, trip)
 
 
 @router.get(
@@ -476,11 +502,17 @@ async def _trip_out(service: HasStops, trip: Trip) -> TripOut:
     riders: list[TripRiderView] = []
     if isinstance(service, DispatchService):
         riders = (await service.riders_by_trip({trip.id: stops})).get(trip.id, [])
-    return _trip_with_stops(trip, stops, riders)
+    escort = None
+    if isinstance(service, DispatchService):
+        escort = (await EscortService(service.session, service.clock).assess([trip])).get(trip.id)
+    return _trip_with_stops(trip, stops, riders, escort)
 
 
 def _trip_with_stops(
-    trip: Trip, stops: list[TripStop], riders: Sequence[TripRiderView] = ()
+    trip: Trip,
+    stops: list[TripStop],
+    riders: Sequence[TripRiderView] = (),
+    escort: EscortStatus | None = None,
 ) -> TripOut:
     return TripOut(
         id=trip.id,
@@ -491,6 +523,18 @@ def _trip_with_stops(
         status=trip.status,
         pooling_blocked=trip.pooling_blocked,
         mode_used=trip.mode_used,
+        escort=(
+            EscortOut(
+                required=escort.required,
+                confirmed=escort.confirmed,
+                basis=escort.basis,
+                confirmed_by=escort.confirmed_by,
+                confirmed_at=escort.confirmed_at,
+                note=escort.note,
+            )
+            if escort is not None
+            else None
+        ),
         riders=[
             TripRiderOut(
                 request_id=rider.request_id,

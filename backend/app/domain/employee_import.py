@@ -15,7 +15,7 @@ import io
 from dataclasses import dataclass, field
 
 REQUIRED_COLUMNS = ("name", "phone", "office_name", "home_lat", "home_lng")
-OPTIONAL_COLUMNS = ("landmark", "priority", "is_vip", "night_escort_required")
+OPTIONAL_COLUMNS = ("landmark", "priority", "is_vip", "night_escort_required", "gender")
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 
 DEFAULT_PRIORITY = 5
@@ -56,6 +56,7 @@ class ParsedEmployee:
     priority: int
     is_vip: bool
     night_escort_required: bool
+    gender: str | None = None
 
 
 @dataclass
@@ -133,6 +134,7 @@ def parse_csv(content: str) -> ParseResult:
                 priority=int(row["priority"]) if row.get("priority") else DEFAULT_PRIORITY,
                 is_vip=_as_bool(row.get("is_vip", "")),
                 night_escort_required=_as_bool(row.get("night_escort_required", "")),
+                gender=(row.get("gender") or "").lower() or None,
             )
         )
 
@@ -154,6 +156,10 @@ def _validate_row(index: int, row: dict[str, str]) -> list[RowError]:
     errors.extend(_validate_coordinate(index, "home_lat", row.get("home_lat", ""), 90.0))
     errors.extend(_validate_coordinate(index, "home_lng", row.get("home_lng", ""), 180.0))
     errors.extend(_validate_priority(index, row.get("priority", "")))
+
+    gender = row.get("gender", "").lower()
+    if gender and gender not in {"female", "male", "other"}:
+        errors.append(RowError(index, "gender", f"Expected female, male or other, got {gender!r}"))
 
     for column in ("is_vip", "night_escort_required"):
         value = row.get(column, "").lower()

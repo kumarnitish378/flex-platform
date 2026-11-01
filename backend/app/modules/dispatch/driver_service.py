@@ -48,6 +48,7 @@ from app.domain.state_machines import (
     transition_vehicle,
 )
 from app.modules.config.service import ConfigService
+from app.modules.dispatch.escort import EscortService
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
 from app.modules.dispatch.trip_distance import measure_trip_distance
 from app.modules.fleet.models import Driver, Vehicle
@@ -127,6 +128,9 @@ class DriverTripService:
         if trip.status == str(TripStatus.in_progress):
             # A retry whose acknowledgement was lost. Already true, so say so quietly.
             return trip
+
+        # Night escort rule (OQ-10): a flagged trip stays put until a supervisor has confirmed.
+        await EscortService(self.session, self.clock, self.config).require_cleared(trip)
 
         if trip.status == str(TripStatus.planned):
             # The driver starting is proof they were notified, which is what

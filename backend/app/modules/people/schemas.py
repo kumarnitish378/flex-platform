@@ -6,6 +6,8 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.enums import Gender
+
 PHONE_PATTERN = r"^\+[1-9][0-9]{7,14}$"
 
 
@@ -27,6 +29,7 @@ class EmployeeInput(Strict):
     priority: int = Field(default=5, ge=1, le=10)
     is_vip: bool = False
     night_escort_required: bool = False
+    gender: Gender | None = None
     active: bool = True
 
 
@@ -39,6 +42,7 @@ class EmployeeUpdate(Strict):
     priority: int | None = Field(default=None, ge=1, le=10)
     is_vip: bool | None = None
     night_escort_required: bool | None = None
+    gender: Gender | None = None
     active: bool | None = None
 
 
@@ -54,6 +58,7 @@ class EmployeeOut(Strict):
     priority: int
     is_vip: bool
     night_escort_required: bool
+    gender: Gender | None = None
     active: bool
 
 

@@ -92,6 +92,10 @@ def create_celery(settings: Settings | None = None) -> Celery:
                 "task": "smart_cab.sweep_stale_vehicles",
                 "schedule": float(STALE_VEHICLE_INTERVAL_SECONDS),
             },
+            "sweep-escort": {
+                "task": "smart_cab.sweep_escort",
+                "schedule": float(STALE_VEHICLE_INTERVAL_SECONDS),
+            },
             "learn-speed-profile": {
                 "task": "smart_cab.learn_speed_profile",
                 "schedule": float(SPEED_PROFILE_INTERVAL_SECONDS),
@@ -264,6 +268,16 @@ async def _sweep_stale_vehicles() -> dict[str, int]:
     return {"raised": sweep.raised, "cleared": sweep.cleared}
 
 
+async def _sweep_escort() -> dict[str, int]:
+    from app.modules.dispatch.escort import EscortService
+
+    settings = get_settings()
+    async with _session_factory(settings)() as session:
+        raised, cleared = await EscortService(session, SystemClock()).sweep()
+        await session.commit()
+    return {"raised": raised, "cleared": cleared}
+
+
 def _run(name: str, coroutine: Any) -> dict[str, int]:
     """Run one sweep, and never let it take the beat down.
 
@@ -337,6 +351,12 @@ def run_optimizer() -> dict[str, int]:
 def run_semi_auto() -> dict[str, int]:
     """Offer suggestions in semi-auto scopes, and fire the failsafes nobody answered."""
     return _run("semi_auto", _run_semi_auto)
+
+
+@celery_app.task(name="smart_cab.sweep_escort")
+def sweep_escort() -> dict[str, int]:
+    """Flag trips where a woman would ride alone at night, until a supervisor confirms (OQ-10)."""
+    return _run("escort", _sweep_escort)
 
 
 @celery_app.task(name="smart_cab.sweep_stale_vehicles")

@@ -95,6 +95,14 @@ class ActorType(StrEnum):
     optimizer = "optimizer"
 
 
+class Gender(StrEnum):
+    """`employee.gender`. Needed by the night escort rule and by nothing else."""
+
+    female = "female"
+    male = "male"
+    other = "other"
+
+
 class AlertType(StrEnum):
     """`data-model.md`, alert.type. B09 raises `request_near_expiry`; B17 adds the rest."""
 
@@ -106,6 +114,7 @@ class AlertType(StrEnum):
     failsafe = "failsafe"
     stale_vehicle = "stale_vehicle"
     mode_prompt = "mode_prompt"
+    escort_required = "escort_required"
     system = "system"
 
 

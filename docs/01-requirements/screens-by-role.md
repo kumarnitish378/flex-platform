@@ -43,10 +43,10 @@ One Flutter app. After login, `GET /auth/me` returns roles and permissions; the 
 | S-01 | Live dispatch map | All vehicles (colour by state), pending requests as pins; filter by client/zone; tap vehicle → details and current trip. |
 | S-02 | Pending queue | Requests sorted by wait; live timers; red when over threshold; tap → assign panel. |
 | S-03 | Assign panel | Request details; candidate vehicles with ETA to pickup, seats free, added minutes for existing riders; Manual assign. Phase 2: ranked suggestions with reasons, Approve. |
-| S-04 | Trips board | Active trips with stops, progress, delays. |
+| S-04 | Trips board | Active trips with stops, progress, delays. **Night escort flag (OQ-10):** a trip where a woman would be the only rider at night shows a clear red "Escort needed" banner (board row and trip detail) until a supervisor taps **Escort arranged** or **Male co-rider present** (`POST /dispatch/trips/{id}/escort-confirmation`); the driver cannot start it before that. Shows who confirmed and when afterwards. |
 | S-05 | Override sheet (Phase 2) | Actions: reassign, lock, force priority, block pooling, hold, cancel, vehicle out of service; impact preview; reason picker; expiry (end of shift default). |
 | S-06 | Modes (Phase 2) | Table of scopes and modes; add scope; emergency pause switch at top (Phase 1). |
-| S-07 | Alerts | SOS, driver issues, stale GPS, failsafe actions, mode-switch prompts. SOS alerts are full-screen with sound. |
+| S-07 | Alerts | SOS, driver issues, stale GPS, night escort required, failsafe actions, mode-switch prompts. SOS alerts are full-screen with sound. |
 | S-08 | Create request on behalf | Pick employee → same form as E-02. |
 
 ## Operator admin

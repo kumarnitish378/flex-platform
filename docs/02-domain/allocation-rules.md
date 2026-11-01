@@ -65,6 +65,7 @@ Applied in this order. A candidate that fails any rule is removed. If no candida
 9. **Opt-out:** request marked `no_sharing` → exclusive trip.
 10. **High priority / high urgency:** `priority ≤ 2` or `urgency = high` → no hold window.
 11. **Night safety (if enabled, client policy):** during night window, a trip's sequence must not leave a rider flagged `night_escort_required` as first pickup or last drop without an escort (exact client policy configurable; see OQ-10). Overrides require explicit reason.
+12. **Night escort gate (owner decision 2026-11-01; OQ-10; not a hard rule on assignment - a gate on *starting*):** during the night window (client policy, `night_safety_enabled`), if a **female** rider would be the **only rider** in the cab, the trip is flagged to the supervisor (dispatch board, trip detail, `escort_required` alert) and **cannot start** until a supervisor confirms `escort_arranged` or `male_co_rider_present`; who confirmed and when is recorded. A male rider on the same route sharing the cab clears the flag by itself. The platform never assigns an escort. Unknown gender never triggers it. Rule 11 (order of a shared trip, `night_escort_required`) is unchanged.
 
 ## 3. Candidates
 - Idle vehicles: `available`, ETA to pickup ≤ `candidate_max_eta_minutes` (OSRM time, adjusted by speed profile).

@@ -235,3 +235,28 @@ def test_five_hundred_rows_report_errors_per_row() -> None:
     assert {error.field for error in result.errors} == {"phone"}
     # Every reported row really is one of the broken ones.
     assert all((error.row - 2) % 10 == 0 for error in result.errors)
+
+
+# --- gender (night escort rule, OQ-10) -------------------------------------------------
+
+
+def test_gender_is_optional_and_parsed() -> None:
+    header = HEADER + ",gender"
+
+    result = parse_csv(
+        csv_of(
+            GOOD_ROW + ",Female",
+            GOOD_ROW.replace("Asha", "Raj").replace("5678", "5679") + ",",
+            header=header,
+        )
+    )
+
+    assert [e.gender for e in result.employees] == ["female", None]
+
+
+def test_an_unknown_gender_value_is_reported() -> None:
+    header = HEADER + ",gender"
+
+    result = parse_csv(csv_of(GOOD_ROW + ",banana", header=header))
+
+    assert [e.field for e in result.errors] == ["gender"]

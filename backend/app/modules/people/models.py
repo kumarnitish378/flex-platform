@@ -62,6 +62,8 @@ class Employee(TenantEntity):
     priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=DEFAULT_PRIORITY)
     is_vip: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     night_escort_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: `female`, `male`, `other` or unknown. Read by the night escort rule only (OQ-10).
+    gender: Mapped[str | None] = mapped_column(String(10), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 

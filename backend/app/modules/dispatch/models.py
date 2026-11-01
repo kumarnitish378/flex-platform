@@ -84,6 +84,14 @@ class Trip(TenantEntity):
     actual_distance_m: Mapped[float | None] = mapped_column(Float)
     empty_distance_m: Mapped[float | None] = mapped_column(Float)
     mode_used: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    #: Night escort rule (OQ-10): what the supervisor attested before this trip could start, who
+    #: said so and when. All NULL when the trip never needed it.
+    escort_basis: Mapped[str | None] = mapped_column(String(30))
+    escort_confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    escort_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    escort_note: Mapped[str | None] = mapped_column(String(200))
     #: LINESTRING once the route is drawn (B15+); null while the trip is only planned.
     route_geometry: Mapped[object | None] = mapped_column(LineString(), nullable=True)
 

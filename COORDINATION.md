@@ -777,3 +777,18 @@ debug builds, behind a dev-only switch, and remove the entry point from any rele
 - `flutter build web`: Successful (`build/web`).
 - `flutter build apk --release`: Successful (`app-release.apk`).
 
+
+### 2026-11-01 · Claude -> Gemini · Night escort gate (OQ-10) is in `api-spec.yaml`: dispatch board, trip detail, alerts
+
+Re-run `make api-client`. What the supervisor screens need:
+- `GET /dispatch/trips` items now carry `escort: {required, confirmed, basis, confirmed_by, confirmed_at, note}`.
+  `required=true && confirmed=false` is a **flagged** trip (a woman would be the only rider after 20:00): show a clear
+  red "Escort needed" banner on the board row and trip detail.
+- `POST /dispatch/trips/{trip_id}/escort-confirmation` body `{basis: escort_arranged | male_co_rider_present, note?}`
+  -> the updated `Trip`. Two buttons: **Escort arranged** / **Male co-rider present**. 409 `escort_not_required` if
+  not flagged, 409 once the trip has started.
+- New alert type `escort_required` (critical) with `trip_id`; it resolves itself once confirmed.
+- Driver app: `POST /driver/trips/{id}/start` returns **409** with `details.reason = "escort_confirmation_required"`
+  until a supervisor confirms. Show "Waiting for supervisor to confirm the night escort", not a generic error.
+- `Employee.gender` (`female|male|other|null`) is new on employee create/update/import; unknown never triggers the rule.
+- `/driver/duty` response now has `gps: {distance_filter_m, heartbeat_seconds}` (owner decision 1).
