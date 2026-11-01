@@ -23,7 +23,7 @@ import simpy
 
 from sim.engine import Engine
 from sim.geo import LatLng, haversine_km
-from sim.pings import Ping, PingSink, ping_interval_seconds
+from sim.pings import DISTANCE_FILTER_M, HEARTBEAT_SECONDS, Ping, PingSink, ping_interval_seconds
 from sim.routing import Route
 
 # simulator-spec.md §4.
@@ -78,6 +78,8 @@ class VehicleAgent:
         #: uploaded in order once it reconnects (mqtt-topics.md).
         self.connected = True
         self._held: list[Ping] = []
+        #: Where and when the phone last published: the distance filter and heartbeat read it.
+        self._last_published: tuple[LatLng, float] | None = None
 
         self._sink = sink
         self._config = config or VehicleConfig()
@@ -228,6 +230,8 @@ class VehicleAgent:
         if not self.has_fix:
             # No fix means no position was ever known. Nothing to buffer.
             return
+        if not self._phone_would_publish():
+            return
         if self._config.ping_loss_rate > 0 and self._rng.random() < self._config.ping_loss_rate:
             return
 
@@ -248,6 +252,22 @@ class VehicleAgent:
             self._held.append(ping)
             return
         self._sink.emit(ping)
+
+    def _phone_would_publish(self) -> bool:
+        """The driver app's rule: a position after moving about 5 m, else a 60 s heartbeat.
+
+        Judged on the true position, not the noisy one a receiver reports - otherwise GPS
+        noise alone would look like movement and a parked cab would publish every sample.
+        """
+        now = self.engine.env.now
+        last = self._last_published
+        self._last_published = (self.position, now) if last is None else last
+        if last is not None:
+            moved_m = haversine_km(last[0], self.position) * 1000.0
+            if moved_m < DISTANCE_FILTER_M and now - last[1] < HEARTBEAT_SECONDS:
+                return False
+        self._last_published = (self.position, now)
+        return True
 
     def _noisy_lat(self) -> float:
         return self.position.lat + self._gps_offset_degrees()

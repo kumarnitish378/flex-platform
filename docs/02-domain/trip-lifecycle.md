@@ -90,7 +90,7 @@ stateDiagram-v2
 | `available` | On duty, no active trip. |
 | `on_trip` | Has a dispatched or in-progress trip. |
 | `out_of_service` | Breakdown or supervisor action. Not assignable. |
-| `stale` (derived) | On duty but no GPS for > `stale_gps_seconds` (default 60). Shown as warning; not assignable automatically. |
+| `stale` (derived) | On duty but no GPS for > `stale_gps_seconds` (default 150). Shown as warning; not assignable automatically. |
 
 ## 5. Time fields
 All timestamps stored in UTC (`timestamptz`). Displayed in Asia/Kolkata. "Now" always comes from the injected `Clock`.

@@ -30,6 +30,7 @@ from app.domain.mqtt_credentials import (
     username_for,
 )
 from app.domain.state_machines import Actor, VehicleStatus, transition_vehicle
+from app.modules.config.service import ConfigService
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
 
@@ -49,10 +50,19 @@ class MqttCredentials:
 
 
 @dataclass(frozen=True, slots=True)
+class GpsPolicy:
+    """How the phone publishes location (`mqtt-topics.md`)."""
+
+    distance_filter_m: int
+    heartbeat_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
 class DutyState:
     on_duty: bool
     vehicle_id: uuid.UUID | None
     mqtt: MqttCredentials | None
+    gps: GpsPolicy | None = None
 
 
 class DutyService:
@@ -144,9 +154,14 @@ class DutyService:
             driver_id=str(driver.id),
             vehicle_id=str(vehicle.id),
         )
+        settings = await ConfigService(self.session, self.clock).all_values(operator_id)
         return DutyState(
             on_duty=True,
             vehicle_id=vehicle.id,
+            gps=GpsPolicy(
+                distance_filter_m=int(settings["gps_distance_filter_m"]),
+                heartbeat_seconds=int(settings["gps_heartbeat_seconds"]),
+            ),
             mqtt=MqttCredentials(
                 # The device's view of the broker, never this process's own: inside a
                 # deployment `mqtt_host` is a service name no phone can resolve.

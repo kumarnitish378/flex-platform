@@ -141,6 +141,8 @@ async def test_on_duty_returns_credentials(
     assert mqtt["password"]
     assert mqtt["topic_prefix"] == (f"sc/v1/op/{world['operator_id']}/veh/{world['vehicle_id']}")
     assert mqtt["port"] == 1883
+    # Owner decision 1: the phone is told how to publish, so changing it needs no app release.
+    assert body["gps"] == {"distance_filter_m": 5, "heartbeat_seconds": 60}
 
 
 async def test_the_password_is_stored_only_as_a_hash(

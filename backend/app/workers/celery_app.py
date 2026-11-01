@@ -43,7 +43,7 @@ logger = get_logger(__name__)
 #: `stop_etas` every 30 seconds, because that is what B15 specifies: a rider watching a
 #: cab approach is the one screen where a stale number is immediately obvious.
 #:
-#: `stale_vehicles` every 30 seconds, half of `stale_gps_seconds` (60) - so a cab that
+#: `stale_vehicles` every 30 seconds, a fifth of `stale_gps_seconds` (150) - so a cab that
 #: goes quiet is noticed within one interval of crossing the line rather than two.
 EXPIRY_INTERVAL_SECONDS = 60
 STOP_ETA_INTERVAL_SECONDS = 30

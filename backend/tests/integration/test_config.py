@@ -77,7 +77,7 @@ def test_defaults_match_allocation_rules() -> None:
         "alert_wait_minutes": 20,
         "request_expiry_minutes": 120,
         "no_show_wait_minutes": 5,
-        "stale_gps_seconds": 60,
+        "stale_gps_seconds": 150,
         "weight_wait": 1.0,
         "weight_empty_km": 2.0,
         "cost_new_vehicle": 15.0,
@@ -442,6 +442,43 @@ async def test_patch_config_applies_and_returns_the_new_state(
     response = await client.patch("/admin/config", json={"alert_wait_minutes": 25}, headers=headers)
     assert response.status_code == 200
     assert response.json()["alert_wait_minutes"] == 25
+
+
+async def _admin(
+    operator_id: uuid.UUID, clock: FakeClock, db_session: AsyncSession
+) -> dict[str, str]:
+    token = await token_for(Role.operator_admin, operator_id, clock, db_session)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize("patch", [{"stale_gps_seconds": 60}, {"gps_heartbeat_seconds": 120}])
+async def test_patch_refuses_a_stale_threshold_a_heartbeat_can_trip(
+    client: AsyncClient,
+    operator_id: uuid.UUID,
+    clock: FakeClock,
+    db_session: AsyncSession,
+    patch: dict[str, int],
+) -> None:
+    # 60 s is under 1.5 x the 60 s heartbeat; and the default 150 s is under 1.5 x 120 s.
+    headers = await _admin(operator_id, clock, db_session)
+
+    response = await client.patch("/admin/config", json=patch, headers=headers)
+
+    assert response.status_code == 422
+
+
+async def test_patch_accepts_a_slower_heartbeat_with_a_longer_threshold(
+    client: AsyncClient, operator_id: uuid.UUID, clock: FakeClock, db_session: AsyncSession
+) -> None:
+    headers = await _admin(operator_id, clock, db_session)
+
+    response = await client.patch(
+        "/admin/config",
+        json={"gps_heartbeat_seconds": 120, "stale_gps_seconds": 200},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
 
 
 async def test_patch_rejects_out_of_range_with_422(

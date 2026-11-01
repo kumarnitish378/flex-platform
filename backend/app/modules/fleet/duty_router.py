@@ -36,10 +36,16 @@ class MqttOut(Strict):
     topic_prefix: str
 
 
+class GpsOut(Strict):
+    distance_filter_m: int
+    heartbeat_seconds: int
+
+
 class DutyStateOut(Strict):
     on_duty: bool
     vehicle_id: uuid.UUID | None = None
     mqtt: MqttOut | None = None
+    gps: GpsOut | None = None
 
 
 def _operator_id(current_user: CurrentUserDep) -> uuid.UUID:
@@ -51,6 +57,7 @@ def _operator_id(current_user: CurrentUserDep) -> uuid.UUID:
 
 def _out(state: object) -> DutyStateOut:
     mqtt = getattr(state, "mqtt", None)
+    gps = getattr(state, "gps", None)
     return DutyStateOut(
         on_duty=state.on_duty,  # type: ignore[attr-defined]
         vehicle_id=state.vehicle_id,  # type: ignore[attr-defined]
@@ -64,6 +71,11 @@ def _out(state: object) -> DutyStateOut:
                 topic_prefix=mqtt.topic_prefix,
             )
             if mqtt
+            else None
+        ),
+        gps=(
+            GpsOut(distance_filter_m=gps.distance_filter_m, heartbeat_seconds=gps.heartbeat_seconds)
+            if gps
             else None
         ),
     )

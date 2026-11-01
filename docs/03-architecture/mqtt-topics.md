@@ -50,20 +50,32 @@ Batch (after offline period), max 500 pings, ordered by `ts`:
 | `src` | string | `app`, `esp32`, `sim` | yes |
 
 ## Ingestor validation
-- Drop pings with `acc` > 100 m, impossible jumps (> 50 m/s implied speed), or `ts` more than 24 h old or 2 min in the future (relative to `Clock`).
+- Drop pings with `acc` > 100 m (a fix that poor cannot be told from the 5 m filter's own noise), impossible jumps (> 50 m/s implied speed), or `ts` more than 24 h old or 2 min in the future (relative to `Clock`).
 - Out-of-order pings are stored but do not move the "latest position" backwards.
 - Latest position → Redis `veh:{vehicle_id}:pos` (hash: lat, lng, ts, spd, hdg) with TTL 10 min.
 - Persist to `location_ping` in batches every 5 s.
 - Publish internal event on Redis channel `ev:veh_pos:{operator_id}` for WebSocket fan-out.
 
-## Ping intervals
-| Situation | Interval |
+## When the phone publishes
+Vehicle location is the **driver's phone GPS** (owner decision, 2026-11-01; OQ-22). The app uses a
+**distance filter**, not a timer:
+
+| Situation | Rule |
 |---|---|
-| Moving (> 1 m/s) | 5 s |
-| Stationary > 2 min | 30 s |
+| Moved at least `gps_distance_filter_m` (default **5 m**) since the last published fix | publish |
+| Stationary: nothing published for `gps_heartbeat_seconds` (default **60 s**) | publish a **heartbeat** (same position), so a parked cab is not marked stale |
 | Off duty | none |
 | Offline | buffer locally, send as batch on reconnect |
-The `/cmd` topic (Phase 2) can change intervals remotely.
+
+Both numbers are operator config (`allocation-rules.md`) and are handed to the app in the `gps` object of
+the `/driver/duty` response, so changing them needs no app release. This replaces the earlier 5 s moving /
+30 s stationary timer. The `/cmd` topic (Phase 2) can still change them remotely.
+
+**Consistency with staleness.** A parked cab speaks once per heartbeat, so `stale_gps_seconds` must leave
+room for a missed one: it defaults to **150 s** and the config service refuses a value below
+**1.5 x `gps_heartbeat_seconds`** (the old default of 60 s would have marked every parked cab stale the
+moment its heartbeat was a few seconds late). Heartbeat pings are ordinary pings: they carry `spd` 0 and
+are stored, which is also what lets B37 and the trip-distance measurement see how long a cab sat still.
 
 ## ESP32 tracker (optional hardware)
 Same topics and payload with `src: "esp32"`. Firmware requirements: GNSS module, LTE/2G modem, TLS MQTT client, Last Will, local buffer of ≥ 30 min, OTA update. Detailed firmware spec is out of scope for Phase 1.

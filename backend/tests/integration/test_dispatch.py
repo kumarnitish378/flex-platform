@@ -341,8 +341,8 @@ async def test_vehicles_report_their_last_position(
 async def test_a_vehicle_with_an_old_ping_is_stale(
     client: AsyncClient, world: dict[str, Any], supervisor: dict[str, str], clock: FakeClock
 ) -> None:
-    """`stale_gps_seconds` default is 60; a supervisor must see the difference."""
-    clock.advance(timedelta(minutes=2))
+    """`stale_gps_seconds` default is 150; a supervisor must see the difference."""
+    clock.advance(timedelta(minutes=5))
 
     response = await client.get("/dispatch/vehicles", headers=supervisor)
     assert all(item["stale"] for item in response.json()["items"])

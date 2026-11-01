@@ -39,7 +39,9 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `alert_wait_minutes` | 20 | 5–60 | no | A waiting request has waited too long: the board turns it red **and escalation starts** (ADR-0023). |
 | `request_expiry_minutes` | 120 | 30–480 | no | Unassigned request expires. |
 | `no_show_wait_minutes` | 5 | 1–15 | yes | Driver wait before no-show allowed. |
-| `stale_gps_seconds` | 60 | 20–300 | no | Vehicle considered stale. |
+| `stale_gps_seconds` | 150 | 20–300 | no | Vehicle considered stale. Must be at least 1.5 x `gps_heartbeat_seconds` (the config service refuses less). Was 60 until the phone moved to a distance filter + 60 s heartbeat. |
+| `gps_distance_filter_m` | 5 | 1–100 | no | The driver app publishes a position after moving this far. Sent to the app in `/driver/duty`. |
+| `gps_heartbeat_seconds` | 60 | 15–120 | no | While stationary the app publishes a heartbeat this often, so a parked cab is not stale. |
 | `weight_wait` | 1.0 | 0–10 | no | Weight of new rider's wait minutes. |
 | `weight_empty_km` | 2.0 | 0–20 | no | Minutes-equivalent per empty km. |
 | `cost_new_vehicle` | 15.0 | 0–120 | no | Minutes-equivalent cost of deploying an idle vehicle. |

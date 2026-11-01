@@ -47,7 +47,7 @@ class OptimizerParams:
     """The operator's numbers (CLAUDE.md hard rule 4: they come from config, not code)."""
 
     weights: CostWeights = field(default_factory=CostWeights)
-    stale_gps_seconds: int = 60
+    stale_gps_seconds: int = 150
     #: Seconds a cab spends at each stop (`stop_dwell_seconds`): riders getting in or out.
     #: Without it a plan promises rides that the people on board then spend minutes
     #: waiting for others to board, and a pooled rider's ride runs past rule 7's limit

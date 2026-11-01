@@ -16,8 +16,9 @@ from sim.agents.vehicle import VehicleAgent, VehicleConfig
 from sim.engine import Engine
 from sim.geo import LatLng, haversine_km
 from sim.pings import (
+    DISTANCE_FILTER_M,
+    HEARTBEAT_SECONDS,
     MOVING_INTERVAL_SECONDS,
-    STATIONARY_INTERVAL_SECONDS,
     JsonlPingSink,
     MemoryPingSink,
     Ping,
@@ -184,7 +185,8 @@ def test_going_off_duty_stops_the_pings() -> None:
     assert sink.pings == []
 
 
-def test_idle_vehicle_settles_to_the_stationary_cadence() -> None:
+def test_a_parked_vehicle_publishes_only_a_heartbeat() -> None:
+    """Owner decision 1: no distance moved, so one ping a minute and no more."""
     engine = build_engine()
     sink = MemoryPingSink()
     agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
@@ -196,8 +198,23 @@ def test_idle_vehicle_settles_to_the_stationary_cadence() -> None:
         (second.ts - first.ts).total_seconds()
         for first, second in zip(sink.pings, sink.pings[1:], strict=False)
     ]
-    assert gaps[0] == MOVING_INTERVAL_SECONDS
-    assert gaps[-1] == STATIONARY_INTERVAL_SECONDS
+    assert gaps and all(gap == HEARTBEAT_SECONDS for gap in gaps)
+
+
+def test_a_moving_vehicle_publishes_after_every_five_metres() -> None:
+    engine = build_engine()
+    sink = MemoryPingSink()
+    agent = VehicleAgent(engine, "vehicle-1", DEPOT, sink, NO_NOISE)
+    agent.go_on_duty()
+    engine.spawn(lambda: agent.drive_to(OFFICE))
+    engine.run()
+
+    hops = [
+        haversine_km(LatLng(a.lat, a.lng), LatLng(b.lat, b.lng)) * 1000.0
+        for a, b in zip(sink.pings, sink.pings[1:], strict=False)
+    ]
+    assert len(hops) > 5
+    assert all(hop >= DISTANCE_FILTER_M - 0.5 for hop in hops)
 
 
 # --- noise and determinism ---------------------------------------------------

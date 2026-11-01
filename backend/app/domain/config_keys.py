@@ -322,7 +322,30 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             per_client=True,
             description="Driver wait before no-show allowed.",
         ),
-        ConfigKey("stale_gps_seconds", 60, 20, 300, description="Vehicle considered stale."),
+        ConfigKey(
+            "stale_gps_seconds",
+            150,
+            20,
+            300,
+            description=(
+                "Vehicle considered stale. At least 1.5 x gps_heartbeat_seconds, or a parked "
+                "cab would be stale between two heartbeats."
+            ),
+        ),
+        ConfigKey(
+            "gps_distance_filter_m",
+            5,
+            1,
+            100,
+            description="The driver app publishes a position after moving this far.",
+        ),
+        ConfigKey(
+            "gps_heartbeat_seconds",
+            60,
+            15,
+            120,
+            description="While stationary the app publishes a heartbeat this often.",
+        ),
         ConfigKey("weight_wait", 1.0, 0, 10, description="Weight of the new rider's wait."),
         ConfigKey("weight_empty_km", 2.0, 0, 20, description="Minutes-equivalent per empty km."),
         ConfigKey(
@@ -407,6 +430,27 @@ def validate(name: str, value: Any) -> Any:
             {"key": name, "known_keys": sorted(CONFIG_KEYS)},
         )
     return key.validate(value)
+
+
+#: A stale threshold must outlast a missed heartbeat: at 1.0 x, a parked cab is "stale" every time
+#: its heartbeat is a second late.
+STALE_OVER_HEARTBEAT = 1.5
+
+
+def check_consistency(values: dict[str, Any]) -> None:
+    """Rules between keys, judged on the full effective set (stored values plus the patch)."""
+    stale = values["stale_gps_seconds"]
+    heartbeat = values["gps_heartbeat_seconds"]
+    if stale < STALE_OVER_HEARTBEAT * heartbeat:
+        raise ValidationFailed(
+            "stale_gps_seconds must be at least 1.5 x gps_heartbeat_seconds, or a parked cab "
+            "would be marked stale between two heartbeats",
+            {
+                "stale_gps_seconds": stale,
+                "gps_heartbeat_seconds": heartbeat,
+                "minimum_stale_gps_seconds": STALE_OVER_HEARTBEAT * heartbeat,
+            },
+        )
 
 
 def validate_all(values: dict[str, Any]) -> dict[str, Any]:

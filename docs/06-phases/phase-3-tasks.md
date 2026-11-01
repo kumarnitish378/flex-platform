@@ -106,11 +106,12 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: killing the optimizer leaves every scope working manually with an alert raised and no request
   stuck; recovery restores the scope without an operator touching anything; S12 passes.
 
-- [~] **B37 · Learned speed profiles** · deps B15
+- [x] **B37 · Learned speed profiles** · deps B15
   Docs: data-model.md (`road_speed_profile`), ADR-0010, OQ-22
   Do: write `road_speed_profile` from completed trips (168 hour-of-week slots) and read it in the `approx`
   provider in place of the constant. **This is OQ-22**, which has been the dominant term in every scenario
   number since Phase 1 and is still unsourced.
+  *Closed 2026-11-01 (owner): the mechanism is complete and tested; the real pings arrive once the pilot runs, and re-stating the headline numbers is then a re-run, not new work.*
   Done when: a profile built from real pings changes an `approx` ETA measurably; the suite is re-run and
   the headline numbers are restated against measured speeds; OQ-22 can be closed or re-stated with data.
 

@@ -63,6 +63,7 @@ class ConfigService:
             raise ValidationFailed("No config values supplied")
 
         validated = config_keys.validate_all(changes)
+        config_keys.check_consistency({**await self.all_values(operator_id), **validated})
 
         existing = {
             row.key: row
