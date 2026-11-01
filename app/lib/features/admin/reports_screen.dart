@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:smart_cab_api/smart_cab_api.dart' as api;
 
+import '../../core/file_download_helper.dart';
 import '../../data/api/admin_repository.dart';
 
 /// Admin operational reports & billing export screen (A-07 / A19).
 ///
 /// Features wait distribution, pooling rate %, distance ("not measured" if null, never 0 km),
-/// two suggestion acceptance rates, and monthly billing CSV download action.
+/// two suggestion acceptance rates, client selector, and real CSV download action.
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
 
@@ -18,24 +19,38 @@ class ReportsScreen extends ConsumerStatefulWidget {
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   bool _loading = true;
   api.OperationsReport? _report;
+  List<api.Client> _clients = <api.Client>[];
+  String? _selectedClientId;
+  bool _downloading = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _fetchReport();
+    _loadClientsAndReport();
   }
 
-  Future<void> _fetchReport() async {
+  Future<void> _loadClientsAndReport() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
+      final repo = ref.read(adminRepositoryProvider);
+      final clientsList = await repo.getClients();
       final now = DateTime.now();
       final from = now.subtract(const Duration(days: 30));
-      final api.OperationsReport? report = await ref
-          .read(adminRepositoryProvider)
-          .getOperationsReport(from: from, to: now);
+      final reportData = await repo.getOperationsReport(
+        from: from,
+        to: now,
+        clientId: _selectedClientId,
+      );
+
       if (mounted) {
         setState(() {
-          _report = report;
+          _clients = clientsList;
+          _report = reportData;
           _loading = false;
         });
       }
@@ -49,10 +64,41 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     }
   }
 
-  void _downloadBillingExport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Downloading monthly billing CSV export...')),
-    );
+  Future<void> _downloadBillingCsv() async {
+    setState(() {
+      _downloading = true;
+      _error = null;
+    });
+
+    try {
+      final now = DateTime.now();
+      final monthStr = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+      final String csvContent = await ref
+          .read(adminRepositoryProvider)
+          .getBillingExportCsv(month: monthStr, clientId: _selectedClientId);
+
+      final String fileName = 'billing_export_$monthStr.csv';
+      await saveAndDownloadFile(fileName, csvContent);
+
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Downloaded $fileName successfully')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _error = e.toString();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $_error')),
+        );
+      }
+    }
   }
 
   @override
@@ -78,9 +124,15 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         actions: <Widget>[
           ElevatedButton.icon(
             key: const Key('download-billing-csv'),
-            icon: const Icon(Icons.download),
+            icon: _downloading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download),
             label: const Text('Billing CSV'),
-            onPressed: _downloadBillingExport,
+            onPressed: _downloading ? null : _downloadBillingCsv,
           ),
         ],
       ),
@@ -91,8 +143,40 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
+                  // Client Selector Dropdown for Operator Admin
+                  DropdownButtonFormField<String?>(
+                    key: const Key('client-selector'),
+                    initialValue: _selectedClientId,
+                    decoration: const InputDecoration(
+                      labelText: 'Filter by Client',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: <DropdownMenuItem<String?>>[
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All Clients'),
+                      ),
+                      for (final api.Client c in _clients)
+                        DropdownMenuItem<String?>(
+                          value: c.id,
+                          child: Text(c.name),
+                        ),
+                    ],
+                    onChanged: (String? val) {
+                      setState(() {
+                        _selectedClientId = val;
+                      });
+                      _loadClientsAndReport();
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
                   if (_error != null) ...<Widget>[
-                    Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                    Text(
+                      _error!,
+                      key: const Key('reports-error'),
+                      style: TextStyle(color: theme.colorScheme.error),
+                    ),
                     const SizedBox(height: 16),
                   ],
 

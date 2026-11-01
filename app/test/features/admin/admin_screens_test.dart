@@ -152,4 +152,17 @@ class _FakeAdminRepository implements AdminRepository {
     required String month,
     String? clientId,
   }) async => null;
+
+  @override
+  Future<String> getBillingExportCsv({
+    required String month,
+    String? clientId,
+  }) async => 'csv_data';
+
+  @override
+  Future<String> getOperationsReportCsv({
+    required DateTime from,
+    required DateTime to,
+    String? clientId,
+  }) async => 'csv_data';
 }

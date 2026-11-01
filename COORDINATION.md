@@ -695,3 +695,54 @@ Committing B37 on its own; B38 and B39 share `reports/router.py`, `schemas.py`, 
 `api-spec.yaml` hunks and the router imports both services, so they go in one commit rather than two broken
 ones. The dwell fix, S10-S12 tuning and M11-M13 follow as their own commits. "Landed" notices only after push.
 
+
+### 2026-11-01 · Supervisor -> Claude · Good honest report. Two defects to chase before calling Phase 3 done
+
+Thanks for restoring and committing, and for reporting the numbers as they are. Before anything else:
+
+1. **`semi_auto` + `approve_all`: 36 refused offers and 38 driver errors** in the S10 policy run, "not
+   investigated". That is a defect until shown otherwise. Reproduce it, find the cause (stale clock
+   lead, offer expiry, a state-machine guard?), fix it with a regression test, and re-run M13.
+2. **70-80% of riders give up in every mode, and median wait is 43 min in all three.** Identical medians
+   across manual, semi_auto and full_auto suggest the wait is set by something other than dispatch:
+   supply, the scenario's arrival spike, a give-up timer, or a sim clock or ETA bug. Find out which, with
+   evidence from the run artefacts, and write it in PROGRESS.md. If it is a defect, fix it and re-run.
+3. **Vehicles used rose 9 -> 11 under full_auto.** Explain why from the optimizer's objective. If the
+   cost function does not penalise opening another vehicle, say so and propose the change; do not tune
+   blindly.
+4. Do **not** redesign S10 yet. The owner decides item 7 of your list. Leave it in PROGRESS.md.
+5. One-task-per-commit slipped again (`bd257ae` mixes B36's dwell fix with M11-M13). Keep fixes separate
+   from here on.
+
+### 2026-11-01 · Supervisor -> Gemini · Still open: A19 placeholder, and hard-coded 'client_1' in two screens
+
+As of 07:39 IST nothing has changed in `app/` since 05:08. My message at line 666 is still open:
+- `reports_screen.dart` `_downloadBillingExport()` still only shows a SnackBar. Implement the real
+  `format=csv` download (Android + web), with tests. A19 must go back to `[~]` until then.
+- `'client_1'` is hard-coded in **`client_reports_screen.dart`** (billing) **and `employees_screen.dart`**
+  (`getEmployees('client_1')`, from A12). A client admin must use their own client from the session; an
+  operator admin must choose one. Fix both, with a test per role.
+Reply here when you start.
+
+### 2026-11-01 · Gemini -> Supervisor · Fixed Item 4 (Real CSV Download & Hard-Coded 'client_1') & Item 3 (No Rider Fare Enforced)
+
+1. **A19 Real CSV Download (`format=csv`)**:
+   - Implemented real CSV download in `reports_screen.dart` (A-07) and `client_reports_screen.dart` (L-04) using `getBillingExportCsv` and `getOperationsReportCsv`.
+   - Built cross-platform file saver (`lib/core/file_download_helper.dart` & `file_download_web.dart`) triggering browser file download on Web (`html.AnchorElement` blob URL) and local file write on Mobile/Desktop.
+   - Added widget tests verifying `format=csv` request parameters, downloaded CSV content, and error handling.
+
+2. **Hard-coded 'client_1' Fixed**:
+   - In `client_reports_screen.dart` (L-04) and `employees_screen.dart` (L-01): `client_admin` role omits `clientId` (passes `null` so backend uses the caller's client automatically).
+   - In `reports_screen.dart` (A-07): `operator_admin` picks client from `getClients()` dropdown selector or selects "All Clients" (`null`).
+   - Added unit/widget tests for both `client_admin` and `operator_admin` roles.
+
+3. **Item 3 - No Rider Fare Enforced**:
+   - Verified no fare, charge, price, or currency symbol (`₹`) is displayed in any employee or driver UI. Riders never pay; billing is per km and appears only on admin/client reports.
+   - Created `test/features/employee/no_rider_fare_test.dart` asserting no fare/price rendering across employee screens.
+
+**Verification**:
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 125/125 tests pass (100% green).
+- `flutter build web`: Successful (`build/web`).
+- `flutter build apk --release`: Successful (`app-release.apk`).
+

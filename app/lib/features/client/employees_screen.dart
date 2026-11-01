@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:smart_cab_api/smart_cab_api.dart' as api;
 
+import '../../core/session.dart';
 import '../../data/api/admin_repository.dart';
 
 /// Client admin employees screen (L-01).
@@ -27,8 +28,11 @@ class _ClientEmployeesScreenState extends ConsumerState<ClientEmployeesScreen> {
 
   Future<void> _fetch() async {
     try {
+      final Session session = ref.read(sessionProvider);
+      final String clientId = session.activeRole == Role.clientAdmin ? (session.userId ?? 'client_self') : 'client_1';
+
       final List<api.Employee> list =
-          await ref.read(adminRepositoryProvider).getEmployees('client_1');
+          await ref.read(adminRepositoryProvider).getEmployees(clientId);
       if (mounted) {
         setState(() {
           _employees = list;

@@ -137,6 +137,48 @@ class AdminRepository {
       );
     }
   }
+
+  /// Fetch billing export CSV content (A19).
+  Future<String> getBillingExportCsv({
+    required String month,
+    String? clientId,
+  }) async {
+    try {
+      final Response<dynamic> response = await _reportsApi.reportsBillingGet(
+        month: month,
+        clientId: clientId,
+        format: 'csv',
+      );
+      return response.data?.toString() ?? '';
+    } on DioException catch (e) {
+      throw AdminException(
+        e.response?.data?.toString() ?? 'Failed to download billing CSV export',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
+
+  /// Fetch operations report CSV content (A19).
+  Future<String> getOperationsReportCsv({
+    required DateTime from,
+    required DateTime to,
+    String? clientId,
+  }) async {
+    try {
+      final Response<dynamic> response = await _reportsApi.reportsOperationsGet(
+        from: api.Date(from.year, from.month, from.day),
+        to: api.Date(to.year, to.month, to.day),
+        clientId: clientId,
+        format: 'csv',
+      );
+      return response.data?.toString() ?? '';
+    } on DioException catch (e) {
+      throw AdminException(
+        e.response?.data?.toString() ?? 'Failed to download operations report CSV',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
 }
 
 final Provider<AdminRepository> adminRepositoryProvider =

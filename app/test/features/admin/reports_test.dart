@@ -122,4 +122,21 @@ class _FakeAdminRepository implements AdminRepository {
         ..rows.replace([]),
     );
   }
+
+  @override
+  Future<String> getBillingExportCsv({
+    required String month,
+    String? clientId,
+  }) async {
+    return 'client_id,month,billable_rides,billable_km\nc1,$month,8,120.0';
+  }
+
+  @override
+  Future<String> getOperationsReportCsv({
+    required DateTime from,
+    required DateTime to,
+    String? clientId,
+  }) async {
+    return 'from,to,requests,completed\n${from.toIso8601String()},${to.toIso8601String()},10,8';
+  }
 }
