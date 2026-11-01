@@ -196,6 +196,16 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             ),
         ),
         ConfigKey(
+            "billing_rate_per_km",
+            0.0,
+            0,
+            100000,
+            description=(
+                "What the operator charges a client company per kilometre (owner decision, "
+                "OQ-03). 0 means no rate is set: the export gives kilometres and no amount."
+            ),
+        ),
+        ConfigKey(
             "billing_distance_basis",
             "trip_share",
             choices=("trip_share", "direct"),

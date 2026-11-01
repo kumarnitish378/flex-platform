@@ -115,7 +115,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: a profile built from real pings changes an `approx` ETA measurably; the suite is re-run and
   the headline numbers are restated against measured speeds; OQ-22 can be closed or re-stated with data.
 
-- [~] **B38 · Billing export** · deps B19
+- [x] **B38 · Billing export** · deps B19
   Docs: reports.md if it exists, otherwise add the shape to this task before coding
   Do: per-client monthly export of trips, riders, distance and whatever the pilot operator actually bills
   on — which is **OQ-03 and OQ-01**, so the shape comes from them, not from here.

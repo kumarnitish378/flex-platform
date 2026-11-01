@@ -2,12 +2,13 @@
 
 > **OPA-06 · Billing export** · Phase 3 - per client, per period: trips, km, invoice-ready CSV.
 
-That is all the requirement says, and it leaves out the thing an invoice depends on: what
-the operator *bills on*. That is **OQ-03** (pricing: per cab, per trip, tiered?) and **OQ-01**
-(who the pilot operator is), and both are open. So this export deliberately stops short of
-money. It gives a client's month as **quantities** - rides, trips, riders, kilometres - each
-traceable to the rows it came from, plus the three treatments an invoice would otherwise have
-to guess at, as config keys with the defaults stated below:
+**The basis is decided (owner, 2026-11-01; OQ-03): the operator bills the client company per
+kilometre.** Riders never pay, so nothing here is addressed to an employee and no employee-facing
+response carries a charge. The export gives a client's month as **kilometres** - each traceable to
+the rows it came from - with rides, trips and riders alongside as information only (a trip count is
+not a billing basis). `billing_rate_per_km` (operator config, `0` = not set) turns kilometres into
+an `amount`; the rate is the operator's own and is not defaulted. Three treatments an invoice would
+otherwise have to guess at stay config keys, still provisional because OQ-01 is open:
 
 * `billing_no_show_billable` (default **true**): a cab was sent and the rider was not there;
 * `billing_late_cancel_billable` (default **false**): the rider cancelled after a cab had
@@ -17,8 +18,9 @@ to guess at, as config keys with the defaults stated below:
   trip's measured distance and the invoice reconciles with the `trip` rows; `direct` bills
   the rider's own journey (great-circle x road factor) regardless of pooling.
 
-These three defaults are **mine, provisional, and listed for the owner** (`decision-log.md`):
-nothing in the repository says how the pilot operator's invoice treats a no-show.
+The two cancellation defaults are **mine, provisional, and listed for the owner**
+(`decision-log.md`): nothing in the repository says how the pilot operator treats a no-show or a
+late cancel.
 
 A month is the operator's calendar month in their own timezone, by when the rider asked.
 """
@@ -155,6 +157,9 @@ class BillingService:
             "no_show_billable": bool(settings["billing_no_show_billable"]),
             "late_cancel_billable": bool(settings["billing_late_cancel_billable"]),
             "distance_basis": str(settings["billing_distance_basis"]),
+            # The unit the client is billed in. Fixed, not configurable: per kilometre.
+            "basis": "per_km",
+            "rate_per_km": float(settings["billing_rate_per_km"]) or None,
         }
 
         requests = list(
@@ -212,7 +217,7 @@ class BillingService:
             )
 
         export = BillingExport(client_id, client.name, month, treatment, {}, rows)
-        export.summary = _summary(rows)
+        export.summary = _summary(rows, float(settings["billing_rate_per_km"]) or None)
         return export
 
     # --- queries -------------------------------------------------------------------------
@@ -318,7 +323,7 @@ def _direct_km(request: RideRequest, office: Office | None) -> float | None:
     return haversine_km(home, there) * ROAD_FACTOR
 
 
-def _summary(rows: list[BillingRow]) -> dict[str, Any]:
+def _summary(rows: list[BillingRow], rate_per_km: float | None = None) -> dict[str, Any]:
     billable = [row for row in rows if row.billable]
     trips = {row.trip_id for row in billable if row.trip_id}
     return {
@@ -330,6 +335,12 @@ def _summary(rows: list[BillingRow]) -> dict[str, Any]:
         "billable_trips": len(trips),
         "riders": len({row.employee for row in billable}),
         "billable_km": _round(sum(row.billable_km for row in billable)),
+        # Kilometres x the operator's rate; `None` until a rate is set - never a guessed price.
+        "amount": (
+            _round(sum(row.billable_km for row in billable) * rate_per_km, 2)
+            if rate_per_km
+            else None
+        ),
     }
 
 

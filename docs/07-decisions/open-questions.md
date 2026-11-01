@@ -7,6 +7,8 @@ Agents: if you hit an unresolved question, add it here and ask the owner. Do not
 | OQ-01 | Who is the pilot operator; how many cabs, clients, employees, trips/day? | Phase 0 | Nitish | open |
 | OQ-02 | If the pilot is the own employer's transport vendor, do employment terms allow it? | Phase 0 | Nitish | resolved by owner (2026-09-24); details to be added by owner |
 | OQ-03 | Pricing model: per cab/month, per trip, or tiered subscription? | Phase 1 end | Nitish | open |
+
+**Owner decision 2026-11-01:** the operator bills the **client company per km**; riders never pay and the employee app shows ride info but no charge. Built into B38 as `billing_rate_per_km`. Still open: the rate itself, tiers, and whether no-shows / late cancels are billable (provisional config keys).
 | OQ-04 | Driver tracking: app only, ESP32 tracker, or both? | Phase 1 | Nitish | open (app first) |
 | OQ-05 | Routing engine: OSRM (default) or Valhalla? | Phase 0 (I02) | Tech | open (OSRM default) |
 | OQ-06 | Semi-auto failsafe default: auto_assign or escalate? | Phase 2 | Operator | open (auto_assign default) |

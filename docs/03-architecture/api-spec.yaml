@@ -2171,6 +2171,8 @@ components:
             no_show_billable: {type: boolean}
             late_cancel_billable: {type: boolean}
             distance_basis: {type: string, enum: [trip_share, direct]}
+            basis: {type: string, enum: [per_km], description: 'Clients are billed per kilometre (OQ-03, owner decision).'}
+            rate_per_km: {type: [number, 'null'], description: 'Operator config billing_rate_per_km; null when no rate is set.'}
         summary:
           type: object
           properties:
@@ -2182,6 +2184,7 @@ components:
             billable_trips: {type: integer}
             riders: {type: integer}
             billable_km: {type: [number, 'null']}
+            amount: {type: [number, 'null'], description: 'billable_km x rate_per_km; null when no rate is set. Never shown to riders.'}
         rows:
           type: array
           items:

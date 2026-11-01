@@ -166,6 +166,8 @@ async def test_the_default_treatment_and_what_it_adds_up_to(db_session: AsyncSes
         "no_show_billable": True,
         "late_cancel_billable": False,
         "distance_basis": "trip_share",
+        "basis": "per_km",
+        "rate_per_km": None,
     }
     summary = result["summary"]
     assert summary["rides"] == 5, "September and November are outside October"
@@ -433,3 +435,54 @@ async def test_a_supervisor_has_no_billing_and_an_admin_must_name_a_client(
             f"/reports/billing?month=2026-1&client_id={month.client_a.id}", headers=headers["admin"]
         )
     ).status_code == 422
+
+
+# --- per kilometre (owner decision, OQ-03) ---------------------------------------------
+
+
+async def test_the_client_is_billed_per_kilometre_at_the_operators_rate(
+    db_session: AsyncSession,
+) -> None:
+    month = await build_month(db_session)
+
+    result = await export(db_session, month, month.client_a, billing_rate_per_km=12.5)
+
+    assert result["treatment"]["basis"] == "per_km"
+    assert result["treatment"]["rate_per_km"] == 12.5
+    assert result["summary"]["billable_km"] == 27.0
+    assert result["summary"]["amount"] == 337.5  # 27 km x 12.5
+
+
+async def test_without_a_rate_there_is_a_distance_and_never_a_guessed_price(
+    db_session: AsyncSession,
+) -> None:
+    month = await build_month(db_session)
+
+    result = await export(db_session, month, month.client_a)
+
+    assert result["summary"]["billable_km"] == 27.0
+    assert result["summary"]["amount"] is None
+
+
+async def test_a_trip_count_is_information_not_the_basis(db_session: AsyncSession) -> None:
+    """Three billable trips of different lengths: the amount follows the km, not the count."""
+    month = await build_month(db_session)
+
+    result = await export(db_session, month, month.client_a, billing_rate_per_km=1)
+
+    assert result["summary"]["billable_trips"] == 3
+    assert result["summary"]["amount"] == result["summary"]["billable_km"]
+
+
+async def test_riders_never_see_a_charge(
+    api: tuple[AsyncClient, Month, dict[str, dict[str, str]]],
+) -> None:
+    """Riders do not pay: no billing for the employee role, and no money in their ride payloads."""
+    from app.domain.enums import Role as _Role
+    from app.modules.auth.permissions import Permission, permissions_for
+    from app.modules.requests.schemas import RideRequestOut
+
+    assert Permission.billing_view not in permissions_for(_Role.employee)
+    money = ("amount", "price", "charge", "fare", "cost", "rate", "km_billed", "billable")
+    leaked = [name for name in RideRequestOut.model_fields if any(word in name for word in money)]
+    assert leaked == []
