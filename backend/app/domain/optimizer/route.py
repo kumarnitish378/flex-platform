@@ -138,6 +138,7 @@ def evaluate_route(
 ) -> RouteEval:
     """Times along the route for this rider order, from the vehicle's position now."""
     here = veh.position
+    dwell = float(problem.params.dwell_seconds)
     pickup_arrival: dict[uuid.UUID, float] = {}
     ride: dict[uuid.UUID, float] = {}
 
@@ -154,6 +155,8 @@ def evaluate_route(
                 first_leg = (leg, problem.distance(previous, stop))
             elapsed += leg
             pickup_arrival[person.request_id] = elapsed
+            # The rider gets in before the cab moves on, and everyone already aboard waits.
+            elapsed += dwell
             previous = stop
         if first_leg is None:
             first_leg = (problem.duration(here, office), problem.distance(here, office))
@@ -176,9 +179,11 @@ def evaluate_route(
     else:
         approach = problem.duration(here, office)
         approach_m = problem.distance(here, office)
-        elapsed = approach
+        # Everyone boards at the office, one after another, before the cab leaves it.
+        boarding = dwell * sum(1 for person in order if not person.picked_up)
+        elapsed = approach + boarding
         previous = office
-        departed = approach
+        departed = approach + boarding
     for person in order:
         stop = person.rider.drop_place(direction, office)
         elapsed += problem.duration(previous, stop)
@@ -186,6 +191,8 @@ def evaluate_route(
         if not person.picked_up:
             pickup_arrival[person.request_id] = departed
         ride[person.request_id] = person.ridden_seconds + (elapsed - departed)
+        # They get out before the cab moves on to the next drop.
+        elapsed += dwell
     return RouteEval(tuple(order), pickup_arrival, ride, approach, approach_m, elapsed)
 
 

@@ -115,7 +115,8 @@ def evaluate(assertions: Assertions, metrics: RunMetrics) -> list[Failure]:
             failures.append(
                 Failure(
                     "detour_over_limit_max",
-                    f"{over} ride(s) exceeded rule 7's detour limit, allowed "
+                    f"{over} ride(s) exceeded rule 7's detour limit (worst by "
+                    f"{metrics.pooling.detour_worst_excess_minutes} min), allowed "
                     f"{assertions.detour_over_limit_max}",
                 )
             )

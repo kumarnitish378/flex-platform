@@ -235,3 +235,18 @@ def test_greedy_can_be_restricted_to_a_subset_of_the_batch() -> None:
     )
 
     assert plan.placed_ids == {rid(2)}
+
+
+def test_stop_dwell_is_charged_to_everyone_aboard() -> None:
+    """The first rider sits through the second's boarding: that minute is added ride time."""
+    from app.domain.optimizer.model import CostWeights, OptimizerParams
+
+    cabs = [veh(1, minutes_out(12))]
+    riders = [req(1, minutes_out(10)), req(2, minutes_out(6))]
+    params = OptimizerParams(weights=CostWeights(), dwell_seconds=60)
+
+    plan = solve(problem(riders, cabs, params=params))
+
+    pooled = plan.placements[0]
+    assert pooled.order == (rid(1), rid(2))
+    assert pooled.added_minutes[rid(1)] == pytest.approx(2.0)

@@ -19,7 +19,7 @@
 name: pooling_efficiency
 version: 1
 seed: 1010
-start: "2026-10-05T02:00:00Z"      # 07:30 IST
+start: "2026-10-05T02:45:00Z"      # 08:15 IST: after the 08:00 speed drop, so no ride is planned at a speed that changes under it
 duration_hours: 3.5
 drain_minutes_max: 120
 speed_factor: 60
@@ -34,6 +34,12 @@ operator:
     alert_wait_minutes: 30
     request_expiry_minutes: 120
     batch_window_seconds: 30
+    optimizer_time_limit_seconds: 3
+    # A parked cab pings every 30 s and the simulator holds the backend clock 20 s ahead, so
+    # a healthy cab can look 50 s old; 60 would flag half the fleet stale for nothing.
+    stale_gps_seconds: 90
+    # Simulated boarding takes 30-120 s (mean 75), so plan with more than the 60 s default.
+    stop_dwell_seconds: 90
 
 modes:
   - {mode: full_auto}
@@ -58,7 +64,7 @@ clients:
       vip_share: 0.0
       priority_dist: {3: 0.3, 5: 0.7}
       shifts:
-        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+        - {start_ist: "10:00", end_ist: "19:00", share: 1.0}
 
 supervisor:
   policy: monitor

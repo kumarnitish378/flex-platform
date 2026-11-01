@@ -87,6 +87,7 @@ ROWS = (
     Row("Cab-km total", "pooling.cab_km_total", digits=1),
     Row("Detour median (min)", "pooling.detour_minutes_median"),
     Row("Rides over detour limit", "pooling.detour_over_limit", digits=0),
+    Row("Worst excess over limit (min)", "pooling.detour_worst_excess_minutes", digits=1),
     Row("Assigned by the optimizer", "optimizer.applied", lower_is_better=False, digits=0),
 )
 

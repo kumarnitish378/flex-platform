@@ -98,7 +98,7 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
   Done when: each of the four conditions raises on its own; the prompt resolves when the condition clears;
   no code path anywhere changes a mode without a human.
 
-- [~] **B36 · Degradation: the optimizer is allowed to be down** · deps B34
+- [x] **B36 · Degradation: the optimizer is allowed to be down** · deps B34
   Docs: control-model.md §6
   Do: a scope in `full_auto` or `semi_auto` behaves as `manual` when the optimizer or worker is
   unavailable, with an alert. The routing ladder (Redis → `osrm` → `approx`) already exists and is not
@@ -149,20 +149,20 @@ Phase 2 left four things deliberately unfinished, and they are the spine of Phas
 
 ## Simulator
 
-- [ ] **M11 · Pooling metrics** · deps B32
+- [x] **M11 · Pooling metrics** · deps B32
   Docs: simulator-spec.md, scenarios.md
   Do: cab-km per trip, vehicles used, riders per trip, detour minutes per rider — the numbers Phase 3's
   exit criterion is stated in and which the current `RunMetrics` does not carry.
   Done when: each is computed from the trips the drivers actually drove, not from what dispatch intended;
   a manual run and a pooled run over the same seed are directly comparable.
 
-- [ ] **M12 · Scenarios S10–S12** · deps M11, B34, B36
+- [x] **M12 · Scenarios S10–S12** · deps M11, B34, B36
   Docs: scenarios.md
   Done when: S10 (`pooling_efficiency`), S11 (`night_safety`) and S12 (`optimizer_down`) run in
   `make sim-full` with their assertions evaluated against a live backend. S11 is the scenario B28's rule 11
   was built for and has never been exercised end to end.
 
-- [ ] **M13 · Policy comparison runs** · deps M12
+- [x] **M13 · Policy comparison runs** · deps M12
   Docs: simulator-spec.md
   Do: the same scenario and seed under `manual`, `semi_auto` and `full_auto`, reported side by side.
   Done when: one command produces the comparison; the numbers are the ones the exit criterion names; the

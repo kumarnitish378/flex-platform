@@ -706,6 +706,7 @@ class OptimizerService:
                 stale_gps_seconds=int(settings["stale_gps_seconds"]),
                 enroute_reuse_max_eta_minutes=int(settings["enroute_reuse_max_eta_minutes"]),
                 time_limit_seconds=float(settings["optimizer_time_limit_seconds"]),
+                dwell_seconds=int(settings["stop_dwell_seconds"]),
             ),
         )
 

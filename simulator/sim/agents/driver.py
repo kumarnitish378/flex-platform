@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -88,6 +88,10 @@ class TripLog:
     odometer_end_km: float | None = None
     completed: bool = False
     rides: dict[str, RideLog] = field(default_factory=dict)
+    #: Stretches the cab stood waiting for a rider who was late or who never came. A rider
+    #: already aboard sits through them, but no routing decision made them longer, so
+    #: rule 7's ride-time limit is judged without them (`pooling_metrics`).
+    holds: list[tuple[datetime, datetime]] = field(default_factory=list)
 
 
 @dataclass
@@ -362,10 +366,15 @@ class DriverAgent:
 
         rider_present, late_minutes = self._rider_readiness(stop)
         if not rider_present:
+            held_from = self.engine.now()
             yield from self._wait_out_a_no_show(stop_id)
+            log.holds.append((held_from, self.engine.now()))
             return
 
         # Section 5.1: boarding delay, plus however late the rider is.
+        if late_minutes > 0:
+            held_from = self.engine.now()
+            log.holds.append((held_from, held_from + timedelta(minutes=late_minutes)))
         yield self.engine.env.timeout(self._boarding_delay_seconds() + late_minutes * 60)
 
         position = self.vehicle.position

@@ -48,12 +48,17 @@ class OptimizerParams:
 
     weights: CostWeights = field(default_factory=CostWeights)
     stale_gps_seconds: int = 60
+    #: Seconds a cab spends at each stop (`stop_dwell_seconds`): riders getting in or out.
+    #: Without it a plan promises rides that the people on board then spend minutes
+    #: waiting for others to board, and a pooled rider's ride runs past rule 7's limit
+    #: on a plan the evaluator had passed (found by the first live S10 run).
+    dwell_seconds: int = 60
     enroute_reuse_max_eta_minutes: int = 5
     #: Hard cap on one DARP run (`optimizer_time_limit_seconds`). A failsafe, not a tuning
     #: knob: the search stops on `solution_limit` first, so the answer does not depend on
     #: how fast the machine is.
     time_limit_seconds: float = 10.0
-    solution_limit: int = 400
+    solution_limit: int = 60
 
 
 @dataclass(frozen=True, slots=True)

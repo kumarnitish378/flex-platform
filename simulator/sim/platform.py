@@ -27,7 +27,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_TIMEOUT_SECONDS = 10.0
+DEFAULT_TIMEOUT_SECONDS = 180.0
 
 
 class PlatformError(RuntimeError):

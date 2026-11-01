@@ -54,10 +54,24 @@ class PoolingMetrics:
     #: Riders whose ride exceeded `allocation-rules.md` section 2 rule 7's limit. S10
     #: asserts this is zero.
     detour_over_limit: int | None = None
+    #: By how many minutes the worst ride went past that limit (0 when none did).
+    detour_worst_excess_minutes: float | None = None
     #: S11. Flagged riders who were carried, and how many of those were left alone in
     #: the lone position of a pooled trip. `None` when nobody was flagged.
     night_flagged_carried: int | None = None
     night_safety_violations: int | None = None
+
+
+def _held_minutes(
+    holds: Iterable[tuple[datetime, datetime]], boarded: datetime, dropped: datetime
+) -> float:
+    """Minutes of a ride the cab spent waiting for somebody else to turn up."""
+    total = 0.0
+    for start, end in holds:
+        overlap = (min(end, dropped) - max(start, boarded)).total_seconds()
+        if overlap > 0:
+            total += overlap
+    return total / 60.0
 
 
 def pooling_metrics(
@@ -82,6 +96,7 @@ def pooling_metrics(
     riders = [len(_boarded(log)) for log in carried]
     detours: list[float] = []
     over = 0
+    worst_excess = 0.0
     for log in carried:
         for ride in log.rides.values():
             if None in (
@@ -94,12 +109,15 @@ def pooling_metrics(
             assert ride.picked_up_at and ride.dropped_at
             assert ride.picked_up_at_place and ride.dropped_at_place
             actual = (ride.dropped_at - ride.picked_up_at).total_seconds() / 60.0
+            actual -= _held_minutes(log.holds, ride.picked_up_at, ride.dropped_at)
             direct = direct_minutes(
                 ride.picked_up_at_place, ride.dropped_at_place, ride.picked_up_at
             )
             detours.append(max(actual - direct, 0.0))
-            if actual > min(direct * max_detour_factor, direct + max_detour_minutes) + 1e-9:
+            allowed = min(direct * max_detour_factor, direct + max_detour_minutes)
+            if actual > allowed + 1e-9:
                 over += 1
+                worst_excess = max(worst_excess, actual - allowed)
 
     total_riders = sum(riders)
     pooled = sum(1 for count in riders if count >= 2)
@@ -119,6 +137,7 @@ def pooling_metrics(
         detour_minutes_p90=_round(percentile(detours, 0.9)),
         detour_minutes_mean=_round(sum(detours) / len(detours)) if detours else None,
         detour_over_limit=over,
+        detour_worst_excess_minutes=_round(worst_excess),
         night_flagged_carried=flagged_carried,
         night_safety_violations=night_violations,
     )

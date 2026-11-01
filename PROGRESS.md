@@ -1,5 +1,48 @@
 # Smart Cab - PROGRESS
 
+## Phase 3 summary (2026-11-01)
+
+**Done:** B29-B36 (hold window, optimizer, DARP, apply by mode, route-aware reuse, full_auto + VIPs,
+mode prompts, optimizer-down), B39 (reports), M11-M13 (pooling metrics, S10-S12, policy comparison).
+**Built, not closed (`[~]`):** B37 (needs real pilot GPS - OQ-22), B38 (quantities only; money needs OQ-01/OQ-03).
+**Skipped as instructed:** R04. A17-A19 are Gemini's.
+
+**Tests:** backend 1821 passed / 7 skipped; simulator 345 passed / 6 skipped; ruff, ruff format, mypy clean.
+Live: S10 `pooling_efficiency`, S11 `night_safety` (4 flagged riders carried, 0 breaches), S12
+`optimizer_down` (alert raised and cleared, 0 applied or offered while down) all pass against the real stack.
+
+**Measured improvement - read this honestly.** Same scenario and seed (`sim policies`, S10, 14 cabs, 51 requests):
+
+| | manual | semi_auto | full_auto |
+|---|---|---|---|
+| Cab-km per trip | 20.92 | 15.71 | 16.90 (-19%) |
+| Cab-km per rider | 15.69 | 13.96 | 13.28 (-15%) |
+| Vehicles used | 9 | 8 | 11 (**+22%, worse**) |
+| Riders per trip / pooling rate | 1.33 / 0.22 | 1.12 / 0.13 | 1.27 / 0.18 (**worse**) |
+| Median wait | 43 min | 43 | 43 (no change) |
+| Completed of 51 | 12 | 9 | 14 |
+| Rides over detour limit | 5 | 0 | 0 |
+
+**Phase 3's exit criterion (fewer vehicles, fewer cab-km per trip, lower median wait) is NOT demonstrated.**
+Cab-km per trip and per rider fall, detours stop breaking rule 7 (5 -> 0), and the optimizer does the
+assigning - but vehicles used rise and pooling does not, and 70-80% of riders give up in every mode. The
+cause is the scenario, not only the optimizer: the seeded fixture alternates two offices and three zones,
+so only ~1/6 of riders can share a cab, and 51 requests for one 04:30Z arrival swamp 14 cabs. Treat these
+as relative numbers (OQ-22, OQ-32). A scenario with one office and denser zones, and real pilot data, is
+what would actually test pooling. `semi_auto` with the `approve_all` policy also shows 36 refused offers
+and 38 driver errors in the sim - not investigated; probably the offer/approve path under a stale clock lead.
+
+**Decisions I need from you:**
+1. OQ-22 (real speeds / pilot GPS) - closes B37. 2. OQ-03 / OQ-01 (what the operator bills on, and whether a
+no-show / late cancel is billable) - closes B38; my defaults (`billing_*` keys) are provisional. 3. OQ-39
+(which acceptance reading the 70% uses) - the report gives both. 4. OQ-10 (escort half of night policy).
+5. Confirm provisional defaults: `stop_dwell_seconds`=60, `mode_prompt_min_samples`=5 / `baseline_days`=14,
+`optimizer_failure_threshold`=3 (15 min memory, 180 s stall), `speed_profile_min_samples`=20.
+6. Known inconsistency: manual `assign` rule 7 uses straight-line direct time; the optimizer uses the routing matrix.
+7. Whether S10 should be redesigned (one office, denser zones) so the pooling claim can be tested.
+
+Incident: Gemini's `git stash -u` removed my uncommitted work at 04:58; it was restored from the stash with no loss.
+
 ## Summary (2026-09-26)
 
 **Branch `dev/overnight-1`, 54 commits, all pushed. Working tree clean. Nothing merged to
@@ -457,4 +500,7 @@ checked.
 | **B33** | done | En-route reuse is route-aware: `Insertion.slot_detour_seconds` (extra driving to collect the rider at the slot the insertion uses) replaces the straight ETA for the en-route ceiling, and `Insertion.pickup_arrival_seconds` is what rule 8 judges. One routing matrix call as before (the cab's position joins the table `_insertion_for` already fetched). The optimizer's evaluator uses the slot its order really gives the rider; the DARP uses the best-case slot as a prefilter. Tests: a cab 25 min out about to pass the rider is a candidate; one 4 min away pointed the other way is not; the idle ceiling is unchanged | 1716 backend, 295 simulator |
 | **B34** | done | `full_auto` end to end: a ready request in a `full_auto` scope is assigned by the optimizer with no supervisor action and the rider is notified; `automation_paused` still beats it (and resuming serves the queue); a **VIP** triggers the batch at once, goes only to a VIP vehicle, and with none raises one `vip_no_vehicle` alert carrying the excluding rules, which resolves itself when they are assigned (closes OQ-38). The trip report gains `assigned_by` per row and `assignments_by_actor` (spec updated). Every automatic assignment is attributable: `ride_request_event` and `trip_event` actor `optimizer` | 1722 backend, 295 simulator |
 | **B35** | done | `ModePromptService` evaluates `control-model.md` §5's four conditions per scope over the last 15 minutes and raises/updates/resolves one `mode_prompt` alert per scope (`data.setting_id`, `suggest: manual`, the observed numbers). Pure decision logic in `domain/mode_prompts.py`; thresholds are config keys (spec numbers as defaults; `mode_prompt_min_samples`=5 and `mode_prompt_baseline_days`=14 are **mine, provisional** - see the decision list). Wired into `/simctl/clock` and the beat (`smart_cab.run_mode_prompts`, 60 s). A source guard fails if anything but the admin mode service can write `mode_setting` | 1722+ backend (full-suite run in progress at commit), 295+13 simulator |
-| **B36** | `[~]` backend done, **S12 not yet run** | `OptimizerService.health()` / `sync_health_alert()` and `effective_mode()`: three failed runs, or a worker that stopped running, make every automatic scope behave as manual - nothing applied or offered, one `system` alert (`data.kind = optimizer_down`), `/dispatch/requests/{id}/mode` says `manual` / `optimizer_down` - and the first successful probe run restores it with no operator action. A paused operator is never "down"; supervisors can always assign by hand; an open offer still reaches its failsafe. Sim-only `PUT /simctl/optimizer` kills the solver for S12, and `PUT /simctl/clock` now reports `optimizer_*` counts. The box ticks when S12 passes live (M12) | 1769+1 backend, 345 simulator |
+| **B36** | `[x]` done, S12 passes live | `OptimizerService.health()` / `sync_health_alert()` and `effective_mode()`: three failed runs, or a worker that stopped running, make every automatic scope behave as manual - nothing applied or offered, one `system` alert (`data.kind = optimizer_down`), `/dispatch/requests/{id}/mode` says `manual` / `optimizer_down` - and the first successful probe run restores it with no operator action. A paused operator is never "down"; supervisors can always assign by hand; an open offer still reaches its failsafe. Sim-only `PUT /simctl/optimizer` kills the solver for S12, and `PUT /simctl/clock` now reports `optimizer_*` counts. The box ticks when S12 passes live (M12) | 1769+1 backend, 345 simulator |
+| **B37** | `[~]` mechanism done, OQ-22 not closed | `road_speed_profile` (migration `c3e5a7b9d123`) learned nightly from completed trips' stop-to-stop legs in `approx`'s own frame, per hour of the week; `ApproxRoutingProvider` uses a slot's learned speed once it has `speed_profile_min_samples` legs, else the constant (so a fresh deployment behaves exactly as before). `/simctl/reset` wipes it. **Needs you:** real pilot GPS/trips to learn from - the repository has none, and learning from the simulator's trips would restate the constant | backend 1821 passed, 7 skipped; simulator 345 passed |
+| **B38** | `[~]` quantities done, money needs OQ-01/OQ-03 | `GET /reports/billing?month=&client_id=&format=` - one row per ride with `billable_reason`, per-trip kilometres shared across riders so clients' invoices add up to the cab-km, and three provisional treatments (no-show, late cancel, distance basis) as config keys. Reconciles with `trip` and `ride_request` rows under every treatment (tests). **Needs you:** how the pilot operator bills (OQ-03) and whether they bill a no-show / a late cancel / per km or per trip | backend 1821 passed, 7 skipped; simulator 345 passed |
+| **B39** | done | `GET /reports/operations?from=&to=&client_id=&format=`: wait distribution, pooling rate, cab-km per trip, vehicles used, overrides by reason, suggestion acceptance (both OQ-39 readings, failsafe excluded), assignments by actor, optimizer runs. Each number is reproduced against a hand-worked fixture. `trip.actual_distance_m` is now measured from pings at trip completion (it was never written). `TripReportOut` was silently dropping B34's `assignments_by_actor` - fixed | backend 1821 passed, 7 skipped; simulator 345 passed |

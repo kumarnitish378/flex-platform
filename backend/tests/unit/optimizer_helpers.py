@@ -132,7 +132,7 @@ def problem(
         "vehicles": tuple(vehicles),
         "duration": seconds,
         "distance": metres,
-        "params": params or OptimizerParams(weights=CostWeights()),
+        "params": params or OptimizerParams(weights=CostWeights(), dwell_seconds=0),
     }
     base.update(overrides)
     return Problem(**base)

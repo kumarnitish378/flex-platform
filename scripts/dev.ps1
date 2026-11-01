@@ -69,6 +69,7 @@ $Commands = @{
     # $env:SIM_PLATFORM overrides where the backend is; see `make stack-up` on Linux or
     # dev-environment.md for starting one on Windows.
     'sim-quick'   = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick', '--platform', $SimPlatform) }
+    'sim-policies' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'policies', 'scenarios/pooling_efficiency.yaml', '--platform', $SimPlatform) }
     'sim-full'    = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'full', '--platform', $SimPlatform) }
     'sim-offline' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick') }
     'maps'        = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'maps', 'I02b') }

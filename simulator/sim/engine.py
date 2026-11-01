@@ -401,7 +401,16 @@ class Engine:
             direct,
             max_detour_factor=float(overrides.get("max_detour_factor", 1.5)),
             max_detour_minutes=float(overrides.get("max_detour_minutes", 15)),
-            night_escort_riders=self.night_escort_ids,
+            night_escort_riders=self._flagged_request_ids(),
+        )
+
+    def _flagged_request_ids(self) -> frozenset[str]:
+        """The requests made by flagged riders: a trip's log is keyed by request, not rider."""
+        return frozenset(
+            str(rider.record.request_id)
+            for rider in self.riders
+            if rider.record.request_id is not None
+            and rider.profile.employee_id in self.night_escort_ids
         )
 
     def _dispatch_metrics(self) -> DispatchMetrics:

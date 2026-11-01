@@ -28,6 +28,12 @@ operator:
     alert_wait_minutes: 30
     request_expiry_minutes: 120
     batch_window_seconds: 30
+    optimizer_time_limit_seconds: 3
+    # A parked cab pings every 30 s and the simulator holds the backend clock 20 s ahead, so
+    # a healthy cab can look 50 s old; 60 would flag half the fleet stale for nothing.
+    stale_gps_seconds: 90
+    # Simulated boarding takes 30-120 s (mean 75), so plan with more than the 60 s default.
+    stop_dwell_seconds: 90
 
 modes:
   - {mode: full_auto}

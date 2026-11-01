@@ -5,7 +5,7 @@
 # reads the `## <description>` comment on the line above each target.
 
 .PHONY: help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
-        test test-domain-coverage lint format api-client sim-quick sim-full         sim-offline stack-up stack-down maps
+        test test-domain-coverage lint format api-client sim-quick sim-full sim-policies         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
 help:
@@ -99,6 +99,11 @@ sim-quick:
 ## Full simulator scenario suite (nightly)
 sim-full:
 	python scripts/venv_exec.py --cwd simulator -m sim suite full --platform $(SIM_PLATFORM)
+
+## The same scenario and seed under manual, semi_auto and full_auto, side by side (M13).
+## SCENARIO=scenarios/<file>.yaml to compare another one.
+sim-policies:
+	python scripts/venv_exec.py --cwd simulator -m sim policies $(or $(SCENARIO),scenarios/pooling_efficiency.yaml) --platform $(SIM_PLATFORM)
 
 ## Both suites without a backend: proves the agents run, does NOT check assertions
 sim-offline:

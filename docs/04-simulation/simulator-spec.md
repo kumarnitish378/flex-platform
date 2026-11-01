@@ -172,10 +172,35 @@ Also `drain_minutes` and `drain_capped` (see the drain, above), and the two halv
 stopped after the drain. Both fail `all_requests_terminal`; reporting them separately is
 what lets a red run name its own cause.
 
+### Phase 3 metrics (M11, M12)
+
+`metrics.json` gains two sections, both computed from what the agents did, never from what
+dispatch intended:
+
+* **`pooling`** - trips driven that carried someone, **vehicles used**, riders per trip,
+  pooled trips and rate, **cab-km per trip / per rider** (from each cab's odometer between
+  the driver starting and finishing the trip), and detour minutes per rider against a direct
+  ride, with a count of rides over rule 7's limit. For S11, flagged riders carried and the
+  pooled trips that left one alone in the lone position (`allocation-rules.md` §2 rule 11).
+* **`optimizer`** - runs, applied, suggested, hinted and failed, as the backend reported them
+  after each clock jump; and, for S12, the outage's length, what the platform applied or
+  offered while the optimizer was down (must be zero), and whether the `optimizer_down`
+  alert was raised and cleared.
+
+`trips.csv` now has one row per trip a driver started. A metric that was not measured is
+`null` in the JSON and `-` in a table, never zero.
+
 ## 10. Outputs and visualization
 - `runs/<timestamp>_<scenario>/metrics.json`, `requests.csv`, `trips.csv`, `pings.csv`, `summary.md`, plots (wait histogram, vehicles in use over time).
 - Live view: point the supervisor app (or Flutter web build) at the sim backend to watch cabs move at `speed_factor: 1–5`.
 - Compare mode: `python -m sim compare runA runB` → table of metric deltas.
+- Policy comparison (M13): `python -m sim policies scenarios/pooling_efficiency.yaml --platform URL`
+  runs the **same scenario and seed** under `manual`, `semi_auto` and `full_auto` and prints
+  and writes (`runs/policies_<scenario>_seed<N>.md`) one table with the change against the
+  first mode. The variants differ in exactly three fields - the operator mode, the supervisor
+  policy that mode is staffed by (`manual_nearest`, `approve_all`, `monitor`) and the name -
+  and a test diffs the whole scenario to prove it. Scenario assertions are not evaluated: they
+  describe what one mode must achieve.
 
 ## 11. Replay mode (Phase 1+)
 Load real requests and vehicle shifts from an exported day; replay with a chosen policy; compare against what actually happened.

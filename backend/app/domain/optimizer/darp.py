@@ -65,7 +65,7 @@ SCALE = 100
 #: Seconds a cab spends at a stop. Zero: the exact evaluator (`route.py`) charges none, and
 #: a model that charged one would reject a rider the evaluator accepts at the edge of a
 #: window. Two stops at one address may therefore tie; `_restore_fixed_order` settles it.
-DWELL_SECONDS = 0
+DWELL_SECONDS = 0  # superseded by `OptimizerParams.dwell_seconds`; kept for the docstring above
 #: A day. The routing library needs a finite horizon.
 HORIZON_SECONDS = 24 * 3600
 #: Per-vehicle load that no one may share: an exclusive rider weighs this much on the
@@ -251,7 +251,9 @@ def _solve_group(
         a, b = manager.IndexToNode(from_index), manager.IndexToNode(to_index)
         if not to_office and b == end_node:
             return 0
-        dwell = DWELL_SECONDS if b >= first_stop else 0
+        # Time spent at the stop being left (riders getting in or out), as the exact
+        # evaluator charges it - so what the model plans is what the evaluator will accept.
+        dwell = params.dwell_seconds if a >= first_stop else 0
         return seconds_between(a, b) + dwell
 
     idle_start = (
