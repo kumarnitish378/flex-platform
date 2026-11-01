@@ -86,6 +86,7 @@ time-of-day speed table, flagged approximate.
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | backend |
 | `REFRESH_TOKEN_TTL_DAYS` | `30` | backend |
 | `OTP_PROVIDER` | `console` (dev) / `<sms-provider>` | backend |
+| `AUTH_TEST_LOGIN` | `false`; `true` only with `APP_ENV` dev, test or sim - enables `POST /auth/test-login` (no OTP). The server refuses to start with it on in staging or prod | backend |
 | `PUSH_PROVIDER` | `fcm` / `ntfy` / `log` | backend |
 | `FCM_CREDENTIALS_FILE` | path | backend |
 | `SIMCTL_ENABLED` | `true` only when `APP_ENV=sim` | backend |

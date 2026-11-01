@@ -159,6 +159,8 @@ def test_public_routes_stay_a_short_list() -> None:
         "/api/v1/auth/otp/request",
         "/api/v1/auth/otp/verify",
         "/api/v1/auth/refresh",
+        # Owner decision 4: exists only with AUTH_TEST_LOGIN in dev/test/sim (404 otherwise).
+        "/api/v1/auth/test-login",
     }
 
 

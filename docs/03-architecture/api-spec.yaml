@@ -71,6 +71,32 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/TokenPair'}
         '401': {$ref: '#/components/responses/Error'}
+  /auth/test-login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Testing-only login by phone, no OTP
+      description: |
+        **Not a production endpoint.** Lets the app skip the OTP while it is being tested.
+        It exists only when the server runs with `AUTH_TEST_LOGIN=true` **and** `APP_ENV` is
+        `dev`, `test` or `sim`; otherwise it answers 404 exactly as an unknown path would. The
+        server refuses to start with `AUTH_TEST_LOGIN=true` in `staging` or `prod`. It logs in an
+        **existing, active** user by phone and returns the tokens the OTP flow would have
+        returned, with that user's real roles. It never creates a user. Every use is logged as
+        `test_login_used`. The app must not show a way to reach it in a release build.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TestLoginRequest'}
+      responses:
+        '200':
+          description: Tokens
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenPair'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /auth/refresh:
     post:
       tags: [auth]
@@ -1308,6 +1334,11 @@ components:
       properties:
         phone: {$ref: '#/components/schemas/Phone'}
         code: {type: string, pattern: '^[0-9]{6}$'}
+    TestLoginRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: {$ref: '#/components/schemas/Phone'}
     TokenPair:
       type: object
       required: [access_token, refresh_token, expires_in]
@@ -1710,6 +1741,18 @@ components:
                 username: {type: string}
                 password: {type: string}
                 topic_prefix: {type: string}
+        gps:
+          description: >-
+            How the phone should publish location (mqtt-topics.md): after moving
+            `distance_filter_m`, or `heartbeat_seconds` after the last publish when stationary.
+            Present when on duty.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [distance_filter_m, heartbeat_seconds]
+              properties:
+                distance_filter_m: {type: integer}
+                heartbeat_seconds: {type: integer}
     LocationPing:
       type: object
       required: [ts, lat, lng]

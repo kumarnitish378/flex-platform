@@ -16,9 +16,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppEnv(StrEnum):
     dev = "dev"
+    test = "test"
     sim = "sim"
     staging = "staging"
     prod = "prod"
+
+
+#: The only environments in which the OTP-free test login may exist.
+TEST_LOGIN_ENVS = frozenset({AppEnv.dev, AppEnv.test, AppEnv.sim})
 
 
 class OtpProvider(StrEnum):
@@ -74,6 +79,11 @@ class Settings(BaseSettings):
     )
 
     app_env: AppEnv = AppEnv.dev
+
+    #: `POST /auth/test-login`: log an existing user in by phone with no OTP, so the app can be
+    #: exercised before SMS exists. Off unless set, and the app refuses to start with it on
+    #: anywhere but dev, test or sim (`_guard_production`).
+    auth_test_login: bool = False
 
     # --- storage / transport ------------------------------------------------
     database_url: str = "postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab"
@@ -199,6 +209,10 @@ class Settings(BaseSettings):
                 )
             if self.simctl_enabled:
                 raise ValueError("SIMCTL_ENABLED must be false outside APP_ENV=sim")
+        if self.auth_test_login and self.app_env not in TEST_LOGIN_ENVS:
+            raise ValueError(
+                "AUTH_TEST_LOGIN skips the OTP: only allowed with APP_ENV=dev, test or sim"
+            )
         # /simctl/* exists only in sim (ADR-0008); enforce it here rather than trusting config.
         if self.simctl_enabled and self.app_env is not AppEnv.sim:
             raise ValueError("SIMCTL_ENABLED requires APP_ENV=sim")

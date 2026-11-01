@@ -31,6 +31,12 @@ class OtpVerify(Strict):
     code: str = Field(pattern=OTP_CODE_PATTERN)
 
 
+class TestLoginRequest(Strict):
+    __test__ = False  # not a pytest class
+
+    phone: str = Field(pattern=PHONE_PATTERN)
+
+
 class RefreshRequest(Strict):
     refresh_token: str = Field(min_length=1)
 

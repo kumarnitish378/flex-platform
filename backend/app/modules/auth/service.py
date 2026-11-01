@@ -36,7 +36,7 @@ from app.core.security import (
     hash_secret,
     verify_secret,
 )
-from app.core.settings import Settings
+from app.core.settings import TEST_LOGIN_ENVS, Settings
 from app.domain.enums import Role, UserStatus
 from app.domain.errors import DomainError, NotFound, RateLimited, ValidationFailed
 from app.modules.auth.models import AppUser, Device, OtpChallenge, RefreshToken, UserRole
@@ -174,6 +174,23 @@ class AuthService:
         await self.session.flush()
 
         logger.info("login_succeeded", user_id=str(user.id), phone=mask_phone(phone))
+        return await self._issue_tokens(user, device_info)
+
+    async def test_login(self, phone: str, device_info: str | None = None) -> IssuedTokens:
+        """Tokens for an existing, active user with no OTP - testing environments only.
+
+        It never creates a user and never widens a role: the tokens are exactly what the OTP
+        flow would have issued. Outside dev, test and sim it does not exist (404), and
+        `Settings` already refuses to start there with the flag on - this is the second lock.
+        """
+        if not self.settings.auth_test_login or self.settings.app_env not in TEST_LOGIN_ENVS:
+            raise NotFound("Not found")
+        user = await self._user_by_phone(phone)
+        if user is None or user.status != UserStatus.active:
+            raise InvalidCredentialsError("Invalid phone")
+        user.last_login_at = self.clock.now()
+        await self.session.flush()
+        logger.warning("test_login_used", user_id=str(user.id), phone=mask_phone(phone))
         return await self._issue_tokens(user, device_info)
 
     async def _latest_open_challenge(self, phone: str) -> OtpChallenge | None:

@@ -18,6 +18,7 @@ from app.modules.auth.schemas import (
     OtpVerify,
     RefreshRequest,
     RoleEntry,
+    TestLoginRequest,
     TokenPair,
 )
 from app.modules.auth.service import AuthService
@@ -65,6 +66,29 @@ async def verify_otp(
     device_info = request.headers.get("user-agent")
     tokens = await _service(request, session, clock, settings).verify_otp(
         body.phone, body.code, device_info
+    )
+    return TokenPair(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
+    )
+
+
+@router.post(
+    "/auth/test-login",
+    summary="Testing-only login by phone, no OTP",
+    dependencies=[Depends(public_route())],
+)
+async def test_login(
+    body: TestLoginRequest,
+    request: Request,
+    session: SessionDep,
+    clock: ClockDep,
+    settings: SettingsDep,
+) -> TokenPair:
+    """404 unless `AUTH_TEST_LOGIN=true` in dev, test or sim."""
+    tokens = await _service(request, session, clock, settings).test_login(
+        body.phone, request.headers.get("user-agent")
     )
     return TokenPair(
         access_token=tokens.access_token,
