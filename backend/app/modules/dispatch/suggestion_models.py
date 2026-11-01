@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -54,6 +55,13 @@ class Suggestion(TenantEntity):
     #: Rahul" is the claim they acted on, and recomputing it later gives a different
     #: number against a different world.
     reasons: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+    #: Rank 1 of an optimizer offer only: the plan that chose this cab (stop order, pickup ETAs,
+    #: pooling cost), so accepting or failsafe-assigning it applies *that* plan instead of
+    #: re-judging it with the single-insertion evaluator, which measures rule 7 differently and
+    #: vetoed pooled placements the optimizer had passed. NULL for ranks 2-3 and for offers
+    #: made by the Phase 2 sweep.
+    plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     status: Mapped[str] = mapped_column(
         Enum(SuggestionStatus, native_enum=False, length=20),

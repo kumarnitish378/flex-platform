@@ -1,5 +1,25 @@
 # Smart Cab - PROGRESS
 
+## Owner decisions applied (2026-11-01, second session)
+
+One commit per item, in the order you gave. Backend suite **1861 passed / 7 skipped** (before the last commit's
+final run it was 1856 / 1833 at earlier points); simulator 346 passed; ruff, ruff format and mypy clean.
+
+| # | Decision | What now exists | Commit |
+|---|---|---|---|
+| 4 | App test login | `POST /auth/test-login {phone}` - existing active users only, their real roles, 404 unless `AUTH_TEST_LOGIN=true` **and** `APP_ENV` is dev/test/sim; the server **refuses to start** with the flag in staging/prod. Added `AppEnv.test`. Tests: works, unknown/suspended refused, 404 when off, startup refusal. Endpoint posted to Gemini in COORDINATION.md | `fe3dbeb` |
+| 1 | Phone GPS, OQ-22 | `gps_distance_filter_m` (5) and `gps_heartbeat_seconds` (60) are config and returned to the app in `/driver/duty` (`gps`); mqtt-topics.md rewritten (replaces the 5 s / 30 s timer); the simulator's vehicles publish by the same rule. **`stale_gps_seconds` default 60 -> 150** and the config service refuses anything under 1.5 x the heartbeat (60 s would have marked every parked cab stale). The ingestor never enforced an interval, so its drop rules are unchanged. B37 ticked `[x]` | `6565c57` |
+| 3 | Night escort, OQ-10 | A trip whose only rider is a woman after the client's night window opens is **flagged** (board, trip detail `escort`, critical `escort_required` alert); the driver's start is refused (409 `escort_confirmation_required`) until a supervisor `POST /dispatch/trips/{id}/escort-confirmation` with `escort_arranged` or `male_co_rider_present`; who/when/note on the trip and in `trip_event`. A man sharing the cab clears it; two women are not alone; unknown gender never triggers it; nothing is assigned automatically. **A gender field was missing** - I added `employee.gender` (female/male/other, nullable; in create/update/CSV import). It rides on B28's `night_safety_enabled` and window, so it is **off until a client switches night safety on** | `af893e1` |
+| 2 | Billing, OQ-03 | Clients are billed **per km**; `billing_rate_per_km` (operator config, 0 = unset) gives `summary.amount`, otherwise km only - no default price. Trip count is information, not a basis. A test proves no rider-facing payload or role has a charge. B38 ticked `[x]`. No-show / late-cancel treatment stays provisional config | `c11cf86` |
+| 5 | semi_auto + approve_all bug | Root cause: the failsafe withdrew every optimizer offer at its timer - it required the cab to be in the single-rider top three, and then the single-insertion evaluator vetoed pooled plans the optimizer had passed. Fix: rank 1 stores its plan and accept / failsafe apply it as a plan (vehicle and rider rules still re-read). Live S10 semi_auto: refused offers **36 -> 12**, withdrawn-at-timer **150 -> 4**; the 10 that remain are a late supervisor meeting a correct "already failsafe_assigned". Regression test fails on the old logic. No optimizer-performance work done | (this commit) |
+
+**Needs you:** (a) turn `night_safety_enabled` on for the pilot client or the escort gate never fires; give riders a
+`gender` (CSV column `gender`); (b) `billing_rate_per_km` for the pilot operator; (c) confirm the 150 s stale
+default; (d) OQ-10 residue: should a woman *last out* of a pooled from-office trip also need an escort? (e) OQ-22 and
+OQ-03 are re-stated in open-questions.md rather than closed - they close with real pilot data and a rate.
+Known and left alone: the single-insertion and optimizer evaluators still measure rule 7 differently (manual
+`assign` vs plans); this was the inconsistency behind item 5.
+
 ## Phase 3 summary (2026-11-01)
 
 **Done:** B29-B36 (hold window, optimizer, DARP, apply by mode, route-aware reuse, full_auto + VIPs,

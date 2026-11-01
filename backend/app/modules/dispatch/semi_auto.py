@@ -34,6 +34,7 @@ from app.core.clock import Clock
 from app.core.events import EventPublisher, NullEventPublisher
 from app.core.logging import get_logger
 from app.core.settings import Settings
+from app.domain.dispatch import Violation
 from app.domain.enums import ActorType, AlertType, Urgency
 from app.domain.errors import Conflict, NotFound, ValidationFailed
 from app.domain.failsafe import (
@@ -46,7 +47,7 @@ from app.domain.failsafe import (
 from app.domain.optimizer import Placement
 from app.domain.state_machines import Actor, RequestStatus
 from app.modules.config.service import ConfigService
-from app.modules.dispatch.service import DispatchService
+from app.modules.dispatch.service import DispatchService, PlannedAssignment
 from app.modules.dispatch.suggestion_models import Suggestion
 from app.modules.modes.service import ModeService
 from app.modules.people.models import Employee
@@ -57,6 +58,17 @@ logger = get_logger(__name__)
 #: How many of the ranked candidates become an offer. `control-model.md` §1: "the
 #: system suggests top 3 with reasons".
 OFFER_COUNT = 3
+
+#: Rule 7 and the en-route ceiling, which the optimizer measures on the routing matrix over the
+#: whole route and the single-insertion evaluator measures differently. A plan that still matches
+#: its trip is trusted on these; every other rule is judged again at the moment of assigning.
+PLAN_VOUCHED = frozenset(
+    {
+        Violation.detour_factor_exceeded,
+        Violation.detour_minutes_exceeded,
+        Violation.enroute_reuse_eta_exceeded,
+    }
+)
 
 #: Statuses a request can be in and still want a suggestion.
 OFFERABLE_STATUSES = (str(RequestStatus.requested), str(RequestStatus.queued))
@@ -195,6 +207,15 @@ class SemiAutoService:
                 rank=1,
                 cost=placement.cost,
                 reasons=reasons,
+                plan={
+                    "order": [str(rid) for rid in placement.order],
+                    "pickup_eta_seconds": {
+                        str(rid): seconds for rid, seconds in placement.pickup_eta_seconds.items()
+                    },
+                    "excess_minutes": {
+                        str(rid): minutes for rid, minutes in placement.excess_minutes.items()
+                    },
+                },
                 status=str(SuggestionStatus.offered),
                 offered_at=now,
                 failsafe_due_at=due_at,
@@ -432,6 +453,7 @@ class SemiAutoService:
             actor=actor,
             actor_user_id=actor_user_id,
             trip_id=suggestion.trip_id,
+            plan=await self._plan_for(suggestion, request, "semi_auto"),
         )
         await self._close(
             suggestion, SuggestionStatus.accepted, by=actor_user_id, at=self.clock.now()
@@ -477,15 +499,80 @@ class SemiAutoService:
 
     # --- helpers ------------------------------------------------------------
 
+    async def _plan_for(
+        self, suggestion: Suggestion, request: RideRequest, mode_used: str
+    ) -> PlannedAssignment | None:
+        """The stored plan as an assignment, if the trip it was made for is still as it left it.
+
+        "As it left it" means nobody is on the trip that the plan did not know about; riders
+        the plan expected who have not been assigned yet (a pooled batch is accepted one rider
+        at a time) are fine, because `assign` orders by the plan and keeps only who is present.
+        Pickup ETAs are shortened by the time the offer has been open.
+        """
+        data = suggestion.plan
+        if not data:
+            return None
+        order = tuple(uuid.UUID(rid) for rid in data["order"])
+        if request.id not in order:
+            return None
+
+        trip_id = suggestion.trip_id
+        if trip_id is None:
+            live = await self.dispatch.live_trips(request.operator_id)
+            trip = live.get(suggestion.vehicle_id)
+            trip_id = trip.id if trip is not None else None
+        if trip_id is not None:
+            aboard = set(
+                (
+                    await self.session.execute(
+                        select(RideRequest.id)
+                        .where(RideRequest.trip_id == trip_id)
+                        .where(
+                            RideRequest.status.in_(
+                                [str(RequestStatus.assigned), str(RequestStatus.picked_up)]
+                            )
+                        )
+                    )
+                ).scalars()
+            )
+            if not aboard <= set(order):
+                return None
+
+        elapsed = max((self.clock.now() - suggestion.offered_at).total_seconds(), 0.0)
+        return PlannedAssignment(
+            order=order,
+            pickup_eta_seconds={
+                uuid.UUID(rid): max(float(seconds) - elapsed, 0.0)
+                for rid, seconds in data["pickup_eta_seconds"].items()
+            },
+            excess_minutes={
+                uuid.UUID(rid): float(minutes) for rid, minutes in data["excess_minutes"].items()
+            },
+            mode_used=mode_used,
+        )
+
     async def _assign_from(self, suggestion: Suggestion, request: RideRequest) -> bool:
         """Assign the offered vehicle, if the rules still hold. True when it happened."""
-        still_valid = [
+        # An optimizer offer carries the plan that chose it. The plan was judged by the
+        # optimizer's own evaluator, which measures rule 7 on the routing matrix; the
+        # single-insertion candidate evaluator measures it differently and vetoed pooled
+        # placements the plan had passed. Withdrawing those at the timer meant the batch
+        # re-offered the same cab and an unanswered rider was never assigned in
+        # `semi_auto`. So a plan that still matches the trip is applied as the plan.
+        held = await self.dispatch.is_held(request)
+        planned = None if held else await self._plan_for(suggestion, request, "semi_auto")
+        # Everything about the *vehicle and the rider's situation* is re-read now (out of
+        # service, GPS gone quiet, a lock, a no-sharing rider aboard, the night rule...). The
+        # plan vouches only for the detour arithmetic it did itself.
+        ours = [
             candidate
-            for candidate in await self.dispatch.suggestions(
-                request.operator_id, request.id, limit=OFFER_COUNT
-            )
+            for candidate in await self.dispatch.candidates(request.operator_id, request.id)
             if candidate.vehicle.id == suggestion.vehicle_id
         ]
+        vouched = PLAN_VOUCHED if planned is not None else frozenset()
+        still_valid = not held and any(
+            all(violation in vouched for violation in candidate.violations) for candidate in ours
+        )
         if not still_valid:
             # The world moved. Withdraw rather than assign: the next sweep offers again
             # from the cabs that are actually available now.
@@ -495,6 +582,8 @@ class SemiAutoService:
                 "suggestion_superseded",
                 suggestion_id=str(suggestion.id),
                 reason="hard rules no longer hold",
+                held=held,
+                violations=[str(v) for candidate in ours for v in candidate.violations],
             )
             return False
 
@@ -506,6 +595,7 @@ class SemiAutoService:
                 actor=Actor(str(ActorType.system_failsafe)),
                 actor_user_id=None,
                 trip_id=suggestion.trip_id,
+                plan=planned,
             )
         except (Conflict, NotFound) as exc:
             logger.info(
