@@ -10,10 +10,18 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.core.dependencies import ClockDep, CurrentUserDep, SessionDep
 from app.domain.enums import Role
-from app.domain.errors import Forbidden
+from app.domain.errors import Forbidden, ValidationFailed
 from app.modules.auth.dependencies import require, require_any
 from app.modules.auth.permissions import Permission
-from app.modules.reports.schemas import RatingInput, RatingOut, TripReportOut
+from app.modules.reports.billing import BillingService
+from app.modules.reports.operations import OperationsReportService
+from app.modules.reports.schemas import (
+    BillingExportOut,
+    OperationsReportOut,
+    RatingInput,
+    RatingOut,
+    TripReportOut,
+)
 from app.modules.reports.service import ReportService
 
 router = APIRouter(tags=["reports"])
@@ -93,3 +101,63 @@ async def trip_report(
             headers={"Content-Disposition": f'attachment; filename="trips_{start}_{end}.csv"'},
         )
     return TripReportOut(**report.as_dict())
+
+
+@router.get(
+    "/reports/operations",
+    summary="The full operator report: waits, pooling, cab-km, overrides, acceptance (B39)",
+    response_model=OperationsReportOut,
+    dependencies=[Depends(require(Permission.report_operational_view))],
+)
+async def operations_report(
+    session: SessionDep,
+    clock: ClockDep,
+    current_user: CurrentUserDep,
+    start: Annotated[date, Query(alias="from")],
+    end: Annotated[date, Query(alias="to")],
+    client_id: uuid.UUID | None = None,
+    report_format: Annotated[Literal["json", "csv"], Query(alias="format")] = "json",
+) -> Any:
+    operator_id = _operator_id(current_user)
+    report = await OperationsReportService(session, clock).report(
+        operator_id, start, end, client_id
+    )
+    if report_format == "csv":
+        return Response(
+            content=report.as_csv(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="operations_{start}_{end}.csv"'},
+        )
+    return OperationsReportOut(**report.as_dict())
+
+
+@router.get(
+    "/reports/billing",
+    summary="One client's month as quantities: rides, trips, riders and kilometres (B38)",
+    response_model=BillingExportOut,
+    dependencies=[Depends(require(Permission.billing_view))],
+)
+async def billing_export(
+    session: SessionDep,
+    clock: ClockDep,
+    current_user: CurrentUserDep,
+    month: Annotated[str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")],
+    client_id: uuid.UUID | None = None,
+    report_format: Annotated[Literal["json", "csv"], Query(alias="format")] = "json",
+) -> Any:
+    operator_id = _operator_id(current_user)
+    # A client admin is invoiced for their own people and nobody else's, whatever they ask for.
+    if current_user.active_role is Role.client_admin:
+        client_id = current_user.claims.client_id
+    if client_id is None:
+        raise ValidationFailed("client_id is required", {"field": "client_id"})
+    export = await BillingService(session, clock).export(operator_id, client_id, month)
+    if report_format == "csv":
+        return Response(
+            content=export.as_csv(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="billing_{client_id}_{month}.csv"'
+            },
+        )
+    return BillingExportOut(**export.as_dict())

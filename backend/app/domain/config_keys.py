@@ -170,6 +170,42 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         ),
         ConfigKey("batch_window_seconds", 45, 10, 120, description="Micro-batch window."),
         ConfigKey(
+            "stop_dwell_seconds",
+            60,
+            0,
+            300,
+            description=(
+                "Seconds a cab spends at each stop while riders get in or out. The optimizer "
+                "plans with it; the real figure is a pilot measurement. Provisional."
+            ),
+        ),
+        ConfigKey(
+            "billing_no_show_billable",
+            True,
+            description=(
+                "Whether a rider who was not there when the cab arrived is on the invoice. "
+                "Provisional (OQ-01, OQ-03): nothing says how the pilot operator bills."
+            ),
+        ),
+        ConfigKey(
+            "billing_late_cancel_billable",
+            False,
+            description=(
+                "Whether a rider who cancelled after a cab was assigned is on the invoice. "
+                "A request cancelled while still queued is never billable. Provisional."
+            ),
+        ),
+        ConfigKey(
+            "billing_distance_basis",
+            "trip_share",
+            choices=("trip_share", "direct"),
+            description=(
+                "Kilometres billed per ride: an equal share of the trip the cab drove "
+                "(`trip_share`, adds up to the trip), or the rider's own journey (`direct`). "
+                "Provisional."
+            ),
+        ),
+        ConfigKey(
             "optimizer_failure_threshold",
             3,
             1,

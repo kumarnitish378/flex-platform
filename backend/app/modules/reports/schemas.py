@@ -29,4 +29,31 @@ class TripReportOut(BaseModel):
     p90_wait_minutes: float | None = None
     no_shows: int
     cancellations: int
+    #: Requests assigned by each kind of actor (B34).
+    assignments_by_actor: dict[str, int] = Field(default_factory=dict)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OperationsReportOut(BaseModel):
+    """`GET /reports/operations` (B39). Sections are documented in `api-spec.yaml`."""
+
+    period: dict[str, str]
+    requests: dict[str, int]
+    wait: dict[str, Any]
+    pooling: dict[str, Any]
+    distance: dict[str, Any]
+    overrides: dict[str, Any]
+    suggestions: dict[str, Any]
+    assignments_by_actor: dict[str, int]
+    optimizer: dict[str, Any]
+
+
+class BillingExportOut(BaseModel):
+    """`GET /reports/billing` (B38)."""
+
+    client_id: Any
+    client_name: str
+    month: str
+    treatment: dict[str, Any]
+    summary: dict[str, Any]
     rows: list[dict[str, Any]] = Field(default_factory=list)

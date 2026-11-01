@@ -49,6 +49,7 @@ from app.domain.state_machines import (
 )
 from app.modules.config.service import ConfigService
 from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.dispatch.trip_distance import measure_trip_distance
 from app.modules.fleet.models import Driver, Vehicle
 from app.modules.notifications.service import Audience, NotificationService
 from app.modules.requests.models import RideRequest, RideRequestEvent
@@ -166,6 +167,9 @@ class DriverTripService:
 
         self._apply_trip(trip, TripStatus.completed, Actor.driver, driver.user_id, at, event)
         trip.completed_at = at
+        # What the cab really drove (B38/B39): the one distance a report or an invoice can
+        # stand behind. `None` if it sent no pings, which is "not measured", not zero.
+        trip.actual_distance_m = await measure_trip_distance(self.session, trip)
         await self._release_vehicle(trip, Actor.driver)
 
         await self.session.flush()

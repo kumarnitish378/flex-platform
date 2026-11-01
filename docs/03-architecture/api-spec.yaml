@@ -1068,6 +1068,82 @@ paths:
             text/csv:
               schema: {type: string}
 
+  /reports/operations:
+    get:
+      tags: [reports]
+      summary: The full operator report (B39, OPA-05)
+      description: >
+        Waits, pooling, cab-km, overrides and suggestion acceptance for a period, computed
+        from the records the platform keeps. Requires `report.operational.view` (operator
+        admin, supervisor); a client admin has no operational report.
+
+
+        **Days are the operator's calendar days** in their own timezone, both ends
+        inclusive.
+
+
+        **Cab-km and vehicles used come from what the cabs drove**: `trip.actual_distance_m`,
+        measured from the cab's pings when the driver completes the trip - never from what
+        dispatch planned. A trip with no pings has no distance, and is left out of the
+        average rather than counted as zero kilometres.
+
+
+        **`suggestions.acceptance_rate` is OQ-39 stated, not decided.** It counts only the
+        system's first choice that a person or the failsafe settled in the period; a
+        `failsafe_assigned` offer is never an acceptance (nobody agreed to it) and a
+        `superseded` one is never a verdict. Two readings are returned because the open
+        question names two: `acceptance_rate` (approved) and
+        `acceptance_rate_with_alternatives` (approved, or rejected in favour of a cab the
+        system had also offered). Say which one when quoting either.
+      parameters:
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+        - {name: client_id, in: query, schema: {type: string, format: uuid}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200':
+          description: The report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationsReport'}
+            text/csv:
+              schema: {type: string, description: 'section,metric,value - one row per number'}
+  /reports/billing:
+    get:
+      tags: [reports]
+      summary: One client's month as quantities - rides, trips, riders, kilometres (B38, OPA-06)
+      description: >
+        Requires `billing.view` (operator admin, client admin). A client admin is invoiced
+        for their own people whatever `client_id` they send; an operator admin must name one.
+
+
+        **Quantities, not money.** What the operator bills on is OQ-03 (pricing) and OQ-01
+        (the pilot operator), both open, so this stops short of a price and states the three
+        treatments an invoice would otherwise guess at, in `treatment`:
+        `no_show_billable` (default true), `late_cancel_billable` (default false; a request
+        cancelled while still queued is never billable) and `distance_basis`
+        (`trip_share` - an equal share of the kilometres the cab actually drove, so a trip's
+        shares add up to its measured distance - or `direct`). **All three defaults are
+        provisional.**
+
+
+        A month is the operator's calendar month in their own timezone, by when the rider
+        asked. One row per ride, whether or not it is billable, with `billable_reason`
+        saying why - so an invoice can be audited line by line against the `ride_request`
+        and `trip` rows it came from.
+      parameters:
+        - {name: month, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}, description: 'YYYY-MM'}
+        - {name: client_id, in: query, schema: {type: string, format: uuid}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200':
+          description: The export
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BillingExport'}
+            text/csv:
+              schema: {type: string, description: 'one line per ride, columns as in `rows`'}
+
   /simctl/clock:
     x-env: sim-only
     get:
@@ -1909,6 +1985,121 @@ components:
             doing the work is a number here, not an inference. Each row also carries
             `assigned_by`.
         rows: {type: array, items: {type: object, additionalProperties: true}}
+    OperationsReport:
+      type: object
+      required: [period, requests, wait, pooling, distance, overrides, suggestions, assignments_by_actor, optimizer]
+      properties:
+        period:
+          type: object
+          properties: {from: {type: string, format: date}, to: {type: string, format: date}}
+        requests:
+          type: object
+          description: counts of the requests asked for in the period, by where they ended up
+          properties:
+            total: {type: integer}
+            completed: {type: integer}
+            no_shows: {type: integer}
+            cancelled: {type: integer}
+            expired: {type: integer}
+            still_open: {type: integer}
+        wait:
+          type: object
+          description: asking to getting in, in minutes (the product's one definition of wait)
+          properties:
+            measured: {type: integer}
+            median_minutes: {type: [number, 'null']}
+            p90_minutes: {type: [number, 'null']}
+            distribution:
+              type: object
+              description: 'riders per bucket: 0-5, 5-10, 10-15, 15-20, 20-30, 30-45, 45-60, 60+'
+              additionalProperties: {type: integer}
+        pooling:
+          type: object
+          description: trips completed in the period that carried at least one rider
+          properties:
+            trips: {type: integer}
+            riders_carried: {type: integer}
+            riders_per_trip: {type: [number, 'null']}
+            pooled_trips: {type: integer}
+            pooling_rate: {type: [number, 'null']}
+            vehicles_used: {type: integer}
+        distance:
+          type: object
+          description: from the cabs' pings; trips with no measurement are left out, not zeroed
+          properties:
+            trips_measured: {type: integer}
+            cab_km_total: {type: [number, 'null']}
+            cab_km_per_trip: {type: [number, 'null']}
+            cab_km_per_rider: {type: [number, 'null']}
+        overrides:
+          type: object
+          properties:
+            total: {type: integer}
+            hard_rule_overrides: {type: integer}
+            by_reason: {type: object, additionalProperties: {type: integer}}
+            by_action: {type: object, additionalProperties: {type: integer}}
+        suggestions:
+          type: object
+          description: rank-1 suggestions settled in the period (OQ-39 - see the endpoint)
+          properties:
+            answered_by_a_person: {type: integer}
+            accepted: {type: integer}
+            rejected: {type: integer}
+            failsafe_assigned: {type: integer}
+            rejected_for_an_offered_alternative: {type: integer}
+            acceptance_rate: {type: [number, 'null']}
+            acceptance_rate_with_alternatives: {type: [number, 'null']}
+        assignments_by_actor: {type: object, additionalProperties: {type: integer}}
+        optimizer:
+          type: object
+          properties:
+            runs: {type: integer}
+            failed: {type: integer}
+            applied: {type: integer}
+            suggested: {type: integer}
+            hinted: {type: integer}
+    BillingExport:
+      type: object
+      required: [client_id, client_name, month, treatment, summary, rows]
+      properties:
+        client_id: {type: string, format: uuid}
+        client_name: {type: string}
+        month: {type: string}
+        treatment:
+          type: object
+          properties:
+            no_show_billable: {type: boolean}
+            late_cancel_billable: {type: boolean}
+            distance_basis: {type: string, enum: [trip_share, direct]}
+        summary:
+          type: object
+          properties:
+            rides: {type: integer}
+            billable_rides: {type: integer}
+            completed: {type: integer}
+            no_shows: {type: integer}
+            cancellations: {type: integer}
+            billable_trips: {type: integer}
+            riders: {type: integer}
+            billable_km: {type: [number, 'null']}
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              date: {type: string, format: date}
+              request_id: {type: string, format: uuid}
+              employee: {type: string}
+              direction: {type: string}
+              status: {type: string}
+              billable: {type: boolean}
+              billable_reason: {type: string}
+              trip_id: {type: [string, 'null'], format: uuid}
+              vehicle: {type: [string, 'null']}
+              riders_on_trip: {type: integer}
+              direct_km: {type: [number, 'null']}
+              trip_share_km: {type: [number, 'null']}
+              billable_km: {type: number}
     SimClock:
       type: object
       properties:
