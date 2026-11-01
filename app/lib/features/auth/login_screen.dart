@@ -3,16 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/env.dart';
 import '../../core/session_controller.dart';
 import '../../l10n/app_localizations.dart';
 
-/// Phone + OTP sign-in (C-02).
+/// Phone + OTP sign-in or test-login screen (C-02).
 ///
-/// Handles phone number entry (+91 default) and 6-digit OTP verification.
-/// Respects backend security rules: single error message for refused OTP (OQ-24)
-/// and no "user not found" messages on phone submit.
+/// Features standard OTP flow when [isAppTesting] is false, and single-step
+/// test login when [isAppTesting] is true (with a visible "TEST MODE" banner).
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({
+    super.key,
+    this.isAppTesting,
+  });
+
+  final bool? isAppTesting;
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
@@ -67,16 +72,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final AppText text = AppText.of(context);
     final SignInState signInState = ref.watch(sessionControllerProvider);
+    final bool activeAppTesting = widget.isAppTesting ?? Env.isAppTesting;
 
-    // Start countdown timer when entering code stage if not already running.
-    if (signInState.stage == SignInStage.code &&
-        _resendTimer == null &&
-        _resendCountdown == 30) {
-      _startResendTimer();
-    } else if (signInState.stage == SignInStage.phone && _resendTimer != null) {
-      _resendTimer?.cancel();
-      _resendTimer = null;
-      _resendCountdown = 30;
+    if (!activeAppTesting) {
+      if (signInState.stage == SignInStage.code &&
+          _resendTimer == null &&
+          _resendCountdown == 30) {
+        _startResendTimer();
+      } else if (signInState.stage == SignInStage.phone && _resendTimer != null) {
+        _resendTimer?.cancel();
+        _resendTimer = null;
+        _resendCountdown = 30;
+      }
     }
 
     return Scaffold(
@@ -90,15 +97,98 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                if (signInState.stage == SignInStage.phone)
-                  _buildPhoneStage(context, text, signInState)
-                else
+                if (activeAppTesting) ...<Widget>[
+                  Card(
+                    key: const Key('test-mode-banner'),
+                    color: Colors.purple.shade50,
+                    margin: const EdgeInsets.only(bottom: 24),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          const Icon(Icons.bug_report, color: Colors.purple),
+                          const SizedBox(width: 8),
+                          Text(
+                            'TEST MODE (No OTP)',
+                            style: TextStyle(
+                              color: Colors.purple.shade900,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _buildTestLoginStage(context, text, signInState),
+                ] else if (signInState.stage == SignInStage.phone) ...<Widget>[
+                  _buildPhoneStage(context, text, signInState),
+                ] else ...<Widget>[
                   _buildCodeStage(context, text, signInState),
+                ],
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTestLoginStage(
+    BuildContext context,
+    AppText text,
+    SignInState state,
+  ) {
+    final String? errorMessage = _getErrorMessage(text, state);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          text.enterPhoneNumber,
+          style: Theme.of(context).textTheme.titleLarge,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 24),
+        TextField(
+          key: const Key('phone-input'),
+          controller: _phoneController,
+          keyboardType: TextInputType.phone,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: text.phoneNumber,
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.phone),
+          ),
+          enabled: !state.busy,
+        ),
+        if (errorMessage != null) ...<Widget>[
+          const SizedBox(height: 16),
+          Text(
+            errorMessage,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+            textAlign: TextAlign.center,
+          ),
+        ],
+        const SizedBox(height: 24),
+        ElevatedButton(
+          key: const Key('test-sign-in-button'),
+          onPressed: state.busy || _phoneController.text.trim().isEmpty
+              ? null
+              : () async {
+                  await ref
+                      .read(sessionControllerProvider.notifier)
+                      .submitTestLogin(_phoneController.text.trim());
+                },
+          child: state.busy
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Test Sign In'),
+        ),
+      ],
     );
   }
 

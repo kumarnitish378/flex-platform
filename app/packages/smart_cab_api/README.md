@@ -110,6 +110,7 @@ Class | Method | HTTP request | Description
 [*AuthApi*](doc/AuthApi.md) | [**authOtpRequestPost**](doc/AuthApi.md#authotprequestpost) | **POST** /auth/otp/request | Request OTP
 [*AuthApi*](doc/AuthApi.md) | [**authOtpVerifyPost**](doc/AuthApi.md#authotpverifypost) | **POST** /auth/otp/verify | Verify OTP and obtain tokens
 [*AuthApi*](doc/AuthApi.md) | [**authRefreshPost**](doc/AuthApi.md#authrefreshpost) | **POST** /auth/refresh | 
+[*AuthApi*](doc/AuthApi.md) | [**authTestLoginPost**](doc/AuthApi.md#authtestloginpost) | **POST** /auth/test-login | Testing-only login by phone, no OTP
 [*AuthApi*](doc/AuthApi.md) | [**devicesPost**](doc/AuthApi.md#devicespost) | **POST** /devices | Register or update device push token
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAssignPost**](doc/DispatchApi.md#dispatchassignpost) | **POST** /dispatch/assign | Manual assign a request to a vehicle (new trip) or existing trip
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchAutomationGet**](doc/DispatchApi.md#dispatchautomationget) | **GET** /dispatch/automation | 
@@ -193,6 +194,7 @@ Class | Method | HTTP request | Description
  - [DriverTripsGet200Response](doc/DriverTripsGet200Response.md)
  - [DriverTripsTripIdStartPostRequest](doc/DriverTripsTripIdStartPostRequest.md)
  - [DutyState](doc/DutyState.md)
+ - [DutyStateGps](doc/DutyStateGps.md)
  - [DutyStateMqtt](doc/DutyStateMqtt.md)
  - [Employee](doc/Employee.md)
  - [EmployeeInput](doc/EmployeeInput.md)
@@ -242,6 +244,7 @@ Class | Method | HTTP request | Description
  - [StopStatus](doc/StopStatus.md)
  - [Suggestion](doc/Suggestion.md)
  - [SuggestionDecisionResult](doc/SuggestionDecisionResult.md)
+ - [TestLoginRequest](doc/TestLoginRequest.md)
  - [TokenPair](doc/TokenPair.md)
  - [TrackerType](doc/TrackerType.md)
  - [Trip](doc/Trip.md)

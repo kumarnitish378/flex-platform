@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:smart_cab_api/src/model/duty_state_gps.dart';
 import 'package:smart_cab_api/src/model/duty_state_mqtt.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
@@ -15,6 +16,7 @@ part 'duty_state.g.dart';
 /// * [onDuty] 
 /// * [vehicleId] 
 /// * [mqtt] 
+/// * [gps] 
 @BuiltValue()
 abstract class DutyState implements Built<DutyState, DutyStateBuilder> {
   @BuiltValueField(wireName: r'on_duty')
@@ -25,6 +27,9 @@ abstract class DutyState implements Built<DutyState, DutyStateBuilder> {
 
   @BuiltValueField(wireName: r'mqtt')
   DutyStateMqtt? get mqtt;
+
+  @BuiltValueField(wireName: r'gps')
+  DutyStateGps? get gps;
 
   DutyState._();
 
@@ -68,6 +73,13 @@ class _$DutyStateSerializer implements PrimitiveSerializer<DutyState> {
       yield serializers.serialize(
         object.mqtt,
         specifiedType: const FullType.nullable(DutyStateMqtt),
+      );
+    }
+    if (object.gps != null) {
+      yield r'gps';
+      yield serializers.serialize(
+        object.gps,
+        specifiedType: const FullType.nullable(DutyStateGps),
       );
     }
   }
@@ -115,6 +127,14 @@ class _$DutyStateSerializer implements PrimitiveSerializer<DutyState> {
           ) as DutyStateMqtt?;
           if (valueDes == null) continue;
           result.mqtt.replace(valueDes);
+          break;
+        case r'gps':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(DutyStateGps),
+          ) as DutyStateGps?;
+          if (valueDes == null) continue;
+          result.gps.replace(valueDes);
           break;
         default:
           unhandled.add(key);

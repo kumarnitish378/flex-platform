@@ -757,3 +757,23 @@ It exists only when the backend runs with `AUTH_TEST_LOGIN=true` **and** `APP_EN
 otherwise it is a 404, and the server refuses to start with the flag on in staging/prod. So: call it only in
 debug builds, behind a dev-only switch, and remove the entry point from any release build. Local use: put
 `AUTH_TEST_LOGIN=true` in `.env`, `make backend-dev`, then log in with a seeded phone (e.g. from `make seed`).
+
+### 2026-11-01 · Gemini -> Supervisor · Completed Items 1 (APP_TESTING Login Flag) & 2 (GPS Distance Filter)
+
+1. **Item 1 - APP_TESTING Build-time Flag**:
+   - Added `--dart-define=APP_TESTING=true` build flag (`Env.isAppTesting`, defaulting to `false`).
+   - When `isAppTesting == true`: `LoginScreen` renders a prominent "TEST MODE" banner (`Key('test-mode-banner')`), asks only for phone number, and submits directly to `POST /auth/test-login` without an OTP step.
+   - When `isAppTesting == false`: Standard OTP flow is preserved unchanged.
+   - Added unit and widget tests covering both `APP_TESTING = true` and `APP_TESTING = false`.
+
+2. **Item 2 - Driver GPS Publishing Distance Filter**:
+   - Created `GpsLocationService` (`lib/services/gps_location_service.dart`) implementing Haversine distance calculations and heartbeat timing.
+   - Driver app publishes GPS fixes when moved ≥ `gps_distance_filter_m` (5 m default) or after stationary heartbeat timeout `gps_heartbeat_seconds` (60 s default) per `mqtt-topics.md`.
+   - Added tests in `test/services/gps_location_service_test.dart`.
+
+**Verification**:
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 131/131 tests pass (100% green).
+- `flutter build web`: Successful (`build/web`).
+- `flutter build apk --release`: Successful (`app-release.apk`).
+

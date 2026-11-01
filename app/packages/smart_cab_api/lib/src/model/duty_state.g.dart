@@ -13,11 +13,13 @@ class _$DutyState extends DutyState {
   final String? vehicleId;
   @override
   final DutyStateMqtt? mqtt;
+  @override
+  final DutyStateGps? gps;
 
   factory _$DutyState([void Function(DutyStateBuilder)? updates]) =>
       (DutyStateBuilder()..update(updates))._build();
 
-  _$DutyState._({this.onDuty, this.vehicleId, this.mqtt}) : super._();
+  _$DutyState._({this.onDuty, this.vehicleId, this.mqtt, this.gps}) : super._();
   @override
   DutyState rebuild(void Function(DutyStateBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -31,7 +33,8 @@ class _$DutyState extends DutyState {
     return other is DutyState &&
         onDuty == other.onDuty &&
         vehicleId == other.vehicleId &&
-        mqtt == other.mqtt;
+        mqtt == other.mqtt &&
+        gps == other.gps;
   }
 
   @override
@@ -40,6 +43,7 @@ class _$DutyState extends DutyState {
     _$hash = $jc(_$hash, onDuty.hashCode);
     _$hash = $jc(_$hash, vehicleId.hashCode);
     _$hash = $jc(_$hash, mqtt.hashCode);
+    _$hash = $jc(_$hash, gps.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -49,7 +53,8 @@ class _$DutyState extends DutyState {
     return (newBuiltValueToStringHelper(r'DutyState')
           ..add('onDuty', onDuty)
           ..add('vehicleId', vehicleId)
-          ..add('mqtt', mqtt))
+          ..add('mqtt', mqtt)
+          ..add('gps', gps))
         .toString();
   }
 }
@@ -69,6 +74,10 @@ class DutyStateBuilder implements Builder<DutyState, DutyStateBuilder> {
   DutyStateMqttBuilder get mqtt => _$this._mqtt ??= DutyStateMqttBuilder();
   set mqtt(DutyStateMqttBuilder? mqtt) => _$this._mqtt = mqtt;
 
+  DutyStateGpsBuilder? _gps;
+  DutyStateGpsBuilder get gps => _$this._gps ??= DutyStateGpsBuilder();
+  set gps(DutyStateGpsBuilder? gps) => _$this._gps = gps;
+
   DutyStateBuilder() {
     DutyState._defaults(this);
   }
@@ -79,6 +88,7 @@ class DutyStateBuilder implements Builder<DutyState, DutyStateBuilder> {
       _onDuty = $v.onDuty;
       _vehicleId = $v.vehicleId;
       _mqtt = $v.mqtt?.toBuilder();
+      _gps = $v.gps?.toBuilder();
       _$v = null;
     }
     return this;
@@ -105,12 +115,15 @@ class DutyStateBuilder implements Builder<DutyState, DutyStateBuilder> {
             onDuty: onDuty,
             vehicleId: vehicleId,
             mqtt: _mqtt?.build(),
+            gps: _gps?.build(),
           );
     } catch (_) {
       late String _$failedField;
       try {
         _$failedField = 'mqtt';
         _mqtt?.build();
+        _$failedField = 'gps';
+        _gps?.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
             r'DutyState', _$failedField, e.toString());

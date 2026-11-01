@@ -203,6 +203,48 @@ class SessionController extends Notifier<SignInState> {
     }
   }
 
+  /// Single-step test login for APP_TESTING mode.
+  Future<bool> submitTestLogin(String phone) async {
+    state = state.copyWith(phone: phone, busy: true);
+    try {
+      final api.TokenPair pair = await _auth.testLogin(phone: phone);
+      final String access = pair.accessToken;
+      await _store.write(
+        StoredSession(accessToken: access, refreshToken: pair.refreshToken),
+      );
+      _session.restore(accessToken: access, activeRole: null);
+
+      final Identity? identity = await _auth.me();
+      if (identity == null || identity.roles.isEmpty) {
+        await signOut(revoke: false);
+        state = state.copyWith(busy: false, unavailable: 'no_roles');
+        return false;
+      }
+      final Role role = _chooseRole(identity.roles, null);
+      _session.signIn(
+        userId: identity.userId,
+        roles: identity.roles,
+        activeRole: role,
+        accessToken: access,
+      );
+      await _store.write(
+        StoredSession(
+          accessToken: access,
+          refreshToken: pair.refreshToken,
+          activeRole: role.wireName,
+        ),
+      );
+      state = const SignInState();
+      return true;
+    } on OtpRejected {
+      state = state.copyWith(busy: false, rejected: true);
+      return false;
+    } on AuthUnavailable catch (error) {
+      state = state.copyWith(busy: false, unavailable: error.cause);
+      return false;
+    }
+  }
+
   /// Rotate the tokens. Returns the new access token, or `null` if the session is over.
   Future<String?> refreshTokens() async {
     final StoredSession? stored = await _store.read();

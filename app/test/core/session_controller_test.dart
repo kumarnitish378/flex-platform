@@ -218,6 +218,19 @@ class _TestAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<api.TokenPair> testLogin({required String phone}) async {
+    if (shouldRejectVerify) {
+      throw const OtpRejected();
+    }
+    return api.TokenPair(
+      (api.TokenPairBuilder b) => b
+        ..accessToken = 'mock-access-token'
+        ..refreshToken = 'mock-refresh-token'
+        ..expiresIn = 3600,
+    );
+  }
+
+  @override
   Future<Identity?> me() async {
     return identityToReturn;
   }

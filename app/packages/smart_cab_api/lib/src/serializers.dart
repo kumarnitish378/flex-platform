@@ -55,6 +55,7 @@ import 'package:smart_cab_api/src/model/driver_issues_post_request.dart';
 import 'package:smart_cab_api/src/model/driver_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/driver_trips_trip_id_start_post_request.dart';
 import 'package:smart_cab_api/src/model/duty_state.dart';
+import 'package:smart_cab_api/src/model/duty_state_gps.dart';
 import 'package:smart_cab_api/src/model/duty_state_mqtt.dart';
 import 'package:smart_cab_api/src/model/employee.dart';
 import 'package:smart_cab_api/src/model/employee_input.dart';
@@ -104,6 +105,7 @@ import 'package:smart_cab_api/src/model/sos_post_request.dart';
 import 'package:smart_cab_api/src/model/stop_status.dart';
 import 'package:smart_cab_api/src/model/suggestion.dart';
 import 'package:smart_cab_api/src/model/suggestion_decision_result.dart';
+import 'package:smart_cab_api/src/model/test_login_request.dart';
 import 'package:smart_cab_api/src/model/token_pair.dart';
 import 'package:smart_cab_api/src/model/tracker_type.dart';
 import 'package:smart_cab_api/src/model/trip.dart';
@@ -165,6 +167,7 @@ part 'serializers.g.dart';
   DriverTripsGet200Response,
   DriverTripsTripIdStartPostRequest,
   DutyState,
+  DutyStateGps,
   DutyStateMqtt,
   Employee,
   EmployeeInput,$EmployeeInput,
@@ -214,6 +217,7 @@ part 'serializers.g.dart';
   StopStatus,
   Suggestion,
   SuggestionDecisionResult,
+  TestLoginRequest,
   TokenPair,
   TrackerType,
   Trip,

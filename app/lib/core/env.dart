@@ -39,6 +39,12 @@ class Env {
 
   static const int mqttPort = int.fromEnvironment('MQTT_PORT', defaultValue: 1883);
 
+  /// Build-time testing flag (`--dart-define=APP_TESTING=true`).
+  ///
+  /// When true, [LoginScreen] operates in single-step test-login mode (asking only for phone number)
+  /// and renders a visible "TEST MODE" banner. Defaults to false in all builds.
+  static bool get isAppTesting => const bool.fromEnvironment('APP_TESTING', defaultValue: false);
+
   /// True when this build is wired to something real. Checked by a test, so a release
   /// build with the debug default cannot pass CI.
   static bool get isConfigured => apiBaseUrl.isNotEmpty && !apiBaseUrl.contains('10.0.2.2');

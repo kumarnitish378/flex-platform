@@ -61,6 +61,7 @@ lib/src/model/driver_issues_post_request.dart
 lib/src/model/driver_trips_get200_response.dart
 lib/src/model/driver_trips_trip_id_start_post_request.dart
 lib/src/model/duty_state.dart
+lib/src/model/duty_state_gps.dart
 lib/src/model/duty_state_mqtt.dart
 lib/src/model/employee.dart
 lib/src/model/employee_input.dart
@@ -110,6 +111,7 @@ lib/src/model/sos_post_request.dart
 lib/src/model/stop_status.dart
 lib/src/model/suggestion.dart
 lib/src/model/suggestion_decision_result.dart
+lib/src/model/test_login_request.dart
 lib/src/model/token_pair.dart
 lib/src/model/tracker_type.dart
 lib/src/model/trip.dart

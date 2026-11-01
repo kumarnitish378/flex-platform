@@ -14,6 +14,7 @@ import 'package:smart_cab_api/src/model/error.dart';
 import 'package:smart_cab_api/src/model/me.dart';
 import 'package:smart_cab_api/src/model/otp_request.dart';
 import 'package:smart_cab_api/src/model/otp_verify.dart';
+import 'package:smart_cab_api/src/model/test_login_request.dart';
 import 'package:smart_cab_api/src/model/token_pair.dart';
 
 class AuthApi {
@@ -358,6 +359,101 @@ class AuthApi {
     try {
       const _type = FullType(AuthRefreshPostRequest);
       _bodyData = _serializers.serialize(authRefreshPostRequest, specifiedType: _type);
+
+    } catch(error, stackTrace) {
+      throw DioException(
+         requestOptions: _options.compose(
+          _dio.options,
+          _path,
+        ),
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    final _response = await _dio.request<Object>(
+      _path,
+      data: _bodyData,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    TokenPair? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(TokenPair),
+      ) as TokenPair;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<TokenPair>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// Testing-only login by phone, no OTP
+  /// **Not a production endpoint.** Lets the app skip the OTP while it is being tested. It exists only when the server runs with &#x60;AUTH_TEST_LOGIN&#x3D;true&#x60; **and** &#x60;APP_ENV&#x60; is &#x60;dev&#x60;, &#x60;test&#x60; or &#x60;sim&#x60;; otherwise it answers 404 exactly as an unknown path would. The server refuses to start with &#x60;AUTH_TEST_LOGIN&#x3D;true&#x60; in &#x60;staging&#x60; or &#x60;prod&#x60;. It logs in an **existing, active** user by phone and returns the tokens the OTP flow would have returned, with that user&#39;s real roles. It never creates a user. Every use is logged as &#x60;test_login_used&#x60;. The app must not show a way to reach it in a release build. 
+  ///
+  /// Parameters:
+  /// * [testLoginRequest] 
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [TokenPair] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<TokenPair>> authTestLoginPost({ 
+    required TestLoginRequest testLoginRequest,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/auth/test-login';
+    final _options = Options(
+      method: r'POST',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[],
+        ...?extra,
+      },
+      contentType: 'application/json',
+      validateStatus: validateStatus,
+    );
+
+    dynamic _bodyData;
+
+    try {
+      const _type = FullType(TestLoginRequest);
+      _bodyData = _serializers.serialize(testLoginRequest, specifiedType: _type);
 
     } catch(error, stackTrace) {
       throw DioException(

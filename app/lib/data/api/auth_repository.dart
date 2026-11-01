@@ -99,6 +99,28 @@ class AuthRepository {
     }
   }
 
+  /// Test login endpoint (APP_TESTING = true only).
+  Future<api.TokenPair> testLogin({required String phone}) async {
+    try {
+      final Response<api.TokenPair> response = await _api.authTestLoginPost(
+        testLoginRequest: api.TestLoginRequest(
+          (api.TestLoginRequestBuilder builder) => builder.phone = phone,
+        ),
+      );
+      final api.TokenPair? pair = response.data;
+      if (pair == null) {
+        throw const AuthUnavailable('empty_response');
+      }
+      return pair;
+    } on DioException catch (error) {
+      final int? status = error.response?.statusCode;
+      if (status == 401 || status == 404 || status == 422) {
+        throw const OtpRejected();
+      }
+      throw AuthUnavailable(error.type.name);
+    }
+  }
+
   /// Rotate the token pair. `null` when the session cannot be recovered.
   Future<api.TokenPair?> refresh(String refreshToken) async {
     try {
