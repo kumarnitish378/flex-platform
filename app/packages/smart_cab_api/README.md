@@ -125,6 +125,7 @@ Class | Method | HTTP request | Description
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchSuggestionsGet**](doc/DispatchApi.md#dispatchsuggestionsget) | **GET** /dispatch/suggestions | Offers the system is waiting for an answer to
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchSuggestionsSuggestionIdDecisionPost**](doc/DispatchApi.md#dispatchsuggestionssuggestioniddecisionpost) | **POST** /dispatch/suggestions/{suggestion_id}/decision | Answer one of the system&#39;s suggestions (Phase 2)
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchTripsGet**](doc/DispatchApi.md#dispatchtripsget) | **GET** /dispatch/trips | Every trip for the operator, with stops - one read for a whole board
+[*DispatchApi*](doc/DispatchApi.md) | [**dispatchTripsTripIdEscortConfirmationPost**](doc/DispatchApi.md#dispatchtripstripidescortconfirmationpost) | **POST** /dispatch/trips/{trip_id}/escort-confirmation | Confirm the night escort for a flagged trip so it can start
 [*DispatchApi*](doc/DispatchApi.md) | [**dispatchVehiclesGet**](doc/DispatchApi.md#dispatchvehiclesget) | **GET** /dispatch/vehicles | Snapshot of vehicles with live position and state
 [*DriverApi*](doc/DriverApi.md) | [**driverDutyGet**](doc/DriverApi.md#driverdutyget) | **GET** /driver/duty | Whether this driver is on duty, and in which cab
 [*DriverApi*](doc/DriverApi.md) | [**driverDutyPost**](doc/DriverApi.md#driverdutypost) | **POST** /driver/duty | Go on or off duty
@@ -199,6 +200,7 @@ Class | Method | HTTP request | Description
  - [Employee](doc/Employee.md)
  - [EmployeeInput](doc/EmployeeInput.md)
  - [Error](doc/Error.md)
+ - [EscortConfirmation](doc/EscortConfirmation.md)
  - [Impact](doc/Impact.md)
  - [ImpactAffectedRequestsInner](doc/ImpactAffectedRequestsInner.md)
  - [ImportReport](doc/ImportReport.md)
@@ -248,6 +250,7 @@ Class | Method | HTTP request | Description
  - [TokenPair](doc/TokenPair.md)
  - [TrackerType](doc/TrackerType.md)
  - [Trip](doc/Trip.md)
+ - [TripEscort](doc/TripEscort.md)
  - [TripReport](doc/TripReport.md)
  - [TripRider](doc/TripRider.md)
  - [TripStatus](doc/TripStatus.md)

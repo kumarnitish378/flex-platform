@@ -66,6 +66,7 @@ lib/src/model/duty_state_mqtt.dart
 lib/src/model/employee.dart
 lib/src/model/employee_input.dart
 lib/src/model/error.dart
+lib/src/model/escort_confirmation.dart
 lib/src/model/impact.dart
 lib/src/model/impact_affected_requests_inner.dart
 lib/src/model/import_report.dart
@@ -115,6 +116,7 @@ lib/src/model/test_login_request.dart
 lib/src/model/token_pair.dart
 lib/src/model/tracker_type.dart
 lib/src/model/trip.dart
+lib/src/model/trip_escort.dart
 lib/src/model/trip_report.dart
 lib/src/model/trip_rider.dart
 lib/src/model/trip_status.dart

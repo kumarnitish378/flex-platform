@@ -4,6 +4,7 @@
 
 // ignore_for_file: unused_element
 import 'package:smart_cab_api/src/model/trip_stop.dart';
+import 'package:smart_cab_api/src/model/trip_escort.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/model/trip_status.dart';
 import 'package:smart_cab_api/src/model/trip_rider.dart';
@@ -24,6 +25,7 @@ part 'trip.g.dart';
 /// * [poolingBlocked] 
 /// * [modeUsed] 
 /// * [stops] 
+/// * [escort] 
 /// * [riders] - Everyone on the trip, in stop order, with what pooling cost them (B32, Phase 3). `added_minutes` is minutes spent in the cab beyond riding alone, as of the last plan that touched this trip; `null` until a plan has measured it (trips assigned before Phase 3). 
 @BuiltValue()
 abstract class Trip implements Built<Trip, TripBuilder> {
@@ -53,6 +55,9 @@ abstract class Trip implements Built<Trip, TripBuilder> {
 
   @BuiltValueField(wireName: r'stops')
   BuiltList<TripStop>? get stops;
+
+  @BuiltValueField(wireName: r'escort')
+  TripEscort? get escort;
 
   /// Everyone on the trip, in stop order, with what pooling cost them (B32, Phase 3). `added_minutes` is minutes spent in the cab beyond riding alone, as of the last plan that touched this trip; `null` until a plan has measured it (trips assigned before Phase 3). 
   @BuiltValueField(wireName: r'riders')
@@ -135,6 +140,13 @@ class _$TripSerializer implements PrimitiveSerializer<Trip> {
       yield serializers.serialize(
         object.stops,
         specifiedType: const FullType(BuiltList, [FullType(TripStop)]),
+      );
+    }
+    if (object.escort != null) {
+      yield r'escort';
+      yield serializers.serialize(
+        object.escort,
+        specifiedType: const FullType.nullable(TripEscort),
       );
     }
     if (object.riders != null) {
@@ -222,6 +234,14 @@ class _$TripSerializer implements PrimitiveSerializer<Trip> {
             specifiedType: const FullType(BuiltList, [FullType(TripStop)]),
           ) as BuiltList<TripStop>;
           result.stops.replace(valueDes);
+          break;
+        case r'escort':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(TripEscort),
+          ) as TripEscort?;
+          if (valueDes == null) continue;
+          result.escort.replace(valueDes);
           break;
         case r'riders':
           final valueDes = serializers.deserialize(

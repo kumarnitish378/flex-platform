@@ -210,6 +210,51 @@ class SupervisorRepository {
     }
   }
 
+  /// Confirm night escort for a flagged trip (Item 2).
+  Future<api.Trip> confirmEscort({
+    required String tripId,
+    required String basis,
+    String? note,
+  }) async {
+    try {
+      final api.EscortConfirmationBasisEnum basisEnum = basis == 'male_co_rider_present'
+          ? api.EscortConfirmationBasisEnum.maleCoRiderPresent
+          : api.EscortConfirmationBasisEnum.escortArranged;
+
+      final api.EscortConfirmation confirmation = api.EscortConfirmation(
+        (api.EscortConfirmationBuilder b) => b
+          ..basis = basisEnum
+          ..note = note,
+      );
+
+      final Response<api.Trip> response =
+          await _dispatchApi.dispatchTripsTripIdEscortConfirmationPost(
+        tripId: tripId,
+        escortConfirmation: confirmation,
+      );
+
+      final api.Trip? updatedTrip = response.data;
+      if (updatedTrip == null) {
+        throw const SupervisorException('Failed to confirm escort');
+      }
+      return updatedTrip;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 409) {
+        final String resData = e.response?.data?.toString() ?? '';
+        if (resData.contains('escort_not_required')) {
+          throw const SupervisorException('Night escort is not required for this trip', statusCode: 409);
+        }
+        if (resData.contains('trip_already_started')) {
+          throw const SupervisorException('Trip has already started', statusCode: 409);
+        }
+      }
+      throw SupervisorException(
+        e.response?.data?.toString() ?? 'Failed to confirm escort for $tripId',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
+
   /// Resolve an alert.
   Future<void> resolveAlert(String alertId) async {
     try {

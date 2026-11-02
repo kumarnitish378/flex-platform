@@ -21,6 +21,7 @@ import 'package:smart_cab_api/src/model/dispatch_suggestions_suggestion_id_decis
 import 'package:smart_cab_api/src/model/dispatch_trips_get200_response.dart';
 import 'package:smart_cab_api/src/model/dispatch_vehicles_get200_response.dart';
 import 'package:smart_cab_api/src/model/error.dart';
+import 'package:smart_cab_api/src/model/escort_confirmation.dart';
 import 'package:smart_cab_api/src/model/impact.dart';
 import 'package:smart_cab_api/src/model/mode_resolution.dart';
 import 'package:smart_cab_api/src/model/override_input.dart';
@@ -1178,6 +1179,109 @@ class DispatchApi {
     }
 
     return Response<DispatchTripsGet200Response>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// Confirm the night escort for a flagged trip so it can start
+  /// Night escort rule (OQ-10, owner decision 2026-11-01). After 20:00 (the client&#39;s night window), if a **female rider would be the only rider in the cab**, the trip is flagged (&#x60;Trip.escort.required&#x60;, an &#x60;escort_required&#x60; alert) and **the driver cannot start it** (409, &#x60;details.reason &#x3D; escort_confirmation_required&#x60;) until a supervisor confirms here that an escort is arranged or that a male co-rider is present. A male rider on the same route sharing the cab clears the flag by itself. Nothing is assigned automatically; who confirmed, when and on what basis is recorded on the trip and in its event history. 409 &#x60;escort_not_required&#x60; if the trip is not flagged, 409 if it has already started. 
+  ///
+  /// Parameters:
+  /// * [tripId] 
+  /// * [escortConfirmation] 
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [Trip] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<Trip>> dispatchTripsTripIdEscortConfirmationPost({ 
+    required String tripId,
+    required EscortConfirmation escortConfirmation,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/dispatch/trips/{trip_id}/escort-confirmation'.replaceAll('{' r'trip_id' '}', encodeQueryParameter(_serializers, tripId, const FullType(String)).toString());
+    final _options = Options(
+      method: r'POST',
+      headers: <String, dynamic>{
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'http',
+            'scheme': 'bearer',
+            'name': 'bearerAuth',
+          },
+        ],
+        ...?extra,
+      },
+      contentType: 'application/json',
+      validateStatus: validateStatus,
+    );
+
+    dynamic _bodyData;
+
+    try {
+      const _type = FullType(EscortConfirmation);
+      _bodyData = _serializers.serialize(escortConfirmation, specifiedType: _type);
+
+    } catch(error, stackTrace) {
+      throw DioException(
+         requestOptions: _options.compose(
+          _dio.options,
+          _path,
+        ),
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    final _response = await _dio.request<Object>(
+      _path,
+      data: _bodyData,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    Trip? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(Trip),
+      ) as Trip;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<Trip>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

@@ -6,6 +6,66 @@ part of 'employee.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
+const EmployeeGenderEnum _$employeeGenderEnum_female =
+    const EmployeeGenderEnum._('female');
+const EmployeeGenderEnum _$employeeGenderEnum_male =
+    const EmployeeGenderEnum._('male');
+const EmployeeGenderEnum _$employeeGenderEnum_other =
+    const EmployeeGenderEnum._('other');
+
+EmployeeGenderEnum _$employeeGenderEnumValueOf(String name) {
+  switch (name) {
+    case 'female':
+      return _$employeeGenderEnum_female;
+    case 'male':
+      return _$employeeGenderEnum_male;
+    case 'other':
+      return _$employeeGenderEnum_other;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<EmployeeGenderEnum> _$employeeGenderEnumValues =
+    BuiltSet<EmployeeGenderEnum>(const <EmployeeGenderEnum>[
+  _$employeeGenderEnum_female,
+  _$employeeGenderEnum_male,
+  _$employeeGenderEnum_other,
+]);
+
+Serializer<EmployeeGenderEnum> _$employeeGenderEnumSerializer =
+    _$EmployeeGenderEnumSerializer();
+
+class _$EmployeeGenderEnumSerializer
+    implements PrimitiveSerializer<EmployeeGenderEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'female': 'female',
+    'male': 'male',
+    'other': 'other',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'female': 'female',
+    'male': 'male',
+    'other': 'other',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[EmployeeGenderEnum];
+  @override
+  final String wireName = 'EmployeeGenderEnum';
+
+  @override
+  Object serialize(Serializers serializers, EmployeeGenderEnum object,
+          {FullType specifiedType = FullType.unspecified}) =>
+      _toWire[object.name] ?? object.name;
+
+  @override
+  EmployeeGenderEnum deserialize(Serializers serializers, Object serialized,
+          {FullType specifiedType = FullType.unspecified}) =>
+      EmployeeGenderEnum.valueOf(
+          _fromWire[serialized] ?? (serialized is String ? serialized : ''));
+}
+
 class _$Employee extends Employee {
   @override
   final String? clientId;
@@ -30,6 +90,8 @@ class _$Employee extends Employee {
   @override
   final bool? nightEscortRequired;
   @override
+  final EmployeeInputGenderEnum? gender;
+  @override
   final bool? active;
 
   factory _$Employee([void Function(EmployeeBuilder)? updates]) =>
@@ -47,6 +109,7 @@ class _$Employee extends Employee {
       this.priority,
       this.isVip,
       this.nightEscortRequired,
+      this.gender,
       this.active})
       : super._();
   @override
@@ -71,6 +134,7 @@ class _$Employee extends Employee {
         priority == other.priority &&
         isVip == other.isVip &&
         nightEscortRequired == other.nightEscortRequired &&
+        gender == other.gender &&
         active == other.active;
   }
 
@@ -88,6 +152,7 @@ class _$Employee extends Employee {
     _$hash = $jc(_$hash, priority.hashCode);
     _$hash = $jc(_$hash, isVip.hashCode);
     _$hash = $jc(_$hash, nightEscortRequired.hashCode);
+    _$hash = $jc(_$hash, gender.hashCode);
     _$hash = $jc(_$hash, active.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -107,6 +172,7 @@ class _$Employee extends Employee {
           ..add('priority', priority)
           ..add('isVip', isVip)
           ..add('nightEscortRequired', nightEscortRequired)
+          ..add('gender', gender)
           ..add('active', active))
         .toString();
   }
@@ -163,6 +229,11 @@ class EmployeeBuilder
   set nightEscortRequired(covariant bool? nightEscortRequired) =>
       _$this._nightEscortRequired = nightEscortRequired;
 
+  EmployeeInputGenderEnum? _gender;
+  EmployeeInputGenderEnum? get gender => _$this._gender;
+  set gender(covariant EmployeeInputGenderEnum? gender) =>
+      _$this._gender = gender;
+
   bool? _active;
   bool? get active => _$this._active;
   set active(covariant bool? active) => _$this._active = active;
@@ -185,6 +256,7 @@ class EmployeeBuilder
       _priority = $v.priority;
       _isVip = $v.isVip;
       _nightEscortRequired = $v.nightEscortRequired;
+      _gender = $v.gender;
       _active = $v.active;
       _$v = null;
     }
@@ -223,6 +295,7 @@ class EmployeeBuilder
             priority: priority,
             isVip: isVip,
             nightEscortRequired: nightEscortRequired,
+            gender: gender,
             active: active,
           );
     } catch (_) {

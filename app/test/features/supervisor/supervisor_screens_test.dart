@@ -125,6 +125,13 @@ class _FakeSupervisorRepository implements SupervisorRepository {
   }
 
   @override
+  Future<api.Trip> confirmEscort({
+    required String tripId,
+    required String basis,
+    String? note,
+  }) async => api.Trip((b) => b..id = tripId);
+
+  @override
   Future<List<api.Alert>> getAlerts() async => <api.Alert>[];
 
   @override

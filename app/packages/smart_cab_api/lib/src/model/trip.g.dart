@@ -91,6 +91,8 @@ class _$Trip extends Trip {
   @override
   final BuiltList<TripStop>? stops;
   @override
+  final TripEscort? escort;
+  @override
   final BuiltList<TripRider>? riders;
 
   factory _$Trip([void Function(TripBuilder)? updates]) =>
@@ -105,6 +107,7 @@ class _$Trip extends Trip {
       this.poolingBlocked,
       this.modeUsed,
       this.stops,
+      this.escort,
       this.riders})
       : super._();
   @override
@@ -126,6 +129,7 @@ class _$Trip extends Trip {
         poolingBlocked == other.poolingBlocked &&
         modeUsed == other.modeUsed &&
         stops == other.stops &&
+        escort == other.escort &&
         riders == other.riders;
   }
 
@@ -140,6 +144,7 @@ class _$Trip extends Trip {
     _$hash = $jc(_$hash, poolingBlocked.hashCode);
     _$hash = $jc(_$hash, modeUsed.hashCode);
     _$hash = $jc(_$hash, stops.hashCode);
+    _$hash = $jc(_$hash, escort.hashCode);
     _$hash = $jc(_$hash, riders.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -156,6 +161,7 @@ class _$Trip extends Trip {
           ..add('poolingBlocked', poolingBlocked)
           ..add('modeUsed', modeUsed)
           ..add('stops', stops)
+          ..add('escort', escort)
           ..add('riders', riders))
         .toString();
   }
@@ -197,6 +203,10 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
   ListBuilder<TripStop> get stops => _$this._stops ??= ListBuilder<TripStop>();
   set stops(ListBuilder<TripStop>? stops) => _$this._stops = stops;
 
+  TripEscortBuilder? _escort;
+  TripEscortBuilder get escort => _$this._escort ??= TripEscortBuilder();
+  set escort(TripEscortBuilder? escort) => _$this._escort = escort;
+
   ListBuilder<TripRider>? _riders;
   ListBuilder<TripRider> get riders =>
       _$this._riders ??= ListBuilder<TripRider>();
@@ -217,6 +227,7 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
       _poolingBlocked = $v.poolingBlocked;
       _modeUsed = $v.modeUsed;
       _stops = $v.stops?.toBuilder();
+      _escort = $v.escort?.toBuilder();
       _riders = $v.riders?.toBuilder();
       _$v = null;
     }
@@ -249,6 +260,7 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
             poolingBlocked: poolingBlocked,
             modeUsed: modeUsed,
             stops: _stops?.build(),
+            escort: _escort?.build(),
             riders: _riders?.build(),
           );
     } catch (_) {
@@ -256,6 +268,8 @@ class TripBuilder implements Builder<Trip, TripBuilder> {
       try {
         _$failedField = 'stops';
         _stops?.build();
+        _$failedField = 'escort';
+        _escort?.build();
         _$failedField = 'riders';
         _riders?.build();
       } catch (e) {

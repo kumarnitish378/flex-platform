@@ -19,6 +19,7 @@ part 'billing_export_summary.g.dart';
 /// * [billableTrips] 
 /// * [riders] 
 /// * [billableKm] 
+/// * [amount] - billable_km x rate_per_km; null when no rate is set. Never shown to riders.
 @BuiltValue()
 abstract class BillingExportSummary implements Built<BillingExportSummary, BillingExportSummaryBuilder> {
   @BuiltValueField(wireName: r'rides')
@@ -44,6 +45,10 @@ abstract class BillingExportSummary implements Built<BillingExportSummary, Billi
 
   @BuiltValueField(wireName: r'billable_km')
   num? get billableKm;
+
+  /// billable_km x rate_per_km; null when no rate is set. Never shown to riders.
+  @BuiltValueField(wireName: r'amount')
+  num? get amount;
 
   BillingExportSummary._();
 
@@ -121,6 +126,13 @@ class _$BillingExportSummarySerializer implements PrimitiveSerializer<BillingExp
       yield r'billable_km';
       yield serializers.serialize(
         object.billableKm,
+        specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.amount != null) {
+      yield r'amount';
+      yield serializers.serialize(
+        object.amount,
         specifiedType: const FullType.nullable(num),
       );
     }
@@ -203,6 +215,14 @@ class _$BillingExportSummarySerializer implements PrimitiveSerializer<BillingExp
           ) as num?;
           if (valueDes == null) continue;
           result.billableKm = valueDes;
+          break;
+        case r'amount':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.amount = valueDes;
           break;
         default:
           unhandled.add(key);

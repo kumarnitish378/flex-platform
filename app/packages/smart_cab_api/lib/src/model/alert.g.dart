@@ -21,6 +21,8 @@ const AlertTypeEnum _$alertTypeEnum_staleVehicle =
     const AlertTypeEnum._('staleVehicle');
 const AlertTypeEnum _$alertTypeEnum_modePrompt =
     const AlertTypeEnum._('modePrompt');
+const AlertTypeEnum _$alertTypeEnum_escortRequired =
+    const AlertTypeEnum._('escortRequired');
 const AlertTypeEnum _$alertTypeEnum_system = const AlertTypeEnum._('system');
 
 AlertTypeEnum _$alertTypeEnumValueOf(String name) {
@@ -41,6 +43,8 @@ AlertTypeEnum _$alertTypeEnumValueOf(String name) {
       return _$alertTypeEnum_staleVehicle;
     case 'modePrompt':
       return _$alertTypeEnum_modePrompt;
+    case 'escortRequired':
+      return _$alertTypeEnum_escortRequired;
     case 'system':
       return _$alertTypeEnum_system;
     default:
@@ -58,6 +62,7 @@ final BuiltSet<AlertTypeEnum> _$alertTypeEnumValues =
   _$alertTypeEnum_failsafe,
   _$alertTypeEnum_staleVehicle,
   _$alertTypeEnum_modePrompt,
+  _$alertTypeEnum_escortRequired,
   _$alertTypeEnum_system,
 ]);
 
@@ -131,6 +136,7 @@ class _$AlertTypeEnumSerializer implements PrimitiveSerializer<AlertTypeEnum> {
     'failsafe': 'failsafe',
     'staleVehicle': 'stale_vehicle',
     'modePrompt': 'mode_prompt',
+    'escortRequired': 'escort_required',
     'system': 'system',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
@@ -142,6 +148,7 @@ class _$AlertTypeEnumSerializer implements PrimitiveSerializer<AlertTypeEnum> {
     'failsafe': 'failsafe',
     'stale_vehicle': 'staleVehicle',
     'mode_prompt': 'modePrompt',
+    'escort_required': 'escortRequired',
     'system': 'system',
   };
 

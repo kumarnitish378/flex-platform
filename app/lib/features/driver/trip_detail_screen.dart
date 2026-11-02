@@ -7,8 +7,8 @@ import '../../data/api/driver_trips_repository.dart';
 
 /// Driver trip detail screen (D-04).
 ///
-/// Features ordered stops (rider name, landmark, planned time), stop action buttons
-/// (Arrived, Done, No show), and navigation CTA.
+/// Features ordered stops (rider name, landmark, planned time), stop action buttons,
+/// trip start action with night escort confirmation gate error handling (Item 2).
 class TripDetailScreen extends ConsumerStatefulWidget {
   const TripDetailScreen({required this.tripId, super.key});
 
@@ -22,6 +22,7 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
   bool _loading = true;
   api.Trip? _trip;
   String? _error;
+  String? _escortBlockedMessage;
 
   @override
   void initState() {
@@ -50,9 +51,58 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
     }
   }
 
+  Future<void> _startTrip() async {
+    setState(() {
+      _escortBlockedMessage = null;
+      _error = null;
+    });
+
+    try {
+      final api.Trip updated =
+          await ref.read(driverTripsRepositoryProvider).startTrip(widget.tripId);
+      if (mounted) {
+        setState(() {
+          _trip = updated;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Trip started')),
+        );
+      }
+    } on DriverTripsException catch (e) {
+      if (mounted) {
+        if (e.message.contains('escort_confirmation_required')) {
+          setState(() {
+            _escortBlockedMessage = 'Waiting for supervisor to confirm the night escort';
+          });
+        } else {
+          setState(() {
+            _error = e.message;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        final String errStr = e.toString();
+        if (errStr.contains('escort_confirmation_required')) {
+          setState(() {
+            _escortBlockedMessage = 'Waiting for supervisor to confirm the night escort';
+          });
+        } else {
+          setState(() {
+            _error = errStr;
+          });
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+
+    final api.TripEscort? escort = _trip?.escort;
+    final bool escortNeeded =
+        escort != null && escort.required_ && !escort.confirmed;
 
     return Scaffold(
       key: const Key('D-04'),
@@ -77,6 +127,47 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      if (_escortBlockedMessage != null) ...<Widget>[
+                        Card(
+                          key: const Key('escort-start-blocked-msg'),
+                          color: Colors.red.shade100,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Row(
+                              children: <Widget>[
+                                const Icon(Icons.security_sharp, color: Colors.red),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _escortBlockedMessage!,
+                                    style: TextStyle(
+                                      color: Colors.red.shade900,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      if (escortNeeded && _escortBlockedMessage == null) ...<Widget>[
+                        Card(
+                          key: const Key('escort-needed-banner'),
+                          color: Colors.red.shade50,
+                          child: const Padding(
+                            padding: EdgeInsets.all(12.0),
+                            child: Text(
+                              'Escort needed (Supervisor confirmation pending)',
+                              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
                       Card(
                         elevation: 2,
                         child: Padding(
@@ -89,11 +180,10 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
                                 style: theme.textTheme.titleMedium,
                               ),
                               ElevatedButton.icon(
-                                onPressed: () {
-                                  context.go('/driver/trips/${widget.tripId}/navigate');
-                                },
-                                icon: const Icon(Icons.map),
-                                label: const Text('Map'),
+                                key: const Key('start-trip'),
+                                onPressed: _startTrip,
+                                icon: const Icon(Icons.play_arrow),
+                                label: const Text('Start Trip'),
                               ),
                             ],
                           ),

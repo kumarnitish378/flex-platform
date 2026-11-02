@@ -32,9 +32,31 @@ final BuiltSet<BillingExportTreatmentDistanceBasisEnum>
   _$billingExportTreatmentDistanceBasisEnum_direct,
 ]);
 
+const BillingExportTreatmentBasisEnum _$billingExportTreatmentBasisEnum_perKm =
+    const BillingExportTreatmentBasisEnum._('perKm');
+
+BillingExportTreatmentBasisEnum _$billingExportTreatmentBasisEnumValueOf(
+    String name) {
+  switch (name) {
+    case 'perKm':
+      return _$billingExportTreatmentBasisEnum_perKm;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<BillingExportTreatmentBasisEnum>
+    _$billingExportTreatmentBasisEnumValues = BuiltSet<
+        BillingExportTreatmentBasisEnum>(const <BillingExportTreatmentBasisEnum>[
+  _$billingExportTreatmentBasisEnum_perKm,
+]);
+
 Serializer<BillingExportTreatmentDistanceBasisEnum>
     _$billingExportTreatmentDistanceBasisEnumSerializer =
     _$BillingExportTreatmentDistanceBasisEnumSerializer();
+Serializer<BillingExportTreatmentBasisEnum>
+    _$billingExportTreatmentBasisEnumSerializer =
+    _$BillingExportTreatmentBasisEnumSerializer();
 
 class _$BillingExportTreatmentDistanceBasisEnumSerializer
     implements PrimitiveSerializer<BillingExportTreatmentDistanceBasisEnum> {
@@ -68,6 +90,34 @@ class _$BillingExportTreatmentDistanceBasisEnumSerializer
           _fromWire[serialized] ?? (serialized is String ? serialized : ''));
 }
 
+class _$BillingExportTreatmentBasisEnumSerializer
+    implements PrimitiveSerializer<BillingExportTreatmentBasisEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'perKm': 'per_km',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'per_km': 'perKm',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[BillingExportTreatmentBasisEnum];
+  @override
+  final String wireName = 'BillingExportTreatmentBasisEnum';
+
+  @override
+  Object serialize(
+          Serializers serializers, BillingExportTreatmentBasisEnum object,
+          {FullType specifiedType = FullType.unspecified}) =>
+      _toWire[object.name] ?? object.name;
+
+  @override
+  BillingExportTreatmentBasisEnum deserialize(
+          Serializers serializers, Object serialized,
+          {FullType specifiedType = FullType.unspecified}) =>
+      BillingExportTreatmentBasisEnum.valueOf(
+          _fromWire[serialized] ?? (serialized is String ? serialized : ''));
+}
+
 class _$BillingExportTreatment extends BillingExportTreatment {
   @override
   final bool? noShowBillable;
@@ -75,13 +125,21 @@ class _$BillingExportTreatment extends BillingExportTreatment {
   final bool? lateCancelBillable;
   @override
   final BillingExportTreatmentDistanceBasisEnum? distanceBasis;
+  @override
+  final BillingExportTreatmentBasisEnum? basis;
+  @override
+  final num? ratePerKm;
 
   factory _$BillingExportTreatment(
           [void Function(BillingExportTreatmentBuilder)? updates]) =>
       (BillingExportTreatmentBuilder()..update(updates))._build();
 
   _$BillingExportTreatment._(
-      {this.noShowBillable, this.lateCancelBillable, this.distanceBasis})
+      {this.noShowBillable,
+      this.lateCancelBillable,
+      this.distanceBasis,
+      this.basis,
+      this.ratePerKm})
       : super._();
   @override
   BillingExportTreatment rebuild(
@@ -98,7 +156,9 @@ class _$BillingExportTreatment extends BillingExportTreatment {
     return other is BillingExportTreatment &&
         noShowBillable == other.noShowBillable &&
         lateCancelBillable == other.lateCancelBillable &&
-        distanceBasis == other.distanceBasis;
+        distanceBasis == other.distanceBasis &&
+        basis == other.basis &&
+        ratePerKm == other.ratePerKm;
   }
 
   @override
@@ -107,6 +167,8 @@ class _$BillingExportTreatment extends BillingExportTreatment {
     _$hash = $jc(_$hash, noShowBillable.hashCode);
     _$hash = $jc(_$hash, lateCancelBillable.hashCode);
     _$hash = $jc(_$hash, distanceBasis.hashCode);
+    _$hash = $jc(_$hash, basis.hashCode);
+    _$hash = $jc(_$hash, ratePerKm.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -116,7 +178,9 @@ class _$BillingExportTreatment extends BillingExportTreatment {
     return (newBuiltValueToStringHelper(r'BillingExportTreatment')
           ..add('noShowBillable', noShowBillable)
           ..add('lateCancelBillable', lateCancelBillable)
-          ..add('distanceBasis', distanceBasis))
+          ..add('distanceBasis', distanceBasis)
+          ..add('basis', basis)
+          ..add('ratePerKm', ratePerKm))
         .toString();
   }
 }
@@ -141,6 +205,14 @@ class BillingExportTreatmentBuilder
   set distanceBasis(BillingExportTreatmentDistanceBasisEnum? distanceBasis) =>
       _$this._distanceBasis = distanceBasis;
 
+  BillingExportTreatmentBasisEnum? _basis;
+  BillingExportTreatmentBasisEnum? get basis => _$this._basis;
+  set basis(BillingExportTreatmentBasisEnum? basis) => _$this._basis = basis;
+
+  num? _ratePerKm;
+  num? get ratePerKm => _$this._ratePerKm;
+  set ratePerKm(num? ratePerKm) => _$this._ratePerKm = ratePerKm;
+
   BillingExportTreatmentBuilder() {
     BillingExportTreatment._defaults(this);
   }
@@ -151,6 +223,8 @@ class BillingExportTreatmentBuilder
       _noShowBillable = $v.noShowBillable;
       _lateCancelBillable = $v.lateCancelBillable;
       _distanceBasis = $v.distanceBasis;
+      _basis = $v.basis;
+      _ratePerKm = $v.ratePerKm;
       _$v = null;
     }
     return this;
@@ -175,6 +249,8 @@ class BillingExportTreatmentBuilder
           noShowBillable: noShowBillable,
           lateCancelBillable: lateCancelBillable,
           distanceBasis: distanceBasis,
+          basis: basis,
+          ratePerKm: ratePerKm,
         );
     replace(_$result);
     return _$result;

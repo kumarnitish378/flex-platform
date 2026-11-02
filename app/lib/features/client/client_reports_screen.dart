@@ -20,6 +20,8 @@ class ClientReportsScreen extends ConsumerStatefulWidget {
 class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
   bool _loading = true;
   api.BillingExport? _billing;
+  List<api.Client> _clients = <api.Client>[];
+  String? _selectedClientId;
   bool _downloading = false;
   String? _error;
 
@@ -30,16 +32,35 @@ class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
   }
 
   Future<void> _fetchBilling() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
       final Session session = ref.read(sessionProvider);
-      // For client_admin role, omit clientId so server scope applies automatically
-      final String? clientId = session.activeRole == Role.clientAdmin ? null : 'client_1';
+      final AdminRepository repo = ref.read(adminRepositoryProvider);
+
+      String? clientIdToUse;
+      if (session.activeRole == Role.clientAdmin) {
+        clientIdToUse = null; // Backend automatically uses caller's client ID
+      } else {
+        if (_clients.isEmpty) {
+          _clients = await repo.getClients();
+        }
+        if (_selectedClientId == null && _clients.isNotEmpty) {
+          _selectedClientId = _clients.first.id;
+        }
+        clientIdToUse = _selectedClientId;
+      }
 
       final now = DateTime.now();
       final monthStr = '${now.year}-${now.month.toString().padLeft(2, '0')}';
-      final api.BillingExport? export = await ref
-          .read(adminRepositoryProvider)
-          .getBillingExport(month: monthStr, clientId: clientId);
+      final api.BillingExport? export = await repo.getBillingExport(
+        month: monthStr,
+        clientId: clientIdToUse,
+      );
+
       if (mounted) {
         setState(() {
           _billing = export;
@@ -64,7 +85,8 @@ class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
 
     try {
       final Session session = ref.read(sessionProvider);
-      final String? clientId = session.activeRole == Role.clientAdmin ? null : 'client_1';
+      final String? clientId =
+          session.activeRole == Role.clientAdmin ? null : _selectedClientId;
       final now = DateTime.now();
       final monthStr = '${now.year}-${now.month.toString().padLeft(2, '0')}';
 
@@ -99,6 +121,8 @@ class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final Session session = ref.watch(sessionProvider);
+    final bool isOperatorAdmin = session.activeRole != Role.clientAdmin;
 
     return Scaffold(
       key: const Key('L-04'),
@@ -126,6 +150,33 @@ class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
+                  if (isOperatorAdmin && _clients.isNotEmpty) ...<Widget>[
+                    DropdownButtonFormField<String>(
+                      key: const Key('client-selector'),
+                      initialValue: _selectedClientId,
+                      decoration: const InputDecoration(
+                        labelText: 'Select Client',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: <DropdownMenuItem<String>>[
+                        for (final api.Client c in _clients)
+                          DropdownMenuItem<String>(
+                            value: c.id,
+                            child: Text(c.name),
+                          ),
+                      ],
+                      onChanged: (String? val) {
+                        if (val != null) {
+                          setState(() {
+                            _selectedClientId = val;
+                          });
+                          _fetchBilling();
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
                   if (_error != null) ...<Widget>[
                     Text(
                       _error!,

@@ -23,6 +23,8 @@ class _$BillingExportSummary extends BillingExportSummary {
   final int? riders;
   @override
   final num? billableKm;
+  @override
+  final num? amount;
 
   factory _$BillingExportSummary(
           [void Function(BillingExportSummaryBuilder)? updates]) =>
@@ -36,7 +38,8 @@ class _$BillingExportSummary extends BillingExportSummary {
       this.cancellations,
       this.billableTrips,
       this.riders,
-      this.billableKm})
+      this.billableKm,
+      this.amount})
       : super._();
   @override
   BillingExportSummary rebuild(
@@ -58,7 +61,8 @@ class _$BillingExportSummary extends BillingExportSummary {
         cancellations == other.cancellations &&
         billableTrips == other.billableTrips &&
         riders == other.riders &&
-        billableKm == other.billableKm;
+        billableKm == other.billableKm &&
+        amount == other.amount;
   }
 
   @override
@@ -72,6 +76,7 @@ class _$BillingExportSummary extends BillingExportSummary {
     _$hash = $jc(_$hash, billableTrips.hashCode);
     _$hash = $jc(_$hash, riders.hashCode);
     _$hash = $jc(_$hash, billableKm.hashCode);
+    _$hash = $jc(_$hash, amount.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -86,7 +91,8 @@ class _$BillingExportSummary extends BillingExportSummary {
           ..add('cancellations', cancellations)
           ..add('billableTrips', billableTrips)
           ..add('riders', riders)
-          ..add('billableKm', billableKm))
+          ..add('billableKm', billableKm)
+          ..add('amount', amount))
         .toString();
   }
 }
@@ -130,6 +136,10 @@ class BillingExportSummaryBuilder
   num? get billableKm => _$this._billableKm;
   set billableKm(num? billableKm) => _$this._billableKm = billableKm;
 
+  num? _amount;
+  num? get amount => _$this._amount;
+  set amount(num? amount) => _$this._amount = amount;
+
   BillingExportSummaryBuilder() {
     BillingExportSummary._defaults(this);
   }
@@ -145,6 +155,7 @@ class BillingExportSummaryBuilder
       _billableTrips = $v.billableTrips;
       _riders = $v.riders;
       _billableKm = $v.billableKm;
+      _amount = $v.amount;
       _$v = null;
     }
     return this;
@@ -174,6 +185,7 @@ class BillingExportSummaryBuilder
           billableTrips: billableTrips,
           riders: riders,
           billableKm: billableKm,
+          amount: amount,
         );
     replace(_$result);
     return _$result;

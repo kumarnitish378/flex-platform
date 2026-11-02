@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/model/employee_input.dart';
 import 'package:smart_cab_api/src/model/lat_lng.dart';
 import 'package:built_value/built_value.dart';
@@ -21,6 +22,7 @@ part 'employee.g.dart';
 /// * [priority] 
 /// * [isVip] 
 /// * [nightEscortRequired] 
+/// * [gender] - Read only by the night escort rule (OQ-10). Unknown never triggers it.
 /// * [active] 
 /// * [id] 
 /// * [clientId] 
@@ -70,21 +72,13 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
         specifiedType: const FullType(String),
       );
     }
-    yield r'phone';
-    yield serializers.serialize(
-      object.phone,
-      specifiedType: const FullType(String),
-    );
-    yield r'office_id';
-    yield serializers.serialize(
-      object.officeId,
-      specifiedType: const FullType(String),
-    );
-    yield r'home_location';
-    yield serializers.serialize(
-      object.homeLocation,
-      specifiedType: const FullType(LatLng),
-    );
+    if (object.gender != null) {
+      yield r'gender';
+      yield serializers.serialize(
+        object.gender,
+        specifiedType: const FullType.nullable(EmployeeInputGenderEnum),
+      );
+    }
     if (object.nightEscortRequired != null) {
       yield r'night_escort_required';
       yield serializers.serialize(
@@ -92,30 +86,11 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
         specifiedType: const FullType(bool),
       );
     }
-    yield r'name';
-    yield serializers.serialize(
-      object.name,
-      specifiedType: const FullType(String),
-    );
-    if (object.zoneId != null) {
-      yield r'zone_id';
-      yield serializers.serialize(
-        object.zoneId,
-        specifiedType: const FullType.nullable(String),
-      );
-    }
     if (object.active != null) {
       yield r'active';
       yield serializers.serialize(
         object.active,
         specifiedType: const FullType(bool),
-      );
-    }
-    if (object.id != null) {
-      yield r'id';
-      yield serializers.serialize(
-        object.id,
-        specifiedType: const FullType(String),
       );
     }
     if (object.priority != null) {
@@ -136,6 +111,40 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
       yield r'home_landmark';
       yield serializers.serialize(
         object.homeLandmark,
+        specifiedType: const FullType(String),
+      );
+    }
+    yield r'phone';
+    yield serializers.serialize(
+      object.phone,
+      specifiedType: const FullType(String),
+    );
+    yield r'office_id';
+    yield serializers.serialize(
+      object.officeId,
+      specifiedType: const FullType(String),
+    );
+    yield r'home_location';
+    yield serializers.serialize(
+      object.homeLocation,
+      specifiedType: const FullType(LatLng),
+    );
+    yield r'name';
+    yield serializers.serialize(
+      object.name,
+      specifiedType: const FullType(String),
+    );
+    if (object.zoneId != null) {
+      yield r'zone_id';
+      yield serializers.serialize(
+        object.zoneId,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.id != null) {
+      yield r'id';
+      yield serializers.serialize(
+        object.id,
         specifiedType: const FullType(String),
       );
     }
@@ -169,26 +178,13 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
           ) as String;
           result.clientId = valueDes;
           break;
-        case r'phone':
+        case r'gender':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.phone = valueDes;
-          break;
-        case r'office_id':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.officeId = valueDes;
-          break;
-        case r'home_location':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(LatLng),
-          ) as LatLng;
-          result.homeLocation.replace(valueDes);
+            specifiedType: const FullType.nullable(EmployeeInputGenderEnum),
+          ) as EmployeeInputGenderEnum?;
+          if (valueDes == null) continue;
+          result.gender = valueDes;
           break;
         case r'night_escort_required':
           final valueDes = serializers.deserialize(
@@ -197,34 +193,12 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
           ) as bool;
           result.nightEscortRequired = valueDes;
           break;
-        case r'name':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.name = valueDes;
-          break;
-        case r'zone_id':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(String),
-          ) as String?;
-          if (valueDes == null) continue;
-          result.zoneId = valueDes;
-          break;
         case r'active':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType(bool),
           ) as bool;
           result.active = valueDes;
-          break;
-        case r'id':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.id = valueDes;
           break;
         case r'priority':
           final valueDes = serializers.deserialize(
@@ -246,6 +220,49 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
             specifiedType: const FullType(String),
           ) as String;
           result.homeLandmark = valueDes;
+          break;
+        case r'phone':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.phone = valueDes;
+          break;
+        case r'office_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.officeId = valueDes;
+          break;
+        case r'home_location':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(LatLng),
+          ) as LatLng;
+          result.homeLocation.replace(valueDes);
+          break;
+        case r'name':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.name = valueDes;
+          break;
+        case r'zone_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.zoneId = valueDes;
+          break;
+        case r'id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.id = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -274,5 +291,25 @@ class _$EmployeeSerializer implements PrimitiveSerializer<Employee> {
     );
     return result.build();
   }
+}
+
+class EmployeeGenderEnum extends EnumClass {
+
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueEnumConst(wireName: r'female')
+  static const EmployeeGenderEnum female = _$employeeGenderEnum_female;
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueEnumConst(wireName: r'male')
+  static const EmployeeGenderEnum male = _$employeeGenderEnum_male;
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueEnumConst(wireName: r'other')
+  static const EmployeeGenderEnum other = _$employeeGenderEnum_other;
+
+  static Serializer<EmployeeGenderEnum> get serializer => _$employeeGenderEnumSerializer;
+
+  const EmployeeGenderEnum._(String name): super(name);
+
+  static BuiltSet<EmployeeGenderEnum> get values => _$employeeGenderEnumValues;
+  static EmployeeGenderEnum valueOf(String name) => _$employeeGenderEnumValueOf(name);
 }
 

@@ -15,6 +15,8 @@ part 'billing_export_treatment.g.dart';
 /// * [noShowBillable] 
 /// * [lateCancelBillable] 
 /// * [distanceBasis] 
+/// * [basis] - Clients are billed per kilometre (OQ-03, owner decision).
+/// * [ratePerKm] - Operator config billing_rate_per_km; null when no rate is set.
 @BuiltValue()
 abstract class BillingExportTreatment implements Built<BillingExportTreatment, BillingExportTreatmentBuilder> {
   @BuiltValueField(wireName: r'no_show_billable')
@@ -26,6 +28,15 @@ abstract class BillingExportTreatment implements Built<BillingExportTreatment, B
   @BuiltValueField(wireName: r'distance_basis')
   BillingExportTreatmentDistanceBasisEnum? get distanceBasis;
   // enum distanceBasisEnum {  trip_share,  direct,  };
+
+  /// Clients are billed per kilometre (OQ-03, owner decision).
+  @BuiltValueField(wireName: r'basis')
+  BillingExportTreatmentBasisEnum? get basis;
+  // enum basisEnum {  per_km,  };
+
+  /// Operator config billing_rate_per_km; null when no rate is set.
+  @BuiltValueField(wireName: r'rate_per_km')
+  num? get ratePerKm;
 
   BillingExportTreatment._();
 
@@ -69,6 +80,20 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
       yield serializers.serialize(
         object.distanceBasis,
         specifiedType: const FullType(BillingExportTreatmentDistanceBasisEnum),
+      );
+    }
+    if (object.basis != null) {
+      yield r'basis';
+      yield serializers.serialize(
+        object.basis,
+        specifiedType: const FullType(BillingExportTreatmentBasisEnum),
+      );
+    }
+    if (object.ratePerKm != null) {
+      yield r'rate_per_km';
+      yield serializers.serialize(
+        object.ratePerKm,
+        specifiedType: const FullType.nullable(num),
       );
     }
   }
@@ -115,6 +140,21 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
           ) as BillingExportTreatmentDistanceBasisEnum;
           result.distanceBasis = valueDes;
           break;
+        case r'basis':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BillingExportTreatmentBasisEnum),
+          ) as BillingExportTreatmentBasisEnum;
+          result.basis = valueDes;
+          break;
+        case r'rate_per_km':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.ratePerKm = valueDes;
+          break;
         default:
           unhandled.add(key);
           unhandled.add(value);
@@ -157,5 +197,19 @@ class BillingExportTreatmentDistanceBasisEnum extends EnumClass {
 
   static BuiltSet<BillingExportTreatmentDistanceBasisEnum> get values => _$billingExportTreatmentDistanceBasisEnumValues;
   static BillingExportTreatmentDistanceBasisEnum valueOf(String name) => _$billingExportTreatmentDistanceBasisEnumValueOf(name);
+}
+
+class BillingExportTreatmentBasisEnum extends EnumClass {
+
+  /// Clients are billed per kilometre (OQ-03, owner decision).
+  @BuiltValueEnumConst(wireName: r'per_km')
+  static const BillingExportTreatmentBasisEnum perKm = _$billingExportTreatmentBasisEnum_perKm;
+
+  static Serializer<BillingExportTreatmentBasisEnum> get serializer => _$billingExportTreatmentBasisEnumSerializer;
+
+  const BillingExportTreatmentBasisEnum._(String name): super(name);
+
+  static BuiltSet<BillingExportTreatmentBasisEnum> get values => _$billingExportTreatmentBasisEnumValues;
+  static BillingExportTreatmentBasisEnum valueOf(String name) => _$billingExportTreatmentBasisEnumValueOf(name);
 }
 

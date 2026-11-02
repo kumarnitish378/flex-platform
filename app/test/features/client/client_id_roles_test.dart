@@ -19,7 +19,7 @@ void main() {
     return ProviderScope(
       overrides: [
         adminRepositoryProvider.overrideWithValue(trackingAdminRepo),
-        sessionProvider.overrideWith((ref) => session),
+        sessionProvider.overrideWith(() => _FakeSessionNotifier(session)),
       ],
       child: MaterialApp(
         localizationsDelegates: AppText.localizationsDelegates,
@@ -86,6 +86,15 @@ void main() {
       expect(trackingAdminRepo.lastRequestedBillingClientId, isNull);
     });
   });
+}
+
+class _FakeSessionNotifier extends SessionNotifier {
+  _FakeSessionNotifier(this.initialSession);
+
+  final Session initialSession;
+
+  @override
+  Session build() => initialSession;
 }
 
 class _TrackingAdminRepository implements AdminRepository {

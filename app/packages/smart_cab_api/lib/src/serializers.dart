@@ -60,6 +60,7 @@ import 'package:smart_cab_api/src/model/duty_state_mqtt.dart';
 import 'package:smart_cab_api/src/model/employee.dart';
 import 'package:smart_cab_api/src/model/employee_input.dart';
 import 'package:smart_cab_api/src/model/error.dart';
+import 'package:smart_cab_api/src/model/escort_confirmation.dart';
 import 'package:smart_cab_api/src/model/impact.dart';
 import 'package:smart_cab_api/src/model/impact_affected_requests_inner.dart';
 import 'package:smart_cab_api/src/model/import_report.dart';
@@ -109,6 +110,7 @@ import 'package:smart_cab_api/src/model/test_login_request.dart';
 import 'package:smart_cab_api/src/model/token_pair.dart';
 import 'package:smart_cab_api/src/model/tracker_type.dart';
 import 'package:smart_cab_api/src/model/trip.dart';
+import 'package:smart_cab_api/src/model/trip_escort.dart';
 import 'package:smart_cab_api/src/model/trip_report.dart';
 import 'package:smart_cab_api/src/model/trip_rider.dart';
 import 'package:smart_cab_api/src/model/trip_status.dart';
@@ -172,6 +174,7 @@ part 'serializers.g.dart';
   Employee,
   EmployeeInput,$EmployeeInput,
   Error,
+  EscortConfirmation,
   Impact,
   ImpactAffectedRequestsInner,
   ImportReport,
@@ -221,6 +224,7 @@ part 'serializers.g.dart';
   TokenPair,
   TrackerType,
   Trip,
+  TripEscort,
   TripReport,
   TripRider,
   TripStatus,

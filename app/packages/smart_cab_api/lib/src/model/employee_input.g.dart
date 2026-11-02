@@ -6,6 +6,67 @@ part of 'employee_input.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
+const EmployeeInputGenderEnum _$employeeInputGenderEnum_female =
+    const EmployeeInputGenderEnum._('female');
+const EmployeeInputGenderEnum _$employeeInputGenderEnum_male =
+    const EmployeeInputGenderEnum._('male');
+const EmployeeInputGenderEnum _$employeeInputGenderEnum_other =
+    const EmployeeInputGenderEnum._('other');
+
+EmployeeInputGenderEnum _$employeeInputGenderEnumValueOf(String name) {
+  switch (name) {
+    case 'female':
+      return _$employeeInputGenderEnum_female;
+    case 'male':
+      return _$employeeInputGenderEnum_male;
+    case 'other':
+      return _$employeeInputGenderEnum_other;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<EmployeeInputGenderEnum> _$employeeInputGenderEnumValues =
+    BuiltSet<EmployeeInputGenderEnum>(const <EmployeeInputGenderEnum>[
+  _$employeeInputGenderEnum_female,
+  _$employeeInputGenderEnum_male,
+  _$employeeInputGenderEnum_other,
+]);
+
+Serializer<EmployeeInputGenderEnum> _$employeeInputGenderEnumSerializer =
+    _$EmployeeInputGenderEnumSerializer();
+
+class _$EmployeeInputGenderEnumSerializer
+    implements PrimitiveSerializer<EmployeeInputGenderEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'female': 'female',
+    'male': 'male',
+    'other': 'other',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'female': 'female',
+    'male': 'male',
+    'other': 'other',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[EmployeeInputGenderEnum];
+  @override
+  final String wireName = 'EmployeeInputGenderEnum';
+
+  @override
+  Object serialize(Serializers serializers, EmployeeInputGenderEnum object,
+          {FullType specifiedType = FullType.unspecified}) =>
+      _toWire[object.name] ?? object.name;
+
+  @override
+  EmployeeInputGenderEnum deserialize(
+          Serializers serializers, Object serialized,
+          {FullType specifiedType = FullType.unspecified}) =>
+      EmployeeInputGenderEnum.valueOf(
+          _fromWire[serialized] ?? (serialized is String ? serialized : ''));
+}
+
 abstract class EmployeeInputBuilder {
   void replace(EmployeeInput other);
   void update(void Function(EmployeeInputBuilder) updates);
@@ -33,6 +94,9 @@ abstract class EmployeeInputBuilder {
   bool? get nightEscortRequired;
   set nightEscortRequired(bool? nightEscortRequired);
 
+  EmployeeInputGenderEnum? get gender;
+  set gender(EmployeeInputGenderEnum? gender);
+
   bool? get active;
   set active(bool? active);
 }
@@ -55,6 +119,8 @@ class _$$EmployeeInput extends $EmployeeInput {
   @override
   final bool? nightEscortRequired;
   @override
+  final EmployeeInputGenderEnum? gender;
+  @override
   final bool? active;
 
   factory _$$EmployeeInput([void Function($EmployeeInputBuilder)? updates]) =>
@@ -69,6 +135,7 @@ class _$$EmployeeInput extends $EmployeeInput {
       this.priority,
       this.isVip,
       this.nightEscortRequired,
+      this.gender,
       this.active})
       : super._();
   @override
@@ -90,6 +157,7 @@ class _$$EmployeeInput extends $EmployeeInput {
         priority == other.priority &&
         isVip == other.isVip &&
         nightEscortRequired == other.nightEscortRequired &&
+        gender == other.gender &&
         active == other.active;
   }
 
@@ -104,6 +172,7 @@ class _$$EmployeeInput extends $EmployeeInput {
     _$hash = $jc(_$hash, priority.hashCode);
     _$hash = $jc(_$hash, isVip.hashCode);
     _$hash = $jc(_$hash, nightEscortRequired.hashCode);
+    _$hash = $jc(_$hash, gender.hashCode);
     _$hash = $jc(_$hash, active.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -120,6 +189,7 @@ class _$$EmployeeInput extends $EmployeeInput {
           ..add('priority', priority)
           ..add('isVip', isVip)
           ..add('nightEscortRequired', nightEscortRequired)
+          ..add('gender', gender)
           ..add('active', active))
         .toString();
   }
@@ -166,6 +236,11 @@ class $EmployeeInputBuilder
   set nightEscortRequired(covariant bool? nightEscortRequired) =>
       _$this._nightEscortRequired = nightEscortRequired;
 
+  EmployeeInputGenderEnum? _gender;
+  EmployeeInputGenderEnum? get gender => _$this._gender;
+  set gender(covariant EmployeeInputGenderEnum? gender) =>
+      _$this._gender = gender;
+
   bool? _active;
   bool? get active => _$this._active;
   set active(covariant bool? active) => _$this._active = active;
@@ -185,6 +260,7 @@ class $EmployeeInputBuilder
       _priority = $v.priority;
       _isVip = $v.isVip;
       _nightEscortRequired = $v.nightEscortRequired;
+      _gender = $v.gender;
       _active = $v.active;
       _$v = null;
     }
@@ -220,6 +296,7 @@ class $EmployeeInputBuilder
             priority: priority,
             isVip: isVip,
             nightEscortRequired: nightEscortRequired,
+            gender: gender,
             active: active,
           );
     } catch (_) {

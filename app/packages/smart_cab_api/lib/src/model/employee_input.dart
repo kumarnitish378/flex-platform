@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/model/lat_lng.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
@@ -20,6 +21,7 @@ part 'employee_input.g.dart';
 /// * [priority] 
 /// * [isVip] 
 /// * [nightEscortRequired] 
+/// * [gender] - Read only by the night escort rule (OQ-10). Unknown never triggers it.
 /// * [active] 
 @BuiltValue(instantiable: false)
 abstract class EmployeeInput  {
@@ -46,6 +48,11 @@ abstract class EmployeeInput  {
 
   @BuiltValueField(wireName: r'night_escort_required')
   bool? get nightEscortRequired;
+
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueField(wireName: r'gender')
+  EmployeeInputGenderEnum? get gender;
+  // enum genderEnum {  female,  male,  other,  ,  };
 
   @BuiltValueField(wireName: r'active')
   bool? get active;
@@ -112,6 +119,13 @@ class _$EmployeeInputSerializer implements PrimitiveSerializer<EmployeeInput> {
       yield serializers.serialize(
         object.nightEscortRequired,
         specifiedType: const FullType(bool),
+      );
+    }
+    if (object.gender != null) {
+      yield r'gender';
+      yield serializers.serialize(
+        object.gender,
+        specifiedType: const FullType.nullable(EmployeeInputGenderEnum),
       );
     }
     if (object.active != null) {
@@ -240,6 +254,14 @@ class _$$EmployeeInputSerializer implements PrimitiveSerializer<$EmployeeInput> 
           ) as bool;
           result.nightEscortRequired = valueDes;
           break;
+        case r'gender':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(EmployeeInputGenderEnum),
+          ) as EmployeeInputGenderEnum?;
+          if (valueDes == null) continue;
+          result.gender = valueDes;
+          break;
         case r'active':
           final valueDes = serializers.deserialize(
             value,
@@ -274,5 +296,25 @@ class _$$EmployeeInputSerializer implements PrimitiveSerializer<$EmployeeInput> 
     );
     return result.build();
   }
+}
+
+class EmployeeInputGenderEnum extends EnumClass {
+
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueEnumConst(wireName: r'female')
+  static const EmployeeInputGenderEnum female = _$employeeInputGenderEnum_female;
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueEnumConst(wireName: r'male')
+  static const EmployeeInputGenderEnum male = _$employeeInputGenderEnum_male;
+  /// Read only by the night escort rule (OQ-10). Unknown never triggers it.
+  @BuiltValueEnumConst(wireName: r'other')
+  static const EmployeeInputGenderEnum other = _$employeeInputGenderEnum_other;
+
+  static Serializer<EmployeeInputGenderEnum> get serializer => _$employeeInputGenderEnumSerializer;
+
+  const EmployeeInputGenderEnum._(String name): super(name);
+
+  static BuiltSet<EmployeeInputGenderEnum> get values => _$employeeInputGenderEnumValues;
+  static EmployeeInputGenderEnum valueOf(String name) => _$employeeInputGenderEnumValueOf(name);
 }
 

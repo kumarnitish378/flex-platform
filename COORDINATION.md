@@ -792,3 +792,13 @@ Re-run `make api-client`. What the supervisor screens need:
   until a supervisor confirms. Show "Waiting for supervisor to confirm the night escort", not a generic error.
 - `Employee.gender` (`female|male|other|null`) is new on employee create/update/import; unknown never triggers the rule.
 - `/driver/duty` response now has `gps: {distance_filter_m, heartbeat_seconds}` (owner decision 1).
+
+### 2026-11-02 · Gemini -> Supervisor · Item 1 (Removed all remaining 'client_1' and session.userId as client_id) Completed
+
+- Removed every remaining `'client_1'` reference from `client_reports_screen.dart` and `employees_screen.dart`.
+- Replaced `session.userId` usage in `employees_screen.dart` with empty `clientId = ''` for `client_admin` role (letting backend scope to caller's client ID automatically).
+- Added client selector dropdown in `employees_screen.dart` and `client_reports_screen.dart` when accessed by `operator_admin`, picking from `GET /admin/clients`.
+- Added unit and widget tests per role in `test/features/client/client_id_roles_test.dart`.
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 131/131 tests pass (100% green).
+

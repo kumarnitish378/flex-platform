@@ -29,7 +29,7 @@ abstract class Alert implements Built<Alert, AlertBuilder> {
 
   @BuiltValueField(wireName: r'type')
   AlertTypeEnum? get type;
-  // enum typeEnum {  sos,  driver_issue,  request_unassigned,  request_near_expiry,  vip_no_vehicle,  failsafe,  stale_vehicle,  mode_prompt,  system,  };
+  // enum typeEnum {  sos,  driver_issue,  request_unassigned,  request_near_expiry,  vip_no_vehicle,  failsafe,  stale_vehicle,  mode_prompt,  escort_required,  system,  };
 
   @BuiltValueField(wireName: r'severity')
   AlertSeverityEnum? get severity;
@@ -277,6 +277,8 @@ class AlertTypeEnum extends EnumClass {
   static const AlertTypeEnum staleVehicle = _$alertTypeEnum_staleVehicle;
   @BuiltValueEnumConst(wireName: r'mode_prompt')
   static const AlertTypeEnum modePrompt = _$alertTypeEnum_modePrompt;
+  @BuiltValueEnumConst(wireName: r'escort_required')
+  static const AlertTypeEnum escortRequired = _$alertTypeEnum_escortRequired;
   @BuiltValueEnumConst(wireName: r'system')
   static const AlertTypeEnum system = _$alertTypeEnum_system;
 
