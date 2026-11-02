@@ -979,5 +979,45 @@ response (every endpoint), now fixed with a regression test - see "The defect th
 - `flutter analyze`: 0 issues found.
 - `flutter test`: 142/142 tests pass (100% green).
 
+### 2026-11-02 · Gemini -> Supervisor · Item 5 (UX Pass: Loading, Empty, Error States & Pull-to-Refresh) Completed
+
+- **Pull-to-Refresh & Loading/Empty/Error States**: Added `RefreshIndicator` and explicit loading (`CircularProgressIndicator`), empty ("No items found."), and error handling across list screens (`RideHistoryScreen`, `AlertsListScreen`, `TripListScreen`, `TripsBoardScreen`, `EmployeesScreen`).
+- **Small Screen Fitting**: Verified layout responsiveness and overflow protection using `SingleChildScrollView` and flexible text wrapping across English and Hindi strings (`app_hi.arb`).
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 144/144 tests pass (100% green).
+
+### 2026-11-02 · Gemini -> Supervisor · Final Unattended Session Summary (Items 1-6 Completed)
+
+1. **Item 1 (Driver GPS Reliability & Offline Batching)**:
+   - Configured foreground service permissions (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`, `POST_NOTIFICATIONS`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `RECEIVE_BOOT_COMPLETED`) in `AndroidManifest.xml`.
+   - Extended `GpsLocationService` to queue pings when offline (max 500 pings) and generate batch payloads `{ "v": 1, "batch": [...] }` per `mqtt-topics.md`.
+   - Added battery optimization exemption explanation banner and duty state auto-resume in `DutyHomeScreen`.
+
+2. **Item 2 (Permission Flows & Graceful Recovery)**:
+   - Implemented 3-step permission explainer in `PermissionExplainerScreen`: While-In-Use Location, Background Location ("Allow all the time"), and Notifications (Android 13+).
+   - Added denied/revoked card with "Open Settings / Continue" button ensuring the app never locks or gets stuck.
+   - Added English & Hindi translations (`grantLocationPermission` / `permissionDeniedNotice`).
+
+3. **Item 3 (Integration Test Harness)**:
+   - Created `integration_test/e2e_trip_lifecycle_test.dart` for end-to-end trip lifecycle testing against `phone-dev` / `seed-demo` stack using demo phone numbers (`+919100000201`, `+919100000002`, `+919100000101`).
+   - Documented integration test execution commands in `app/README.md`.
+
+4. **Item 4 (Release Build Setup)**:
+   - Added `key.properties.example` in `app/android/key.properties.example` and added `key.properties` & `*.jks`/`*.keystore` to project `.gitignore`.
+   - Added `test/core/release_build_defaults_test.dart` asserting `APP_TESTING = false` in standard/release builds.
+
+5. **Item 5 (UX Pass & Small Screen Localization)**:
+   - Added `RefreshIndicator` and explicit loading (`CircularProgressIndicator`), empty ("No items found."), and error handling across list screens (`RideHistoryScreen`, `AlertsListScreen`, `TripListScreen`, `TripsBoardScreen`, `EmployeesScreen`).
+   - Verified small phone screen layout fitting with `SingleChildScrollView` overflow protection and complete English/Hindi string parity (`l10n_completeness_test.dart`).
+
+6. **Test & Build Metrics**:
+   - `flutter analyze`: 0 issues found.
+   - `flutter test`: 144/144 tests pass (100% green).
+   - Android APKs: `app/build/app/outputs/flutter-apk/app-debug.apk` and `app-release.apk` (86.5 MB).
+   - Web Build: `app/build/web`.
+   - Open Items: All items 1–6 complete and verified.
+
+
+
 
 
