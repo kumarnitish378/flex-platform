@@ -1,5 +1,90 @@
 # Smart Cab - PROGRESS
 
+## Overnight run 2026-11-02 - read this first
+
+Everything below is committed and pushed on `dev/overnight-1` (one commit per item). Nothing in `app/` was touched.
+**Tests:** backend **1914 passed / 7 skipped**, simulator **347 passed / 6 skipped**; `ruff`, `ruff format` and `mypy` clean.
+**Smoke script:** `make smoke` against the running stack - **22 of 22 steps PASS** (about four minutes).
+
+| # | What | Commit | Result |
+|---|---|---|---|
+| 1 | `make phone-dev` + `docs/runbook-phone-testing.md` | `d9164f0` | API on 0.0.0.0, broker/tiles reachable, `/driver/duty` returns the laptop's LAN IP, test login on, URLs and `--dart-define`s printed. Verified: `/health/live` and `/auth/test-login` answer on the LAN address |
+| 2 | `make seed-demo` (idempotent) | `88221e3` | Rs 8/km operator, client with night safety on, office, 3 zones, 5 cabs + drivers, 20 riders (odd = women), a login per role. Second run creates nothing (tested) |
+| 3 | Per-cab-per-day billing | `b7cdb3b` | One row per cab per day: GPS km from pings (jumps ignored), optional odometer on duty on/off, gap flag (10%), billed on GPS unless an operator marks the odometer; CSV with a TOTAL line; multi-client day billed to the default client + flagged (**OQ-40**) |
+| 4 | Escort: last woman out | `3863d47` | Flagged **at planning time**; only `escort_arranged` clears it; a confirmation answers the reason it was given for |
+| 5 | The 12 refused offers | `7a91bd2` | All 12 explained below; the simulator no longer calls a correct 409 an error |
+| 6 | `make smoke` | `6bbc577` | 22/22. **It found a real defect** (below) |
+| 7 | Gemini's message | `544d3b8` | Every api-spec change + the exact phone-build values |
+| 8 | This section | | |
+
+### Item 5: the 12 remaining refused offers, from the run artefacts (S10 semi_auto, `approve_all`)
+
+Every one was checked against the `suggestion` rows (`offered_at`, `failsafe_due_at`, `decided_at`) and the request's
+own history. **None is a defect.**
+* **10 x "already failsafe_assigned"** - the single simulated supervisor takes the *oldest* offer, which is the one nearest
+  its 180 s timer, then spends 20-120 s reacting. The failsafe fired first, every time (e.g. due 03:45:20, answered
+  03:45:39). The 409 is the correct answer; in the app it should read "already assigned automatically".
+* **1 x "already superseded", request later dropped** - the offered cab (rank 1, 03:44:20) stopped being usable before its
+  timer (03:47:20): another request had taken it. Withdrawn correctly, re-offered at 03:48:20 to a different cab, which
+  the failsafe assigned. The supervisor answered the first offer at 03:47:58, after it had been withdrawn.
+* **1 x "already superseded", request cancelled** - the rider gave up ("Waited too long", 04:29:00 backend time); the offer
+  was withdrawn with the request. The supervisor's answer arrived about 15 s earlier in simulated time only because the
+  backend clock runs 20 s ahead of the simulator's (documented lead).
+Also: the two driver 409s ("Mark the stop arrived first", `stop_status: skipped`) are a rider cancelling on the way;
+the simulator already counted that as a "stale stop" for the other message shape and now for this one too.
+`sim run` now reports `late_answers` separately from `refused`.
+
+### The defect the smoke test found (and the fix)
+
+A supervisor confirmed a night escort and got a **200**; the driver's `start`, sent straight after, was still refused.
+FastAPI runs a yield-dependency's exit code **after the response is sent** unless the dependency has
+`scope="function"`, and our session was committed there - so the next request could read the old state. Fixed in
+`SessionDep` (commit before the response), with a regression test that fails on the old behaviour. This affected
+**every** endpoint, not just this one; a phone tapping quickly could have hit it.
+
+### Exactly how to test on your phone
+
+1. Start **Docker Desktop** (it does not start by itself) and make sure the laptop and phone are on the **same Wi-Fi**.
+2. Once only, open the firewall (PowerShell as administrator) - the three `New-NetFirewallRule` lines in
+   `docs/runbook-phone-testing.md` section 1.
+3. `make phone-dev` (or `python scripts/phone_dev.py up`), then `make seed-demo`.
+4. On the phone's browser open the **API docs URL** it prints (`http://<LAN IP>:8000/docs`). If it loads, the network is fine.
+5. Build the app with the `flutter run --dart-define=...` line it prints (includes `APP_TESTING=true`).
+6. Log in by typing a phone number: supervisor `+919100000002`, driver `+919100000101`, rider `+919100000201` (woman) /
+   `+919100000202` (man), operator admin `+919100000001`, client admin `+919100000003`. Walk-through: runbook section 6.
+7. `make smoke` any time to prove the backend half still works; `make phone-dev-stop` when finished.
+If the laptop changes network its IP changes: re-run `make phone-dev` and rebuild the app.
+
+### Decisions applied from your list (all logged in `decision-log.md`, `open-questions.md` updated)
+
+Billing per cab per day at Rs 8/km (OQ-03 refined); last-woman-out escort (OQ-10 refined); `stale_gps_seconds` 150 approved.
+Removed because they no longer mean anything: `billing_no_show_billable`, `billing_late_cancel_billable`,
+`billing_distance_basis`.
+
+### Open questions and things only you can decide
+
+* **OQ-40 (new): a cab serving several clients in one day.** Provisional rule shipped: the whole day goes to the operator's
+  default client (`billing_default_client_id`, else the only/oldest client) and the row is flagged. Split by trips, by km, or
+  forbid sharing across clients?
+* **Which client is "default" for the pilot** - set `billing_default_client_id` in `/admin/config` once there is more than one.
+* **Day boundary for billing**: a night duty that crosses midnight is billed on the day it *started*. Say if the employer
+  invoices otherwise.
+* **Odometer**: nothing stops a driver typing a wrong but increasing reading; the 10% flag catches it, an operator decides.
+* Still open from before: OQ-22 (needs real pilot GPS), OQ-39 (acceptance definition), OQ-01.
+* Not done on purpose (your instruction): optimizer performance (vehicles used, median wait, S10 redesign); the
+  Supervisor's items 2-3 of the earlier message (identical medians, vehicles 9 -> 11) wait for you.
+
+### Things I want you to know
+
+* The demo database now holds committed demo data (operator "Demo Cabs"). The tests scope by operator and are green with it
+  present, but a developer who wants a clean database can truncate it.
+* My billing commit swept in one of Gemini's staged files and I ran `git reset` once (index only); both are disclosed to
+  Gemini in COORDINATION.md. I used explicit-path `git add` for every later commit.
+
+---
+
+## Previous run summary (2026-11-01)
+
 ## Owner decisions applied (2026-11-01, second session)
 
 One commit per item, in the order you gave. Backend suite **1861 passed / 7 skipped** (before the last commit's
