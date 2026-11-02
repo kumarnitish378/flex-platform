@@ -67,6 +67,10 @@ SUPPORTED = (
 ANSWERING = (SupervisorPolicy.approve_all, SupervisorPolicy.mixed)
 
 
+#: The backend's wording when a suggestion was settled before the supervisor answered.
+LATE_ANSWER = "This suggestion was already"
+
+
 class UnsupportedPolicyError(RuntimeError):
     """A scenario asked for a policy this phase does not implement."""
 
@@ -79,6 +83,11 @@ class SupervisorRecord:
     looks: int = 0
     assignments: int = 0
     refusals: int = 0
+    #: Offers answered after the platform had already settled them - the failsafe took them,
+    #: the cab became unusable, or the rider gave up. The backend's 409 is the right
+    #: answer, so these are not refusals and not errors; they measure a supervisor who is
+    #: slower than the offer timer (one person, offers piling up).
+    late_answers: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
     #: Semi-auto (M09). Offers answered, and how. `overrides` are `choose_other`: a
@@ -288,6 +297,11 @@ class SupervisorAgent:
                 note="simulated supervisor" if decision != "approve" else None,
             )
         except Exception as exc:  # noqa: BLE001 - a refused decision is data, not a crash
+            if LATE_ANSWER in str(exc):
+                self.record.late_answers += 1
+                self.engine.record(f"supervisor answered {suggestion_id} too late: {exc}")
+                self._unanswerable.add(str(suggestion_id))
+                return
             self.record.refusals += 1
             self.record.errors.append(f"decision: {exc}")
             self.engine.record(f"supervisor could not answer {suggestion_id}: {exc}")
@@ -406,6 +420,7 @@ class DispatchSummary:
     policy: str | None = None
     assignments: int = 0
     refusals: int = 0
+    late_answers: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
     violations_by_rule: dict[str, int] = field(default_factory=dict)
@@ -430,6 +445,7 @@ def summarise(record: SupervisorRecord | None) -> DispatchSummary:
         policy=record.policy,
         assignments=record.assignments,
         refusals=record.refusals,
+        late_answers=record.late_answers,
         no_candidate=record.no_candidate,
         violations_accepted=record.violations_accepted,
         violations_by_rule=dict(record.violations_by_rule),

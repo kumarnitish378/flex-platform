@@ -254,6 +254,7 @@ def _run_scenario(
             f"dispatch policy={metrics.dispatch.policy} "
             f"assigned={metrics.dispatch.assignments} "
             f"refused={metrics.dispatch.refusals} "
+            f"late_answers={metrics.dispatch.late_answers} "
             f"no_cab={metrics.dispatch.no_candidate}"
         )
         print(

@@ -421,6 +421,7 @@ class Engine:
             policy=summary.policy,
             assignments=summary.assignments,
             refusals=summary.refusals,
+            late_answers=summary.late_answers,
             no_candidate=summary.no_candidate,
             violations_accepted=summary.violations_accepted,
             violations_by_rule=summary.violations_by_rule,

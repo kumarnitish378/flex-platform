@@ -90,6 +90,8 @@ class DispatchMetrics:
     policy: str | None = None
     assignments: int = 0
     refusals: int = 0
+    #: Offers answered after the platform had settled them (see `SupervisorRecord`).
+    late_answers: int = 0
     no_candidate: int = 0
     violations_accepted: int = 0
     #: Which hard rules those assignments broke, and how often (ADR-0011 reports rather

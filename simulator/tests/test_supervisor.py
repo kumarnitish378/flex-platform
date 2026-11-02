@@ -43,6 +43,7 @@ class FakeDispatch:
         self.offers: list[dict[str, Any]] = []
         self.decisions: list[tuple[uuid.UUID, str, uuid.UUID | None]] = []
         self.refuse_decision = False
+        self.late_decision = False
 
     def pending_requests(self, token: str, status: str = "queued") -> list[dict[str, Any]]:
         if "queue" in self.fail_on:
@@ -90,6 +91,8 @@ class FakeDispatch:
         vehicle_id: uuid.UUID | None = None,
         note: str | None = None,
     ) -> dict[str, Any]:
+        if self.late_decision:
+            raise RuntimeError("409: This suggestion was already failsafe_assigned")
         if self.refuse_decision:
             raise RuntimeError("409: that offer is no longer open")
         self.decisions.append((suggestion_id, decision, vehicle_id))
@@ -476,6 +479,20 @@ def test_a_refused_decision_is_recorded_not_fatal(engine: Engine) -> None:
     engine.run()
 
     assert agent.record.refusals > 0
+    assert agent.record.approvals == 0
+
+
+def test_an_offer_settled_before_the_answer_is_a_late_answer_not_a_refusal(engine: Engine) -> None:
+    """The failsafe took it while the supervisor was reading: the 409 is correct, not a fault."""
+    platform = FakeDispatch([], [candidate(eta=60)])
+    platform.offers = [offer_row()]
+    platform.late_decision = True
+    agent = supervisor_for(engine, platform, policy=SupervisorPolicy.approve_all)
+
+    engine.run()
+
+    assert agent.record.late_answers == 1
+    assert agent.record.refusals == 0 and agent.record.errors == []
     assert agent.record.approvals == 0
 
 

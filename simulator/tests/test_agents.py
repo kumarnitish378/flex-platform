@@ -933,6 +933,12 @@ def test_a_stop_resolved_under_the_driver_is_not_an_error(engine: Engine) -> Non
 
     assert _is_a_stop_that_moved_on(RuntimeError("409: stop cannot go from skipped to arrived"))
     assert _is_a_stop_that_moved_on(RuntimeError("404: Stop not found"))
+    # "done" tapped on a stop the platform skipped when the rider cancelled on the way.
+    assert _is_a_stop_that_moved_on(
+        RuntimeError(
+            '409: {"message":"Mark the stop arrived first","details":{"stop_status":"skipped"}}'
+        )
+    )
     assert not _is_a_stop_that_moved_on(RuntimeError("500: Internal server error"))
 
 

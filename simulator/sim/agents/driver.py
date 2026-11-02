@@ -529,7 +529,16 @@ def summarise(records: list[DriverRecord]) -> FleetSummary:
 
 #: The backend's wording when a stop has already been skipped or finished under a driver
 #: who is still acting on an older view of the trip.
-_RESOLVED_STOP_MESSAGES = ("from skipped to", "from done to", "Stop not found")
+#
+# "Mark the stop arrived first" with `"stop_status":"skipped"` is the same thing seen from
+# the other side: the driver taps "done" on a stop the platform skipped when its rider
+# cancelled on the way.
+_RESOLVED_STOP_MESSAGES = (
+    "from skipped to",
+    "from done to",
+    "Stop not found",
+    '"stop_status":"skipped"',
+)
 
 
 def _is_a_stop_that_moved_on(exc: Exception) -> bool:

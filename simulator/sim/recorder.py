@@ -372,6 +372,7 @@ def _dispatch_lines(metrics: RunMetrics) -> list[str]:
         f"| Policy | `{dispatch.policy}` |",
         f"| Assignments | {dispatch.assignments} |",
         f"| Refused by the backend | {dispatch.refusals} |",
+        f"| Answered after the offer was settled | {dispatch.late_answers} |",
         f"| No cab to offer | {dispatch.no_candidate} |",
         f"| Assignments breaking a hard rule | {dispatch.violations_accepted} |",
         "",
