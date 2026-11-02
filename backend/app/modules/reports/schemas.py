@@ -48,8 +48,23 @@ class OperationsReportOut(BaseModel):
     optimizer: dict[str, Any]
 
 
+class BillingBasisInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    basis: str
+    note: str | None = Field(default=None, max_length=200)
+
+
+class BillingBasisOut(BaseModel):
+    session_id: Any
+    basis: str
+    set_by: Any = None
+    set_at: Any = None
+    note: str | None = None
+
+
 class BillingExportOut(BaseModel):
-    """`GET /reports/billing` (B38)."""
+    """`GET /reports/billing` (B38): one row per cab per day."""
 
     client_id: Any
     client_name: str

@@ -521,3 +521,88 @@ async def test_an_off_duty_vehicle_drops_out_of_the_broker_files(
     passwords, acl = await DutyService(db_session, clock, settings).broker_files()
     assert f"veh-{world['vehicle_id']}" not in passwords
     assert f"veh-{world['vehicle_id']}" not in acl
+
+
+# --- odometer and distance for per-cab-per-day billing ---------------------------------------
+
+
+async def test_the_odometer_is_recorded_on_and_off_duty(
+    client: AsyncClient, driver_headers: dict[str, str], db_session: AsyncSession
+) -> None:
+    on = await client.post(
+        "/driver/duty", json={"on_duty": True, "odometer_km": 12000.5}, headers=driver_headers
+    )
+    off = await client.post(
+        "/driver/duty", json={"on_duty": False, "odometer_km": 12118.0}, headers=driver_headers
+    )
+
+    assert on.status_code == 200 and off.status_code == 200
+    duty = (await db_session.execute(select(DutySession))).scalars().one()
+    assert (duty.odometer_start_km, duty.odometer_end_km) == (12000.5, 12118.0)
+
+
+async def test_the_odometer_is_optional(
+    client: AsyncClient, driver_headers: dict[str, str], db_session: AsyncSession
+) -> None:
+    await client.post("/driver/duty", json={"on_duty": True}, headers=driver_headers)
+    await client.post("/driver/duty", json={"on_duty": False}, headers=driver_headers)
+
+    duty = (await db_session.execute(select(DutySession))).scalars().one()
+    assert duty.odometer_start_km is None and duty.odometer_end_km is None
+
+
+async def test_a_closing_reading_below_the_opening_one_is_refused(
+    client: AsyncClient, driver_headers: dict[str, str]
+) -> None:
+    await client.post(
+        "/driver/duty", json={"on_duty": True, "odometer_km": 12000}, headers=driver_headers
+    )
+
+    response = await client.post(
+        "/driver/duty", json={"on_duty": False, "odometer_km": 11990}, headers=driver_headers
+    )
+
+    assert response.status_code == 422
+
+
+async def test_a_negative_reading_is_refused(
+    client: AsyncClient, driver_headers: dict[str, str]
+) -> None:
+    response = await client.post(
+        "/driver/duty", json={"on_duty": True, "odometer_km": -5}, headers=driver_headers
+    )
+
+    assert response.status_code == 422
+
+
+async def test_the_distance_driven_is_fixed_when_the_session_closes(
+    client: AsyncClient,
+    driver_headers: dict[str, str],
+    db_session: AsyncSession,
+    world: dict[str, uuid.UUID],
+    clock: FakeClock,
+) -> None:
+    from datetime import timedelta
+
+    from app.core.geo import to_point
+    from app.modules.tracking.models import LocationPing
+
+    await client.post("/driver/duty", json={"on_duty": True}, headers=driver_headers)
+    for minutes, north_km in ((0, 0.0), (5, 3.0), (10, 6.0)):
+        db_session.add(
+            LocationPing(
+                vehicle_id=world["vehicle_id"],
+                operator_id=world["operator_id"],
+                recorded_at=NOW + timedelta(minutes=minutes),
+                received_at=NOW + timedelta(minutes=minutes),
+                location=to_point(28.5 + north_km / 111.0, 77.4),
+                source="sim",
+            )
+        )
+    await db_session.flush()
+    clock.set(NOW + timedelta(minutes=12))  # inside the 15-minute test token
+
+    await client.post("/driver/duty", json={"on_duty": False}, headers=driver_headers)
+
+    duty = (await db_session.execute(select(DutySession))).scalars().one()
+    assert duty.gps_distance_m is not None and 5_900 < duty.gps_distance_m < 6_100

@@ -610,6 +610,7 @@ paths:
               properties:
                 on_duty: {type: boolean}
                 vehicle_id: {type: [string, 'null'], format: uuid, description: defaults to driver's default vehicle}
+                odometer_km: {type: [number, 'null'], minimum: 0, description: 'The dashboard reading in km - the opening one when going on duty, the closing one when going off. Optional. A closing reading below the opening one is a 422. Per-cab-per-day billing cross-checks GPS km against it.'}
       responses:
         '200':
           description: Duty state with MQTT credentials when on duty
@@ -1166,26 +1167,27 @@ paths:
   /reports/billing:
     get:
       tags: [reports]
-      summary: One client's month as quantities - rides, trips, riders, kilometres (B38, OPA-06)
+      summary: One client's month, one row per cab per day - running km, odometer check, amount (B38, OPA-06)
       description: >
         Requires `billing.view` (operator admin, client admin). A client admin is invoiced
-        for their own people whatever `client_id` they send; an operator admin must name one.
+        for their own company whatever `client_id` they send; an operator admin must name one.
 
 
-        **Quantities, not money.** What the operator bills on is OQ-03 (pricing) and OQ-01
-        (the pilot operator), both open, so this stops short of a price and states the three
-        treatments an invoice would otherwise guess at, in `treatment`:
-        `no_show_billable` (default true), `late_cancel_billable` (default false; a request
-        cancelled while still queued is never billable) and `distance_basis`
-        (`trip_share` - an equal share of the kilometres the cab actually drove, so a trip's
-        shares add up to its measured distance - or `direct`). **All three defaults are
-        provisional.**
-
-
-        A month is the operator's calendar month in their own timezone, by when the rider
-        asked. One row per ride, whether or not it is billable, with `billable_reason`
-        saying why - so an invoice can be audited line by line against the `ride_request`
-        and `trip` rows it came from.
+        **Basis (owner decision, OQ-03): the employer company pays the operator per cab per
+        day on the total running km between duty start (cab in) and duty end (cab out),
+        dead km between trips included, at `billing_rate_per_km`** (Rs 8 to begin with). Riders
+        never pay and see no charge anywhere. A row is one cab on one local day (operator
+        timezone, by the day its duty began). `gps_km` is measured from the cab's pings
+        between going on and off duty, ignoring jitter and GPS jumps; `odometer_km` is the
+        closing minus the opening reading the driver entered, when both exist. `billed_km` is
+        the GPS figure unless an operator admin marked the odometer figure for that duty
+        session (`PUT /admin/duty-sessions/{id}/billing-basis`). `gap_percent` is the
+        difference as a share of the odometer figure, and `odometer_gap` is in `flags` when
+        it exceeds `billing_odometer_gap_percent` (default 10). `amount` is `null` until a
+        rate is set. Flags: `odometer_gap`, `multiple_clients` / `no_client_trips` (the cab
+        carried several clients' riders that day, or none, so it was billed to the operator's
+        default client - OQ-40), `default_client_unset`, `still_on_duty`, `no_gps`,
+        `odometer_billed`. The CSV is the invoice: one line per cab-day and a TOTAL line.
       parameters:
         - {name: month, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}, description: 'YYYY-MM'}
         - {name: client_id, in: query, schema: {type: string, format: uuid}}
@@ -1197,7 +1199,45 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/BillingExport'}
             text/csv:
-              schema: {type: string, description: 'one line per ride, columns as in `rows`'}
+              schema: {type: string, description: 'one line per cab-day, columns as in `rows`, then a TOTAL line'}
+
+  /admin/duty-sessions/{session_id}/billing-basis:
+    put:
+      tags: [reports]
+      summary: Choose whether a duty session is billed on GPS or on the odometer figure
+      description: >
+        Requires `config.manage` (operator admin). The default is GPS. `odometer` needs both
+        readings on the session (409 otherwise). Who chose and when is kept. The platform never
+        decides which figure is right; this is the operator's call, usually after the report
+        flagged `odometer_gap`.
+      parameters:
+        - {name: session_id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [basis]
+              properties:
+                basis: {type: string, enum: [gps, odometer]}
+                note: {type: string, maxLength: 200}
+      responses:
+        '200':
+          description: The session's billing basis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: {type: string, format: uuid}
+                  basis: {type: string, enum: [gps, odometer]}
+                  set_by: {type: [string, 'null'], format: uuid}
+                  set_at: {type: [string, 'null'], format: date-time}
+                  note: {type: [string, 'null']}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
 
   /simctl/clock:
     x-env: sim-only
@@ -2168,41 +2208,54 @@ components:
         treatment:
           type: object
           properties:
-            no_show_billable: {type: boolean}
-            late_cancel_billable: {type: boolean}
-            distance_basis: {type: string, enum: [trip_share, direct]}
-            basis: {type: string, enum: [per_km], description: 'Clients are billed per kilometre (OQ-03, owner decision).'}
+            basis: {type: string, enum: [per_cab_per_day_km]}
             rate_per_km: {type: [number, 'null'], description: 'Operator config billing_rate_per_km; null when no rate is set.'}
+            odometer_gap_threshold_percent: {type: number}
+            default_client_id: {type: string, format: uuid, description: 'Where a shared or empty cab-day is billed.'}
         summary:
           type: object
           properties:
-            rides: {type: integer}
-            billable_rides: {type: integer}
-            completed: {type: integer}
-            no_shows: {type: integer}
-            cancellations: {type: integer}
-            billable_trips: {type: integer}
-            riders: {type: integer}
-            billable_km: {type: [number, 'null']}
-            amount: {type: [number, 'null'], description: 'billable_km x rate_per_km; null when no rate is set. Never shown to riders.'}
+            cab_days: {type: integer}
+            cabs: {type: integer}
+            gps_km: {type: [number, 'null']}
+            odometer_km: {type: [number, 'null']}
+            billed_km: {type: number}
+            amount: {type: [number, 'null'], description: 'null when no rate is set. Never shown to riders.'}
+            flagged_days: {type: integer}
         rows:
           type: array
           items:
             type: object
             properties:
               date: {type: string, format: date}
-              request_id: {type: string, format: uuid}
-              employee: {type: string}
-              direction: {type: string}
-              status: {type: string}
-              billable: {type: boolean}
-              billable_reason: {type: string}
-              trip_id: {type: [string, 'null'], format: uuid}
-              vehicle: {type: [string, 'null']}
-              riders_on_trip: {type: integer}
-              direct_km: {type: [number, 'null']}
-              trip_share_km: {type: [number, 'null']}
-              billable_km: {type: number}
+              cab: {type: string, description: registration number}
+              drivers: {type: array, items: {type: string}}
+              duty_in: {type: string, format: date-time}
+              duty_out: {type: [string, 'null'], format: date-time}
+              gps_km: {type: [number, 'null']}
+              odometer_km: {type: [number, 'null']}
+              gap_percent: {type: [number, 'null']}
+              billed_km: {type: number}
+              rate_per_km: {type: [number, 'null']}
+              amount: {type: [number, 'null']}
+              flags:
+                type: array
+                items: {type: string, enum: [odometer_gap, multiple_clients, no_client_trips, default_client_unset, still_on_duty, no_gps, odometer_billed]}
+              sessions:
+                type: array
+                description: The duty sessions behind the row, so an operator can mark one as billed on its odometer.
+                items:
+                  type: object
+                  properties:
+                    id: {type: string, format: uuid}
+                    driver: {type: string}
+                    duty_in: {type: string, format: date-time}
+                    duty_out: {type: [string, 'null'], format: date-time}
+                    gps_km: {type: [number, 'null']}
+                    odometer_start_km: {type: [number, 'null']}
+                    odometer_end_km: {type: [number, 'null']}
+                    odometer_km: {type: [number, 'null']}
+                    basis: {type: string, enum: [gps, odometer]}
     SimClock:
       type: object
       properties:

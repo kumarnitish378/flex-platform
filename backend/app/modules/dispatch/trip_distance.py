@@ -7,6 +7,9 @@ both and touches only the partitions the trip's hours fall in.
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +26,17 @@ async def measure_trip_distance(session: AsyncSession, trip: Trip) -> float | No
     """
     if trip.started_at is None or trip.completed_at is None:
         return None
+    return await measure_distance(session, trip.vehicle_id, trip.started_at, trip.completed_at)
+
+
+async def measure_distance(
+    session: AsyncSession, vehicle_id: uuid.UUID, start: datetime, end: datetime
+) -> float | None:
+    """Metres a vehicle moved between two instants, from its pings; `None` if under two pings.
+
+    The same measure for a trip (B38/B39) and for a whole duty session (per-cab-per-day billing),
+    so the two can be compared.
+    """
     rows = await session.execute(
         text(
             """
@@ -33,9 +47,7 @@ async def measure_trip_distance(session: AsyncSession, trip: Trip) -> float | No
               AND recorded_at <= :completed_at
             ORDER BY recorded_at
             """
-        ).bindparams(
-            vehicle_id=trip.vehicle_id, started_at=trip.started_at, completed_at=trip.completed_at
-        )
+        ).bindparams(vehicle_id=vehicle_id, started_at=start, completed_at=end)
     )
     fixes = [Fix(row.recorded_at, row.lat, row.lng) for row in rows]
     if len(fixes) < 2:

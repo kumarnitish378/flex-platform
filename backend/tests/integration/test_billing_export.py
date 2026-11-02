@@ -1,9 +1,8 @@
-"""The per-client monthly billing export (B38).
+"""Per-cab-per-day billing against a real database (B38; owner decision 2026-11-02, OQ-03).
 
-The treatments (no-show, late cancel, distance basis) are provisional config keys because
-OQ-01 and OQ-03 are open, so the tests state each treatment and what it must do to the
-numbers - and the central property: the export reconciles with the `trip` and
-`ride_request` rows it came from, however the treatments are set.
+The employer company pays per cab per day on the km between duty start and duty end, dead km
+included, at the operator's rate per km. Riders never pay. Each test states the distances it
+needs, so every number below can be checked by hand.
 """
 
 from __future__ import annotations
@@ -17,24 +16,29 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import FakeClock
+from app.core.geo import to_point
 from app.core.security import create_access_token
 from app.core.settings import Settings
-from app.domain.enums import ActorType, Role
+from app.domain.enums import Role
+from app.domain.errors import Conflict, NotFound, ValidationFailed
 from app.domain.modes import Mode
 from app.domain.state_machines import RequestStatus
 from app.main import create_app
-from app.modules.dispatch.models import Trip
+from app.modules.fleet.duty_models import DutySession
+from app.modules.fleet.models import Vehicle
 from app.modules.reports.billing import BillingService
-from app.modules.tenancy.models import Operator
+from app.modules.tracking.models import LocationPing
 from tests.builders import make_user, make_user_role, unique_phone
-from tests.integration.ledger import cab, employee_at, make_ride, make_trip
+from tests.integration.ledger import make_ride, make_trip
 from tests.integration.worlds import (
+    NOW,
     OFFICE,
     World,
+    add_cab,
     add_client,
     add_employee,
     build_world,
@@ -44,300 +48,429 @@ from tests.integration.worlds import (
 
 pytestmark = pytest.mark.requires_db
 
-OCT = datetime(2026, 10, 14, 4, 0, tzinfo=UTC)
 JWT_SECRET = "billing-tests-secret-0123456789abcdef"
+MONTH = "2026-10"
+# 09:00 IST on the 5th. The operator's timezone is Asia/Kolkata, so this is the 5th locally.
+NINE_IST = datetime(2026, 10, 5, 3, 30, tzinfo=UTC)
 
 
-class Month:
-    """A month of finished work across two clients, with every distance stated.
-
-    Trip 1 (3 Oct): one A rider and one B rider share 20 km  -> 10 km each
-    Trip 2 (4 Oct): one A rider alone, 12 km
-    Trip 3 (5 Oct): a cab drove 5 km to an A rider who was not there (no-show)
-    plus: an A request cancelled while queued, an A request cancelled after a cab was
-    assigned, an A ride in September and one in November (both outside the month).
-    """
+class Fleet:
+    """One operator, two clients, one cab, and helpers to give the cab duty sessions."""
 
     def __init__(self) -> None:
         self.world: World
-        self.client_a: Any
+        self.cab: Vehicle
         self.client_b: Any
-        self.trips: list[Trip] = []
+        self.office_b: Any
+        self.driver_id: uuid.UUID
 
-
-async def build_month(session: AsyncSession) -> Month:
-    month = Month()
-    world = await build_world(session, FakeClock(OCT), Mode.manual)
-    month.world = world
-    other_client, other_office = await add_client(session, world, "Client B", Mode.manual)
-    month.client_a = world.client
-    month.client_b = other_client
-
-    a1 = await employee_at(session, world, "A One")
-    a2 = await employee_at(session, world, "A Two")
-    a3 = await employee_at(session, world, "A Three")
-    b1 = await add_employee(
-        session,
-        world,
-        near(*OFFICE, north_km=-4.0),
-        "B One",
-        client=other_client,
-        office=other_office,
-    )
-    vehicle = await cab(session, world)
-
-    t1 = await make_trip(
-        session, world, vehicle, when=OCT - timedelta(days=11) + timedelta(hours=2), km=20.0
-    )
-    t2 = await make_trip(
-        session, world, vehicle, when=OCT - timedelta(days=10) + timedelta(hours=2), km=12.0
-    )
-    t3 = await make_trip(
-        session, world, vehicle, when=OCT - timedelta(days=9) + timedelta(hours=2), km=5.0
-    )
-    month.trips = [t1, t2, t3]
-
-    day3, day4, day5 = (OCT - timedelta(days=days) for days in (11, 10, 9))
-    await make_ride(
-        session,
-        world,
-        a1,
-        asked_at=day3,
-        status=RequestStatus.dropped,
-        trip=t1,
-        wait_minutes=6,
-        sequence=1,
-    )
-    await make_ride(
-        session,
-        world,
-        b1,
-        asked_at=day3,
-        status=RequestStatus.dropped,
-        trip=t1,
-        wait_minutes=9,
-        sequence=2,
-    )
-    await make_ride(
-        session, world, a2, asked_at=day4, status=RequestStatus.dropped, trip=t2, wait_minutes=5
-    )
-    await make_ride(session, world, a3, asked_at=day5, status=RequestStatus.no_show, trip=t3)
-    await make_ride(session, world, a1, asked_at=OCT, status=RequestStatus.cancelled)
-    await make_ride(
-        session,
-        world,
-        a2,
-        asked_at=OCT + timedelta(days=1),
-        status=RequestStatus.cancelled,
-        assigned_by=ActorType.supervisor,
-    )
-    await make_ride(
-        session,
-        world,
-        a1,
-        asked_at=datetime(2026, 9, 30, 6, 0, tzinfo=UTC),
-        status=RequestStatus.cancelled,
-    )
-    await make_ride(
-        session,
-        world,
-        a1,
-        asked_at=datetime(2026, 11, 2, 6, 0, tzinfo=UTC),
-        status=RequestStatus.cancelled,
-    )
-    return month
-
-
-async def export(session: AsyncSession, month: Month, client: Any, **config: Any) -> dict[str, Any]:
-    if config:
-        await set_config(session, month.world, **config)
-    built = await BillingService(session, month.world.clock).export(
-        month.world.operator_id, client.id, "2026-10"
-    )
-    return built.as_dict()
-
-
-async def test_the_default_treatment_and_what_it_adds_up_to(db_session: AsyncSession) -> None:
-    month = await build_month(db_session)
-
-    result = await export(db_session, month, month.client_a)
-
-    assert result["treatment"] == {
-        "no_show_billable": True,
-        "late_cancel_billable": False,
-        "distance_basis": "trip_share",
-        "basis": "per_km",
-        "rate_per_km": None,
-    }
-    summary = result["summary"]
-    assert summary["rides"] == 5, "September and November are outside October"
-    assert summary["completed"] == 2 and summary["no_shows"] == 1 and summary["cancellations"] == 2
-    assert summary["billable_rides"] == 3  # two completed rides and the billed no-show
-    assert summary["billable_trips"] == 3
-    assert summary["riders"] == 3
-    assert summary["billable_km"] == 27.0  # 10 (half of trip 1) + 12 + 5 (the no-show's trip)
-
-
-async def test_a_pooled_trips_kilometres_are_shared_so_the_clients_add_up_to_the_trip(
-    db_session: AsyncSession,
-) -> None:
-    """Reconciliation: across clients, billed km equals the km the cab drove."""
-    month = await build_month(db_session)
-
-    a = (await export(db_session, month, month.client_a))["summary"]["billable_km"]
-    b = (await export(db_session, month, month.client_b))["summary"]["billable_km"]
-
-    driven = await db_session.scalar(
-        select(func.sum(Trip.actual_distance_m) / 1000.0).where(
-            Trip.id.in_([t.id for t in month.trips])
+    async def duty(
+        self,
+        session: AsyncSession,
+        *,
+        start: datetime = NINE_IST,
+        hours: float | None = 9,
+        gps_km: float | None = None,
+        odometer: tuple[float, float] | None = None,
+        cab: Vehicle | None = None,
+    ) -> DutySession:
+        vehicle = cab or self.cab
+        row = DutySession(
+            id=uuid.uuid4(),
+            operator_id=self.world.operator_id,
+            driver_id=self.driver_id,
+            vehicle_id=vehicle.id,
+            started_at=start,
+            ended_at=None if hours is None else start + timedelta(hours=hours),
+            gps_distance_m=None if gps_km is None else gps_km * 1000.0,
+            odometer_start_km=odometer[0] if odometer else None,
+            odometer_end_km=odometer[1] if odometer else None,
         )
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def carry(
+        self, session: AsyncSession, *, client: Any, when: datetime, name: str = "Rider"
+    ) -> None:
+        """A finished trip on the cab carrying one rider of `client`."""
+        trip = await make_trip(session, self.world, self.cab, when=when, km=10.0)
+        office = self.world.office if client is self.world.client else self.office_b
+        rider = await add_employee(
+            session, self.world, near(*OFFICE, north_km=-4), name, client=client, office=office
+        )
+        await make_ride(
+            session,
+            self.world,
+            rider,
+            asked_at=when - timedelta(hours=1),
+            status=RequestStatus.dropped,
+            trip=trip,
+            wait_minutes=5,
+        )
+
+
+async def build_fleet(session: AsyncSession, *, rate: float = 8.0) -> Fleet:
+    fleet = Fleet()
+    fleet.world = await build_world(session, FakeClock(NOW), Mode.manual)
+    fleet.cab = await add_cab(session, fleet.world, OFFICE)
+    # `add_cab` opens a duty session of its own; the tests build theirs.
+    existing = (await session.execute(select(DutySession))).scalars().one()
+    fleet.driver_id = existing.driver_id
+    await session.execute(delete(DutySession).where(DutySession.id == existing.id))
+    await session.execute(delete(LocationPing).where(LocationPing.vehicle_id == fleet.cab.id))
+    fleet.client_b, fleet.office_b = await add_client(session, fleet.world, "Client B", Mode.manual)
+    # Both clients were created in one transaction, so `created_at` ties; name the default.
+    await set_config(session, fleet.world, billing_default_client_id=str(fleet.world.client.id))
+    if rate:
+        await set_config(session, fleet.world, billing_rate_per_km=rate)
+    return fleet
+
+
+async def export(session: AsyncSession, fleet: Fleet, client: Any = None) -> dict[str, Any]:
+    result = await BillingService(session, fleet.world.clock).export(
+        fleet.world.operator_id, (client or fleet.world.client).id, MONTH
     )
-    assert b == 10.0
-    assert a + b == pytest.approx(driven)
+    return result.as_dict()
 
 
-async def test_every_row_traces_to_a_ride_and_says_why_it_is_or_is_not_billed(
+# --- the basis: one row per cab per day -------------------------------------------------
+
+
+async def test_a_cab_day_is_billed_on_its_running_km_at_the_rate(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=112.5)
+
+    result = await export(db_session, fleet)
+
+    assert result["treatment"]["basis"] == "per_cab_per_day_km"
+    assert result["treatment"]["rate_per_km"] == 8.0
+    [row] = result["rows"]
+    assert row["date"] == "2026-10-05" and row["gps_km"] == 112.5 and row["billed_km"] == 112.5
+    assert row["amount"] == 900.0
+    assert result["summary"]["amount"] == 900.0 and result["summary"]["cab_days"] == 1
+
+
+async def test_dead_km_between_trips_are_in_the_day_with_no_trip_at_all(
     db_session: AsyncSession,
 ) -> None:
-    month = await build_month(db_session)
+    """The cab drove 60 km and carried nobody: the day is still billed."""
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=60.0)
 
-    rows = (await export(db_session, month, month.client_a))["rows"]
+    result = await export(db_session, fleet)
 
-    reasons = sorted(row["billable_reason"] for row in rows)
-    assert reasons == [
-        "cancelled_before_assignment",
-        "completed",
-        "completed",
-        "late_cancel_not_billed",
-        "no_show_billed",
-    ]
-    pooled = next(r for r in rows if r["riders_on_trip"] == 2)
-    assert pooled["trip_share_km"] == 10.0 and pooled["billable_km"] == 10.0
-    assert all(r["employee"] for r in rows)
+    assert result["summary"]["billed_km"] == 60.0
+    assert result["rows"][0]["flags"] == ["no_client_trips"]  # one client: the default, but say so
 
 
-async def test_no_show_treatment_changes_the_invoice_and_nothing_else(
+async def test_two_sessions_on_one_cab_one_day_make_one_row(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, hours=4, gps_km=40.0)
+    await fleet.duty(db_session, start=NINE_IST + timedelta(hours=5), hours=4, gps_km=25.0)
+
+    result = await export(db_session, fleet)
+
+    [row] = result["rows"]
+    assert row["billed_km"] == 65.0 and len(row["sessions"]) == 2
+    assert row["duty_out"] > row["duty_in"]
+
+
+async def test_the_day_is_the_operators_local_day(db_session: AsyncSession) -> None:
+    """23:30 IST on the 5th is 18:00 UTC: it belongs to the 5th, not the 6th."""
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, start=datetime(2026, 10, 5, 18, 0, tzinfo=UTC), hours=3, gps_km=30)
+    await fleet.duty(db_session, start=datetime(2026, 10, 5, 19, 0, tzinfo=UTC), hours=3, gps_km=5)
+
+    result = await export(db_session, fleet)
+
+    assert [row["date"] for row in result["rows"]] == ["2026-10-05", "2026-10-06"]
+
+
+async def test_other_months_are_not_on_the_invoice(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, start=datetime(2026, 9, 30, 3, 0, tzinfo=UTC), gps_km=50)
+    await fleet.duty(db_session, start=datetime(2026, 11, 1, 3, 0, tzinfo=UTC), gps_km=70)
+    await fleet.duty(db_session, gps_km=10)
+
+    assert (await export(db_session, fleet))["summary"]["billed_km"] == 10.0
+
+
+async def test_without_a_rate_there_are_kilometres_and_no_price(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session, rate=0)
+    await fleet.duty(db_session, gps_km=50.0)
+
+    result = await export(db_session, fleet)
+
+    assert result["summary"]["billed_km"] == 50.0 and result["summary"]["amount"] is None
+    assert result["rows"][0]["amount"] is None
+
+
+# --- GPS, from the pings --------------------------------------------------------------------
+
+
+async def _pings(
+    session: AsyncSession, fleet: Fleet, points: list[tuple[float, tuple[float, float]]]
+) -> None:
+    for minutes, place in points:
+        session.add(
+            LocationPing(
+                vehicle_id=fleet.cab.id,
+                operator_id=fleet.world.operator_id,
+                recorded_at=NINE_IST + timedelta(minutes=minutes),
+                received_at=NINE_IST + timedelta(minutes=minutes),
+                location=to_point(*place),
+                source="sim",
+            )
+        )
+    await session.flush()
+
+
+async def test_a_session_still_open_is_measured_from_its_pings_so_far(
     db_session: AsyncSession,
 ) -> None:
-    month = await build_month(db_session)
-
-    billed = (await export(db_session, month, month.client_a))["summary"]
-    not_billed = (await export(db_session, month, month.client_a, billing_no_show_billable=False))[
-        "summary"
-    ]
-
-    assert billed["rides"] == not_billed["rides"], "the rides are the same; only billing differs"
-    assert not_billed["billable_rides"] == billed["billable_rides"] - 1
-    assert not_billed["billable_km"] == billed["billable_km"] - 5.0
-
-
-async def test_a_late_cancellation_is_billed_only_if_the_operator_says_so(
-    db_session: AsyncSession,
-) -> None:
-    month = await build_month(db_session)
-
-    default = (await export(db_session, month, month.client_a))["summary"]
-    late = await export(db_session, month, month.client_a, billing_late_cancel_billable=True)
-    reasons = {row["billable_reason"] for row in late["rows"]}
-
-    assert late["summary"]["billable_rides"] == default["billable_rides"] + 1
-    assert "late_cancel_billed" in reasons
-    assert "cancelled_before_assignment" in reasons, "never assigned: never billable"
-    assert late["summary"]["billable_km"] == default["billable_km"], "no cab drove for it"
-
-
-async def test_the_direct_basis_bills_the_riders_own_journey_whatever_the_pooling(
-    db_session: AsyncSession,
-) -> None:
-    month = await build_month(db_session)
-
-    direct = await export(db_session, month, month.client_a, billing_distance_basis="direct")
-
-    completed = [r for r in direct["rows"] if r["billable_reason"] == "completed"]
-    assert all(r["billable_km"] == r["direct_km"] and r["direct_km"] > 0 for r in completed)
-    assert direct["summary"]["billable_km"] != 27.0
-
-
-async def test_a_month_is_the_operators_calendar_month(db_session: AsyncSession) -> None:
-    """A ride asked at 00:30 IST on 1 October is October's, though it is 30 September in UTC."""
-    month = await build_month(db_session)
-    await db_session.execute(
-        update(Operator)
-        .where(Operator.id == month.world.operator_id)
-        .values(timezone="Asia/Kolkata")
-    )
-    rider = await employee_at(db_session, month.world, "Midnight")
-    await make_ride(
+    fleet = await build_fleet(db_session)
+    fleet.world.clock.set(NINE_IST + timedelta(hours=2))
+    await fleet.duty(db_session, hours=None)
+    start = near(*OFFICE, north_km=0)
+    await _pings(
         db_session,
-        month.world,
-        rider,
-        asked_at=datetime(2026, 9, 30, 19, 0, tzinfo=UTC),
-        status=RequestStatus.cancelled,
+        fleet,
+        [(0, start), (10, near(*start, north_km=2)), (20, near(*start, north_km=5))],
     )
 
-    rows = (await export(db_session, month, month.client_a))["rows"]
+    [row] = (await export(db_session, fleet))["rows"]
 
-    assert any(row["employee"] == "Midnight" and row["date"] == "2026-10-01" for row in rows)
+    assert 4.9 < row["gps_km"] < 5.1
+    assert "still_on_duty" in row["flags"] and row["duty_out"] is None
 
 
-async def test_a_trip_with_no_measured_distance_bills_zero_km_not_a_guess(
+async def test_a_gps_jump_is_ignored_not_billed(db_session: AsyncSession) -> None:
+    """A bad fix 80 km away for one minute would otherwise add 160 km to the day."""
+    fleet = await build_fleet(db_session)
+    fleet.world.clock.set(NINE_IST + timedelta(hours=2))
+    await fleet.duty(db_session, hours=None)
+    start = near(*OFFICE, north_km=0)
+    await _pings(
+        db_session,
+        fleet,
+        [
+            (0, start),
+            (10, near(*start, north_km=2)),
+            (11, near(*start, north_km=80)),  # the bad fix
+            (20, near(*start, north_km=5)),
+        ],
+    )
+
+    [row] = (await export(db_session, fleet))["rows"]
+
+    assert 4.9 < row["gps_km"] < 5.1
+
+
+async def test_a_session_with_no_pings_has_no_gps_figure_and_says_so(
     db_session: AsyncSession,
 ) -> None:
-    month = await build_month(db_session)
-    await db_session.execute(
-        update(Trip).where(Trip.id == month.trips[1].id).values(actual_distance_m=None)
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=None)
+
+    [row] = (await export(db_session, fleet))["rows"]
+
+    assert row["gps_km"] is None and row["billed_km"] == 0.0 and "no_gps" in row["flags"]
+
+
+# --- the odometer -----------------------------------------------------------------------------
+
+
+async def test_an_odometer_within_ten_percent_is_quiet(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=100.0, odometer=(12_000, 12_105))
+
+    [row] = (await export(db_session, fleet))["rows"]
+
+    assert row["odometer_km"] == 105.0 and row["billed_km"] == 100.0
+    assert "odometer_gap" not in row["flags"]
+
+
+async def test_a_gap_over_the_threshold_flags_the_row_and_still_bills_gps(
+    db_session: AsyncSession,
+) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=100.0, odometer=(12_000, 12_130))
+
+    [row] = (await export(db_session, fleet))["rows"]
+
+    assert "odometer_gap" in row["flags"] and row["gap_percent"] == 23.1
+    assert row["billed_km"] == 100.0
+
+
+async def test_the_threshold_is_the_operators_to_set(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    await set_config(db_session, fleet.world, billing_odometer_gap_percent=2)
+    await fleet.duty(db_session, gps_km=100.0, odometer=(12_000, 12_105))
+
+    assert "odometer_gap" in (await export(db_session, fleet))["rows"][0]["flags"]
+
+
+async def test_an_operator_can_bill_a_session_on_its_odometer(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    duty = await fleet.duty(db_session, gps_km=100.0, odometer=(12_000, 12_130))
+    admin = make_user(name="Admin", phone=unique_phone())
+    db_session.add(admin)
+    await db_session.flush()
+    billing = BillingService(db_session, fleet.world.clock)
+
+    await billing.set_basis(fleet.world.operator_id, admin.id, duty.id, "odometer", "GPS dropped")
+    [row] = (await export(db_session, fleet))["rows"]
+
+    assert row["billed_km"] == 130.0 and row["amount"] == 1040.0
+    assert "odometer_billed" in row["flags"]
+    await db_session.refresh(duty)
+    assert duty.billing_basis_set_by == admin.id and duty.billing_basis_note == "GPS dropped"
+
+
+async def test_the_odometer_cannot_be_billed_without_both_readings(
+    db_session: AsyncSession,
+) -> None:
+    fleet = await build_fleet(db_session)
+    duty = await fleet.duty(db_session, gps_km=100.0, odometer=None)
+    billing = BillingService(db_session, fleet.world.clock)
+
+    with pytest.raises(Conflict):
+        await billing.set_basis(fleet.world.operator_id, uuid.uuid4(), duty.id, "odometer", None)
+    with pytest.raises(ValidationFailed):
+        await billing.set_basis(fleet.world.operator_id, uuid.uuid4(), duty.id, "vibes", None)
+    with pytest.raises(NotFound):
+        await billing.set_basis(fleet.world.operator_id, uuid.uuid4(), uuid.uuid4(), "gps", None)
+
+
+# --- which client pays --------------------------------------------------------------------------
+
+
+async def test_a_cab_day_goes_to_the_client_whose_riders_it_carried(
+    db_session: AsyncSession,
+) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=80.0)
+    await fleet.carry(db_session, client=fleet.client_b, when=NINE_IST + timedelta(hours=2))
+
+    a = await export(db_session, fleet)
+    b = await export(db_session, fleet, fleet.client_b)
+
+    assert a["rows"] == [] and a["summary"]["billed_km"] == 0.0
+    assert b["summary"]["billed_km"] == 80.0 and b["rows"][0]["flags"] == []
+
+
+async def test_a_cab_serving_two_clients_is_billed_to_the_default_and_flagged(
+    db_session: AsyncSession,
+) -> None:
+    fleet = await build_fleet(db_session)
+    await set_config(db_session, fleet.world, billing_default_client_id=str(fleet.world.client.id))
+    await fleet.duty(db_session, gps_km=90.0)
+    await fleet.carry(db_session, client=fleet.world.client, when=NINE_IST + timedelta(hours=1))
+    await fleet.carry(
+        db_session, client=fleet.client_b, when=NINE_IST + timedelta(hours=3), name="Other"
     )
 
-    result = await export(db_session, month, month.client_a)
+    a = await export(db_session, fleet)
+    b = await export(db_session, fleet, fleet.client_b)
 
-    assert result["summary"]["billable_km"] == 15.0  # 10 + 0 + 5
+    assert a["rows"][0]["flags"] == ["multiple_clients"]
+    assert a["summary"]["billed_km"] == 90.0
+    assert b["rows"] == [], "billed once, to one client"
+
+
+async def test_with_several_clients_and_no_default_the_oldest_is_used_and_it_says_so(
+    db_session: AsyncSession,
+) -> None:
+    fleet = await build_fleet(db_session)
+    await set_config(db_session, fleet.world, billing_default_client_id="")
+    await fleet.duty(db_session, gps_km=40.0)
+
+    rows = (await export(db_session, fleet))["rows"] + (
+        await export(db_session, fleet, fleet.client_b)
+    )["rows"]
+
+    assert len(rows) == 1, "billed once, to whichever client is oldest"
+    assert "default_client_unset" in rows[0]["flags"]
+
+
+# --- the CSV and the endpoint ------------------------------------------------------------
+
+
+async def test_the_csv_is_one_line_per_cab_day_and_a_total(db_session: AsyncSession) -> None:
+    fleet = await build_fleet(db_session)
+    await fleet.duty(db_session, gps_km=100.0)
+    await fleet.duty(db_session, start=NINE_IST + timedelta(days=1), gps_km=50.0)
+
+    csv_text = (
+        await BillingService(db_session, fleet.world.clock).export(
+            fleet.world.operator_id, fleet.world.client.id, MONTH
+        )
+    ).as_csv()
+
+    lines = csv_text.splitlines()
+    assert lines[0].startswith("date,cab,drivers,duty_in,duty_out,gps_km,odometer_km")
+    assert len(lines) == 1 + 2 + 1
+    assert lines[-1].startswith("TOTAL,2 cab-days") and ",150.0,8.0,1200.0," in lines[-1]
 
 
 async def test_a_bad_month_is_refused(db_session: AsyncSession) -> None:
-    from app.domain.errors import ValidationFailed
-
-    month = await build_month(db_session)
+    fleet = await build_fleet(db_session)
 
     for bad in ("2026-13", "October", "2026-1", ""):
         with pytest.raises(ValidationFailed):
-            await BillingService(db_session, month.world.clock).export(
-                month.world.operator_id, month.client_a.id, bad
+            await BillingService(db_session, fleet.world.clock).export(
+                fleet.world.operator_id, fleet.world.client.id, bad
             )
 
 
 async def test_another_operators_client_is_not_found(db_session: AsyncSession) -> None:
-    from app.domain.errors import NotFound
-
-    month = await build_month(db_session)
+    fleet = await build_fleet(db_session)
 
     with pytest.raises(NotFound):
-        await BillingService(db_session, month.world.clock).export(
-            uuid.uuid4(), month.client_a.id, "2026-10"
+        await BillingService(db_session, fleet.world.clock).export(
+            uuid.uuid4(), fleet.world.client.id, MONTH
         )
 
 
-# --- the endpoint ----------------------------------------------------------------
+class _NoClose:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> AsyncSession:
+        return self._session
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
 
 
 @pytest_asyncio.fixture
 async def api(
     db_session: AsyncSession,
-) -> AsyncIterator[tuple[AsyncClient, Month, dict[str, dict[str, str]]]]:
-    month = await build_month(db_session)
-    clock = month.world.clock
-    admin = make_user(name="Admin", phone=unique_phone())
-    client_user = make_user(name="Client admin", phone=unique_phone())
-    supervisor = make_user(name="Sunil", phone=unique_phone())
-    db_session.add_all([admin, client_user, supervisor])
-    await db_session.flush()
-    operator_id = month.world.operator_id
-    db_session.add(make_user_role(admin.id, Role.operator_admin, operator_id=operator_id))
-    db_session.add(
-        make_user_role(
-            client_user.id, Role.client_admin, operator_id=operator_id, client_id=month.client_a.id
+) -> AsyncIterator[tuple[AsyncClient, Fleet, dict[str, dict[str, str]], DutySession]]:
+    fleet = await build_fleet(db_session)
+    duty = await fleet.duty(db_session, gps_km=100.0, odometer=(12_000, 12_130))
+    clock = fleet.world.clock
+    people = {}
+    for label, role, client in (
+        ("admin", Role.operator_admin, None),
+        ("client", Role.client_admin, fleet.world.client),
+        ("other_client", Role.client_admin, fleet.client_b),
+        ("supervisor", Role.supervisor, None),
+        ("employee", Role.employee, fleet.world.client),
+    ):
+        user = make_user(name=label, phone=unique_phone())
+        db_session.add(user)
+        await db_session.flush()
+        db_session.add(
+            make_user_role(
+                user.id,
+                role,
+                operator_id=fleet.world.operator_id,
+                client_id=client.id if client else None,
+            )
         )
-    )
-    db_session.add(make_user_role(supervisor.id, Role.supervisor, operator_id=operator_id))
+        people[label] = (user, role, client)
     await db_session.flush()
     settings = Settings(
         app_env="dev",
@@ -352,137 +485,80 @@ async def api(
             return _NoClose(db_session)
 
     application.state.session_factory = _Factory()
-
-    def token(user: Any, role: Role, client_id: uuid.UUID | None = None) -> dict[str, str]:
-        value, _ = create_access_token(
+    headers = {}
+    for label, (user, role, client) in people.items():
+        token, _ = create_access_token(
             user_id=user.id,
             role=str(role),
             secret=JWT_SECRET,
             clock=clock,
             ttl_seconds=900,
-            operator_id=operator_id,
-            client_id=client_id,
+            operator_id=fleet.world.operator_id,
+            client_id=client.id if client else None,
         )
-        return {"Authorization": f"Bearer {value}"}
-
-    headers = {
-        "admin": token(admin, Role.operator_admin),
-        "client": token(client_user, Role.client_admin, month.client_a.id),
-        "supervisor": token(supervisor, Role.supervisor),
-    }
+        headers[label] = {"Authorization": f"Bearer {token}"}
     async with AsyncClient(
         transport=ASGITransport(app=application), base_url="http://test/api/v1"
     ) as http:
-        yield http, month, headers
+        yield http, fleet, headers, duty
 
 
-class _NoClose:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def __aenter__(self) -> AsyncSession:
-        return self._session
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        return None
-
-
-async def test_the_endpoint_serves_json_and_a_csv_with_the_same_rows(
-    api: tuple[AsyncClient, Month, dict[str, dict[str, str]]],
+async def test_the_endpoint_serves_json_and_the_same_rows_as_csv(
+    api: tuple[AsyncClient, Fleet, dict[str, dict[str, str]], DutySession],
 ) -> None:
-    http, month, headers = api
-    url = f"/reports/billing?month=2026-10&client_id={month.client_a.id}"
+    http, fleet, headers, _ = api
+    url = f"/reports/billing?month={MONTH}&client_id={fleet.world.client.id}"
 
     as_json = await http.get(url, headers=headers["admin"])
     as_csv = await http.get(url + "&format=csv", headers=headers["admin"])
 
-    assert as_json.status_code == 200 and as_csv.status_code == 200
-    lines = as_csv.text.splitlines()
-    assert lines[0].startswith("date,request_id,employee,direction,status,billable")
-    assert len(lines) - 1 == len(as_json.json()["rows"]) == 5
+    assert as_json.status_code == 200 and as_csv.status_code == 200, as_json.text
+    assert len(as_csv.text.splitlines()) - 2 == len(as_json.json()["rows"]) == 1
     assert "attachment" in as_csv.headers["content-disposition"]
 
 
-async def test_a_client_admin_is_invoiced_for_their_own_people_whatever_they_ask(
-    api: tuple[AsyncClient, Month, dict[str, dict[str, str]]],
+async def test_a_client_admin_is_invoiced_for_their_own_company_whatever_they_ask(
+    api: tuple[AsyncClient, Fleet, dict[str, dict[str, str]], DutySession],
 ) -> None:
-    http, month, headers = api
+    http, fleet, headers, _ = api
 
-    asking_for_b = await http.get(
-        f"/reports/billing?month=2026-10&client_id={month.client_b.id}", headers=headers["client"]
+    response = await http.get(
+        f"/reports/billing?month={MONTH}&client_id={fleet.client_b.id}", headers=headers["client"]
     )
 
-    assert asking_for_b.status_code == 200
-    assert asking_for_b.json()["client_id"] == str(month.client_a.id)
+    assert response.status_code == 200
+    assert response.json()["client_id"] == str(fleet.world.client.id)
 
 
-async def test_a_supervisor_has_no_billing_and_an_admin_must_name_a_client(
-    api: tuple[AsyncClient, Month, dict[str, dict[str, str]]],
+async def test_riders_and_supervisors_have_no_billing_and_an_admin_must_name_a_client(
+    api: tuple[AsyncClient, Fleet, dict[str, dict[str, str]], DutySession],
 ) -> None:
-    http, month, headers = api
+    http, fleet, headers, _ = api
 
     assert (
-        await http.get(
-            f"/reports/billing?month=2026-10&client_id={month.client_a.id}",
-            headers=headers["supervisor"],
-        )
+        await http.get(f"/reports/billing?month={MONTH}", headers=headers["supervisor"])
     ).status_code == 403
     assert (
-        await http.get("/reports/billing?month=2026-10", headers=headers["admin"])
-    ).status_code == 422
+        await http.get(f"/reports/billing?month={MONTH}", headers=headers["employee"])
+    ).status_code == 403
     assert (
-        await http.get(
-            f"/reports/billing?month=2026-1&client_id={month.client_a.id}", headers=headers["admin"]
-        )
+        await http.get(f"/reports/billing?month={MONTH}", headers=headers["admin"])
     ).status_code == 422
 
 
-# --- per kilometre (owner decision, OQ-03) ---------------------------------------------
-
-
-async def test_the_client_is_billed_per_kilometre_at_the_operators_rate(
-    db_session: AsyncSession,
+async def test_marking_the_odometer_over_http_is_an_operator_admins_call(
+    api: tuple[AsyncClient, Fleet, dict[str, dict[str, str]], DutySession],
 ) -> None:
-    month = await build_month(db_session)
+    http, fleet, headers, duty = api
+    path = f"/admin/duty-sessions/{duty.id}/billing-basis"
 
-    result = await export(db_session, month, month.client_a, billing_rate_per_km=12.5)
+    refused = await http.put(path, json={"basis": "odometer"}, headers=headers["client"])
+    done = await http.put(path, json={"basis": "odometer", "note": "ok"}, headers=headers["admin"])
+    report = await http.get(
+        f"/reports/billing?month={MONTH}&client_id={fleet.world.client.id}",
+        headers=headers["admin"],
+    )
 
-    assert result["treatment"]["basis"] == "per_km"
-    assert result["treatment"]["rate_per_km"] == 12.5
-    assert result["summary"]["billable_km"] == 27.0
-    assert result["summary"]["amount"] == 337.5  # 27 km x 12.5
-
-
-async def test_without_a_rate_there_is_a_distance_and_never_a_guessed_price(
-    db_session: AsyncSession,
-) -> None:
-    month = await build_month(db_session)
-
-    result = await export(db_session, month, month.client_a)
-
-    assert result["summary"]["billable_km"] == 27.0
-    assert result["summary"]["amount"] is None
-
-
-async def test_a_trip_count_is_information_not_the_basis(db_session: AsyncSession) -> None:
-    """Three billable trips of different lengths: the amount follows the km, not the count."""
-    month = await build_month(db_session)
-
-    result = await export(db_session, month, month.client_a, billing_rate_per_km=1)
-
-    assert result["summary"]["billable_trips"] == 3
-    assert result["summary"]["amount"] == result["summary"]["billable_km"]
-
-
-async def test_riders_never_see_a_charge(
-    api: tuple[AsyncClient, Month, dict[str, dict[str, str]]],
-) -> None:
-    """Riders do not pay: no billing for the employee role, and no money in their ride payloads."""
-    from app.domain.enums import Role as _Role
-    from app.modules.auth.permissions import Permission, permissions_for
-    from app.modules.requests.schemas import RideRequestOut
-
-    assert Permission.billing_view not in permissions_for(_Role.employee)
-    money = ("amount", "price", "charge", "fare", "cost", "rate", "km_billed", "billable")
-    leaked = [name for name in RideRequestOut.model_fields if any(word in name for word in money)]
-    assert leaked == []
+    assert refused.status_code == 403
+    assert done.status_code == 200 and done.json()["basis"] == "odometer"
+    assert report.json()["rows"][0]["billed_km"] == 130.0

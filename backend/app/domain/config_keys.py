@@ -53,6 +53,13 @@ class ConfigKey:
         if expected is time:
             return _parse_time(self.name, value)
 
+        if expected is str:
+            if not isinstance(value, str):
+                raise ValidationFailed(
+                    f"{self.name} must be text", {"key": self.name, "value": value}
+                )
+            return value.strip()
+
         if isinstance(value, bool) or not isinstance(value, int | float):
             raise ValidationFailed(
                 f"{self.name} must be a number", {"key": self.name, "value": value}
@@ -180,22 +187,6 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             ),
         ),
         ConfigKey(
-            "billing_no_show_billable",
-            True,
-            description=(
-                "Whether a rider who was not there when the cab arrived is on the invoice. "
-                "Provisional (OQ-01, OQ-03): nothing says how the pilot operator bills."
-            ),
-        ),
-        ConfigKey(
-            "billing_late_cancel_billable",
-            False,
-            description=(
-                "Whether a rider who cancelled after a cab was assigned is on the invoice. "
-                "A request cancelled while still queued is never billable. Provisional."
-            ),
-        ),
-        ConfigKey(
             "billing_rate_per_km",
             0.0,
             0,
@@ -206,13 +197,21 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             ),
         ),
         ConfigKey(
-            "billing_distance_basis",
-            "trip_share",
-            choices=("trip_share", "direct"),
+            "billing_odometer_gap_percent",
+            10,
+            0,
+            100,
             description=(
-                "Kilometres billed per ride: an equal share of the trip the cab drove "
-                "(`trip_share`, adds up to the trip), or the rider's own journey (`direct`). "
-                "Provisional."
+                "A cab-day whose GPS kilometres differ from the odometer's by more than this "
+                "share of the odometer figure is flagged on the billing report."
+            ),
+        ),
+        ConfigKey(
+            "billing_default_client_id",
+            "",
+            description=(
+                "The client a cab-day is billed to when the cab carried several clients' riders "
+                "(or none). A client id; empty = the operator's only client, else the oldest."
             ),
         ),
         ConfigKey(

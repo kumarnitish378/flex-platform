@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.dependencies import ClockDep, CurrentUserDep, SessionDep, SettingsDep
 from app.domain.errors import Forbidden
@@ -23,6 +23,9 @@ class Strict(BaseModel):
 class DutyInput(Strict):
     on_duty: bool
     vehicle_id: uuid.UUID | None = None
+    #: The dashboard reading in km: the opening one when going on duty, the closing one when going
+    #: off. Optional; a closing reading below the opening one is refused (422).
+    odometer_km: float | None = Field(default=None, ge=0, le=10_000_000)
 
 
 class MqttOut(Strict):
@@ -99,6 +102,7 @@ async def set_duty(
         user_id=current_user.claims.user_id,
         on_duty=body.on_duty,
         vehicle_id=body.vehicle_id,
+        odometer_km=body.odometer_km,
     )
     return _out(state)
 

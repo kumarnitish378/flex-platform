@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.clock import Clock
 from app.core.logging import get_logger
 from app.core.settings import Settings
+from app.domain.cab_day_billing import check_odometer_reading
 from app.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from app.domain.mqtt_credentials import (
     VehicleCredential,
@@ -31,6 +32,7 @@ from app.domain.mqtt_credentials import (
 )
 from app.domain.state_machines import Actor, VehicleStatus, transition_vehicle
 from app.modules.config.service import ConfigService
+from app.modules.dispatch.trip_distance import measure_distance
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Driver, Vehicle
 
@@ -77,12 +79,14 @@ class DutyService:
         user_id: uuid.UUID,
         on_duty: bool,
         vehicle_id: uuid.UUID | None = None,
+        odometer_km: float | None = None,
     ) -> DutyState:
+        """`odometer_km` is the dashboard reading: the opening one on duty, the closing one off."""
         driver = await self._driver_for_user(operator_id, user_id)
         return (
-            await self._go_on_duty(operator_id, driver, vehicle_id)
+            await self._go_on_duty(operator_id, driver, vehicle_id, odometer_km)
             if on_duty
-            else await self._go_off_duty(operator_id, driver)
+            else await self._go_off_duty(operator_id, driver, odometer_km)
         )
 
     async def current(self, operator_id: uuid.UUID, user_id: uuid.UUID) -> DutyState:
@@ -98,7 +102,11 @@ class DutyService:
     # --- on duty ------------------------------------------------------------
 
     async def _go_on_duty(
-        self, operator_id: uuid.UUID, driver: Driver, vehicle_id: uuid.UUID | None
+        self,
+        operator_id: uuid.UUID,
+        driver: Driver,
+        vehicle_id: uuid.UUID | None,
+        odometer_km: float | None = None,
     ) -> DutyState:
         if not driver.active:
             raise Forbidden("This driver is not active")
@@ -144,6 +152,7 @@ class DutyService:
                 driver_id=driver.id,
                 vehicle_id=vehicle.id,
                 started_at=self.clock.now(),
+                odometer_start_km=odometer_km,
                 mqtt_password_hash=hash_password(password),
             )
         )
@@ -176,7 +185,9 @@ class DutyService:
 
     # --- off duty -----------------------------------------------------------
 
-    async def _go_off_duty(self, operator_id: uuid.UUID, driver: Driver) -> DutyState:
+    async def _go_off_duty(
+        self, operator_id: uuid.UUID, driver: Driver, odometer_km: float | None = None
+    ) -> DutyState:
         session = await self._open_session(driver.id)
         if session is None:
             return DutyState(on_duty=False, vehicle_id=None, mqtt=None)
@@ -199,7 +210,14 @@ class DutyService:
         vehicle.current_driver_id = None
         # The credential dies with the session, so a handed-over phone cannot publish.
         vehicle.mqtt_username = None
+        # Caught here, while the driver is holding the phone and can correct a typo.
+        check_odometer_reading(session.odometer_start_km, odometer_km)
         session.ended_at = self.clock.now()
+        session.odometer_end_km = odometer_km
+        # Fixed now, so a later report does not depend on pings still being around.
+        session.gps_distance_m = await measure_distance(
+            self.session, session.vehicle_id, session.started_at, session.ended_at
+        )
         await self.session.flush()
 
         logger.info("driver_off_duty", driver_id=str(driver.id), vehicle_id=str(vehicle.id))

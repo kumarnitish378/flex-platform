@@ -16,6 +16,8 @@ from app.modules.auth.permissions import Permission
 from app.modules.reports.billing import BillingService
 from app.modules.reports.operations import OperationsReportService
 from app.modules.reports.schemas import (
+    BillingBasisInput,
+    BillingBasisOut,
     BillingExportOut,
     OperationsReportOut,
     RatingInput,
@@ -133,7 +135,7 @@ async def operations_report(
 
 @router.get(
     "/reports/billing",
-    summary="One client's month as quantities: rides, trips, riders and kilometres (B38)",
+    summary="One client's month, one row per cab per day: running km, odometer check, amount (B38)",
     response_model=BillingExportOut,
     dependencies=[Depends(require(Permission.billing_view))],
 )
@@ -161,3 +163,32 @@ async def billing_export(
             },
         )
     return BillingExportOut(**export.as_dict())
+
+
+@router.put(
+    "/admin/duty-sessions/{session_id}/billing-basis",
+    summary="Choose whether a duty session is billed on GPS or on the odometer figure",
+    dependencies=[Depends(require(Permission.config_manage))],
+)
+async def set_billing_basis(
+    session_id: uuid.UUID,
+    body: BillingBasisInput,
+    session: SessionDep,
+    clock: ClockDep,
+    current_user: CurrentUserDep,
+) -> BillingBasisOut:
+    """The platform bills on GPS unless an operator admin marks the odometer figure."""
+    duty = await BillingService(session, clock).set_basis(
+        _operator_id(current_user),
+        current_user.claims.user_id,
+        session_id,
+        body.basis,
+        body.note,
+    )
+    return BillingBasisOut(
+        session_id=duty.id,
+        basis=str(duty.billing_basis),
+        set_by=duty.billing_basis_set_by,
+        set_at=duty.billing_basis_set_at,
+        note=duty.billing_basis_note,
+    )

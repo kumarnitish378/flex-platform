@@ -1,28 +1,21 @@
-"""The per-client monthly billing export (B38, OPA-06).
+"""The per-client monthly billing export: one row per cab per day (B38, OPA-06).
 
-> **OPA-06 · Billing export** · Phase 3 - per client, per period: trips, km, invoice-ready CSV.
+**The basis is decided (owner, 2026-11-02; OQ-03).** The employer company pays the operator *per
+cab per day* on the total running kilometres between duty start (cab in) and duty end (cab out),
+dead kilometres between trips included, at the operator's `billing_rate_per_km` (Rs 8 to begin
+with). This replaces the earlier per-ride, per-trip-share export. Riders never pay and nothing here
+is addressed to them.
 
-**The basis is decided (owner, 2026-11-01; OQ-03): the operator bills the client company per
-kilometre.** Riders never pay, so nothing here is addressed to an employee and no employee-facing
-response carries a charge. The export gives a client's month as **kilometres** - each traceable to
-the rows it came from - with rides, trips and riders alongside as information only (a trip count is
-not a billing basis). `billing_rate_per_km` (operator config, `0` = not set) turns kilometres into
-an `amount`; the rate is the operator's own and is not defaulted. Three treatments an invoice would
-otherwise have to guess at stay config keys, still provisional because OQ-01 is open:
+A row is one cab on one local day (operator timezone, by the day its duty started - a night duty
+that runs past midnight belongs to the day it began). Its kilometres come from the GPS pings between
+going on and off duty (`domain/cab_day_billing.py`); the odometer readings a driver may enter are a
+cross-check, flagged when they disagree by more than `billing_odometer_gap_percent`, and are billed
+only when an operator admin marks that session's odometer figure.
 
-* `billing_no_show_billable` (default **true**): a cab was sent and the rider was not there;
-* `billing_late_cancel_billable` (default **false**): the rider cancelled after a cab had
-  been assigned; a request cancelled while still queued costs nothing and is never billable;
-* `billing_distance_basis` (default **`trip_share`**): `trip_share` bills each rider their
-  equal share of the kilometres the cab actually drove, so the shares of a trip add up to the
-  trip's measured distance and the invoice reconciles with the `trip` rows; `direct` bills
-  the rider's own journey (great-circle x road factor) regardless of pooling.
-
-The two cancellation defaults are **mine, provisional, and listed for the owner**
-(`decision-log.md`): nothing in the repository says how the pilot operator treats a no-show or a
-late cancel.
-
-A month is the operator's calendar month in their own timezone, by when the rider asked.
+**Which client is billed.** A cab's day is billed to the client whose riders it carried. When it
+carried more than one client's riders - or none - the row goes to the operator's default client
+(`billing_default_client_id`; with a single client that is the client) and is flagged
+`multiple_clients` / `no_client_trips`. How to split a shared cab-day is an open question (OQ-40).
 """
 
 from __future__ import annotations
@@ -31,6 +24,7 @@ import csv
 import io
 import re
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -40,68 +34,80 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
-from app.core.geo import coords
-from app.domain.errors import NotFound, ValidationFailed
-from app.domain.geo import LatLng, haversine_km
-from app.domain.state_machines import RequestStatus, StopKind, StopStatus
+from app.domain.cab_day_billing import (
+    Basis,
+    CabDay,
+    Flag,
+    SessionFacts,
+    build_cab_day,
+)
+from app.domain.errors import Conflict, NotFound, ValidationFailed
+from app.domain.state_machines import RequestStatus, TripStatus
 from app.modules.config.service import ConfigService
-from app.modules.dispatch.models import Trip, TripStop
-from app.modules.fleet.models import Vehicle
-from app.modules.people.models import Employee
+from app.modules.dispatch.models import Trip
+from app.modules.dispatch.trip_distance import measure_distance
+from app.modules.fleet.duty_models import DutySession
+from app.modules.fleet.models import Driver, Vehicle
 from app.modules.requests.models import RideRequest
-from app.modules.tenancy.models import Client, Office, Operator
-
-#: Matches `approx`'s road factor (`control-model.md` section 6).
-ROAD_FACTOR = 1.4
+from app.modules.tenancy.models import Client, Operator
 
 COLUMNS = (
     "date",
-    "request_id",
-    "employee",
-    "direction",
-    "status",
-    "billable",
-    "billable_reason",
-    "trip_id",
-    "vehicle",
-    "riders_on_trip",
-    "direct_km",
-    "trip_share_km",
-    "billable_km",
+    "cab",
+    "drivers",
+    "duty_in",
+    "duty_out",
+    "gps_km",
+    "odometer_km",
+    "gap_percent",
+    "billed_km",
+    "rate_per_km",
+    "amount",
+    "flags",
 )
+
+#: Requests that were really in the cab.
+CARRIED = (RequestStatus.assigned, RequestStatus.picked_up, RequestStatus.dropped)
+#: Trips that happened (or are happening).
+REAL_TRIPS = (TripStatus.in_progress, TripStatus.completed)
 
 
 @dataclass(slots=True)
 class BillingRow:
     day: date
-    request_id: uuid.UUID
-    employee: str
-    direction: str
-    status: str
-    billable: bool
-    billable_reason: str
-    trip_id: uuid.UUID | None
-    vehicle: str | None
-    riders_on_trip: int
-    direct_km: float | None
-    trip_share_km: float | None
-    billable_km: float
+    cab: CabDay
+    client_id: uuid.UUID
+    rate_per_km: float | None
 
     def as_dict(self) -> dict[str, Any]:
+        cab = self.cab
         return {
             "date": self.day.isoformat(),
-            "request_id": str(self.request_id),
-            "employee": self.employee,
-            "direction": self.direction,
-            "status": self.status,
-            "billable": self.billable,
-            "billable_reason": self.billable_reason,
-            "trip_id": str(self.trip_id) if self.trip_id else None,
-            "vehicle": self.vehicle,
-            "riders_on_trip": self.riders_on_trip,
-            "direct_km": _round(self.direct_km),
-            "trip_share_km": _round(self.trip_share_km),
-            "billable_km": _round(self.billable_km),
+            "cab": cab.vehicle,
+            "drivers": list(cab.drivers),
+            "duty_in": cab.duty_in.isoformat(),
+            "duty_out": cab.duty_out.isoformat() if cab.duty_out else None,
+            "gps_km": _round(cab.gps_km),
+            "odometer_km": _round(cab.odometer_km),
+            "gap_percent": _round(cab.gap_percent, 1),
+            "billed_km": _round(cab.billed_km),
+            "rate_per_km": self.rate_per_km,
+            "amount": cab.amount,
+            "flags": [str(flag) for flag in cab.flags],
+            "sessions": [
+                {
+                    "id": s.session_id,
+                    "driver": s.driver,
+                    "duty_in": s.started_at.isoformat(),
+                    "duty_out": s.ended_at.isoformat() if s.ended_at else None,
+                    "gps_km": _round(s.gps_km),
+                    "odometer_start_km": s.odometer_start_km,
+                    "odometer_end_km": s.odometer_end_km,
+                    "odometer_km": _round(s.odometer_km),
+                    "basis": str(s.basis),
+                }
+                for s in cab.sessions
+            ],
         }
 
 
@@ -125,15 +131,30 @@ class BillingExport:
         }
 
     def as_csv(self) -> str:
-        """One line per ride, the same rows the JSON carries."""
+        """One line per cab per day, the same rows the JSON carries, then the month's total."""
         buffer = io.StringIO()
         writer = csv.DictWriter(buffer, fieldnames=list(COLUMNS), lineterminator="\n")
         writer.writeheader()
         for row in self.rows:
             record = row.as_dict()
+            record["drivers"] = "; ".join(record["drivers"])
+            record["flags"] = "; ".join(record["flags"])
             writer.writerow(
                 {column: "" if record[column] is None else record[column] for column in COLUMNS}
             )
+        total = self.summary
+        writer.writerow(
+            {
+                "date": "TOTAL",
+                "cab": f"{total['cab_days']} cab-days",
+                "gps_km": "" if total["gps_km"] is None else total["gps_km"],
+                "odometer_km": "" if total["odometer_km"] is None else total["odometer_km"],
+                "billed_km": total["billed_km"],
+                "rate_per_km": self.treatment["rate_per_km"] or "",
+                "amount": "" if total["amount"] is None else total["amount"],
+                "flags": f"{total['flagged_days']} flagged",
+            }
+        )
         return buffer.getvalue()
 
 
@@ -145,7 +166,8 @@ class BillingService:
     async def export(
         self, operator_id: uuid.UUID, client_id: uuid.UUID, month: str
     ) -> BillingExport:
-        start, end = _month_bounds(month, await self._timezone(operator_id))
+        timezone = await self._timezone(operator_id)
+        start, end = _month_bounds(month, timezone)
         client = await self.session.scalar(
             select(Client).where(Client.id == client_id).where(Client.operator_id == operator_id)
         )
@@ -153,72 +175,109 @@ class BillingService:
             raise NotFound("Client not found")
 
         settings = await ConfigService(self.session, self.clock).all_values(operator_id)
-        treatment = {
-            "no_show_billable": bool(settings["billing_no_show_billable"]),
-            "late_cancel_billable": bool(settings["billing_late_cancel_billable"]),
-            "distance_basis": str(settings["billing_distance_basis"]),
-            # The unit the client is billed in. Fixed, not configurable: per kilometre.
-            "basis": "per_km",
-            "rate_per_km": float(settings["billing_rate_per_km"]) or None,
-        }
+        rate = float(settings["billing_rate_per_km"]) or None
+        threshold = float(settings["billing_odometer_gap_percent"])
+        default_client, default_unset = await self._default_client(
+            operator_id, str(settings["billing_default_client_id"])
+        )
+        zone = ZoneInfo(timezone)
+        now = self.clock.now()
 
-        requests = list(
-            (
-                await self.session.execute(
-                    select(RideRequest)
-                    .where(RideRequest.operator_id == operator_id)
-                    .where(RideRequest.client_id == client_id)
-                    .where(RideRequest.queued_at >= start)
-                    .where(RideRequest.queued_at < end)
-                    .order_by(RideRequest.queued_at, RideRequest.id)
-                )
-            ).scalars()
-        )
-        trips = await self._trips({r.trip_id for r in requests if r.trip_id})
-        carried = await self._carried(list(trips))
-        vehicles = await self._vehicles({trip.vehicle_id for trip in trips.values()})
-        names = await self._employees({r.employee_id for r in requests})
-        offices = await self._offices({r.office_id for r in requests})
-        assigned_then_cancelled = await self._assigned_before_cancel(
-            [r.id for r in requests if r.status == str(RequestStatus.cancelled)]
-        )
-        zone = ZoneInfo(await self._timezone(operator_id))
+        groups: dict[tuple[uuid.UUID, date], list[SessionFacts]] = defaultdict(list)
+        plates: dict[uuid.UUID, str] = {}
+        windows: dict[tuple[uuid.UUID, date], tuple[datetime, datetime]] = {}
+        for duty, plate, driver_name in await self._sessions(operator_id, start, end):
+            key = (duty.vehicle_id, duty.started_at.astimezone(zone).date())
+            groups[key].append(await self._facts(duty, driver_name))
+            plates[duty.vehicle_id] = plate
+            low, high = windows.get(key, (duty.started_at, duty.ended_at or now))
+            windows[key] = (min(low, duty.started_at), max(high, duty.ended_at or now))
+
+        clients_by_trip = await self._clients_by_trip(operator_id, start, end)
+        trips = await self._trips(operator_id, start, end)
 
         rows: list[BillingRow] = []
-        for request in requests:
-            trip = trips.get(request.trip_id) if request.trip_id else None
-            shared_by = max(carried.get(trip.id, 0), 1) if trip else 1
-            trip_share = (
-                trip.actual_distance_m / 1000.0 / shared_by
-                if trip and trip.actual_distance_m is not None
-                else None
+        for (vehicle_id, day), facts in sorted(groups.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+            low, high = windows[(vehicle_id, day)]
+            served: set[uuid.UUID] = set()
+            for trip in trips:
+                if (
+                    trip.vehicle_id == vehicle_id
+                    and trip.started_at is not None
+                    and low <= trip.started_at <= high
+                ):
+                    served |= clients_by_trip.get(trip.id, set())
+            extra: list[Flag] = []
+            if len(served) == 1:
+                billed_to = next(iter(served))
+            else:
+                billed_to = default_client
+                extra.append(Flag.multiple_clients if served else Flag.no_client_trips)
+                if default_unset:
+                    extra.append(Flag.default_client_unset)
+            if billed_to != client_id:
+                continue
+            cab = build_cab_day(
+                vehicle=plates[vehicle_id],
+                day=day.isoformat(),
+                sessions=facts,
+                threshold_percent=threshold,
+                rate_per_km=rate,
+                extra_flags=extra,
             )
-            direct = _direct_km(request, offices.get(request.office_id))
-            billable, why = _billable(
-                request, treatment, was_assigned=request.id in assigned_then_cancelled
-            )
-            chosen = (trip_share if treatment["distance_basis"] == "trip_share" else direct) or 0.0
-            rows.append(
-                BillingRow(
-                    day=request.queued_at.astimezone(zone).date(),
-                    request_id=request.id,
-                    employee=names.get(request.employee_id, ""),
-                    direction=str(request.direction),
-                    status=str(request.status),
-                    billable=billable,
-                    billable_reason=why,
-                    trip_id=trip.id if trip else None,
-                    vehicle=vehicles.get(trip.vehicle_id) if trip else None,
-                    riders_on_trip=shared_by if trip else 0,
-                    direct_km=direct,
-                    trip_share_km=trip_share,
-                    billable_km=chosen if billable else 0.0,
-                )
-            )
+            rows.append(BillingRow(day, cab, client_id, rate))
 
-        export = BillingExport(client_id, client.name, month, treatment, {}, rows)
-        export.summary = _summary(rows, float(settings["billing_rate_per_km"]) or None)
+        export = BillingExport(
+            client_id,
+            client.name,
+            month,
+            {
+                "basis": "per_cab_per_day_km",
+                "rate_per_km": rate,
+                "odometer_gap_threshold_percent": threshold,
+                "default_client_id": str(default_client),
+            },
+            {},
+            rows,
+        )
+        export.summary = _summary(rows)
         return export
+
+    async def set_basis(
+        self,
+        operator_id: uuid.UUID,
+        user_id: uuid.UUID,
+        session_id: uuid.UUID,
+        basis: str,
+        note: str | None,
+    ) -> DutySession:
+        """An operator admin chooses which figure a duty session is billed on."""
+        try:
+            chosen = Basis(basis)
+        except ValueError:
+            raise ValidationFailed("basis must be gps or odometer", {"basis": basis}) from None
+        duty = await self.session.scalar(
+            select(DutySession)
+            .where(DutySession.id == session_id)
+            .where(DutySession.operator_id == operator_id)
+        )
+        if duty is None:
+            raise NotFound("Duty session not found")
+        if chosen is Basis.odometer and (
+            duty.odometer_start_km is None
+            or duty.odometer_end_km is None
+            or duty.odometer_end_km < duty.odometer_start_km
+        ):
+            raise Conflict(
+                "Both odometer readings are needed to bill on the odometer",
+                {"session_id": str(session_id)},
+            )
+        duty.billing_basis = str(chosen)
+        duty.billing_basis_set_by = user_id
+        duty.billing_basis_set_at = self.clock.now()
+        duty.billing_basis_note = note
+        await self.session.flush()
+        return duty
 
     # --- queries -------------------------------------------------------------------------
 
@@ -228,119 +287,108 @@ class BillingService:
         )
         return zone or "UTC"
 
-    async def _trips(self, ids: set[uuid.UUID]) -> dict[uuid.UUID, Trip]:
-        if not ids:
-            return {}
-        rows = await self.session.execute(select(Trip).where(Trip.id.in_(ids)))
-        return {trip.id: trip for trip in rows.scalars()}
-
-    async def _carried(self, trip_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-        """Riders who really got in, per trip, across **all** clients: the cab's km are shared
-        by everyone it carried, whoever's invoice they are on."""
-        if not trip_ids:
-            return {}
+    async def _sessions(
+        self, operator_id: uuid.UUID, start: datetime, end: datetime
+    ) -> list[tuple[DutySession, str, str]]:
         rows = await self.session.execute(
-            select(TripStop.trip_id, TripStop.request_id)
-            .where(TripStop.trip_id.in_(trip_ids))
-            .where(TripStop.stop_type == str(StopKind.pickup))
-            .where(TripStop.status == str(StopStatus.done))
+            select(DutySession, Vehicle.registration_no, Driver.name)
+            .join(Vehicle, Vehicle.id == DutySession.vehicle_id)
+            .join(Driver, Driver.id == DutySession.driver_id)
+            .where(DutySession.operator_id == operator_id)
+            .where(DutySession.started_at >= start)
+            .where(DutySession.started_at < end)
+            .order_by(DutySession.started_at)
         )
-        found: dict[uuid.UUID, set[uuid.UUID]] = {}
-        for trip_id, request_id in rows:
-            found.setdefault(trip_id, set()).add(request_id)
-        return {trip_id: len(requests) for trip_id, requests in found.items()}
+        return [(duty, str(plate), str(name)) for duty, plate, name in rows]
 
-    async def _vehicles(self, ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
-        if not ids:
-            return {}
+    async def _facts(self, duty: DutySession, driver: str) -> SessionFacts:
+        """The session as billing sees it. A closed session's distance was fixed when it closed;
+        an open one (or one from before that was recorded) is measured now."""
+        metres = duty.gps_distance_m
+        if metres is None:
+            metres = await measure_distance(
+                self.session, duty.vehicle_id, duty.started_at, duty.ended_at or self.clock.now()
+            )
+        return SessionFacts(
+            session_id=str(duty.id),
+            driver=driver,
+            started_at=duty.started_at,
+            ended_at=duty.ended_at,
+            gps_km=None if metres is None else metres / 1000.0,
+            odometer_start_km=duty.odometer_start_km,
+            odometer_end_km=duty.odometer_end_km,
+            basis=Basis(duty.billing_basis) if duty.billing_basis else Basis.gps,
+        )
+
+    async def _trips(self, operator_id: uuid.UUID, start: datetime, end: datetime) -> list[Trip]:
         rows = await self.session.execute(
-            select(Vehicle.id, Vehicle.registration_no).where(Vehicle.id.in_(ids))
+            select(Trip)
+            .where(Trip.operator_id == operator_id)
+            .where(Trip.status.in_([str(status) for status in REAL_TRIPS]))
+            .where(Trip.started_at >= start)
+            .where(Trip.started_at < end)
         )
-        return {row[0]: row[1] for row in rows}
+        return list(rows.scalars())
 
-    async def _employees(self, ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
-        if not ids:
-            return {}
+    async def _clients_by_trip(
+        self, operator_id: uuid.UUID, start: datetime, end: datetime
+    ) -> dict[uuid.UUID, set[uuid.UUID]]:
+        """Whose riders each trip carried."""
         rows = await self.session.execute(
-            select(Employee.id, Employee.name).where(Employee.id.in_(ids))
+            select(RideRequest.trip_id, RideRequest.client_id)
+            .join(Trip, Trip.id == RideRequest.trip_id)
+            .where(Trip.operator_id == operator_id)
+            .where(Trip.started_at >= start)
+            .where(Trip.started_at < end)
+            .where(RideRequest.status.in_([str(status) for status in CARRIED]))
         )
-        return {row[0]: row[1] for row in rows}
+        found: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
+        for trip_id, client in rows:
+            found[trip_id].add(client)
+        return found
 
-    async def _offices(self, ids: set[uuid.UUID]) -> dict[uuid.UUID, Office]:
-        if not ids:
-            return {}
-        rows = await self.session.execute(select(Office).where(Office.id.in_(ids)))
-        return {office.id: office for office in rows.scalars()}
+    async def _default_client(
+        self, operator_id: uuid.UUID, configured: str
+    ) -> tuple[uuid.UUID, bool]:
+        """The client a shared or empty cab-day is billed to, and whether it was a guess.
 
-    async def _assigned_before_cancel(self, cancelled: list[uuid.UUID]) -> set[uuid.UUID]:
-        """Cancelled requests that had a cab assigned at some point (a late cancellation)."""
-        if not cancelled:
-            return set()
-        from app.modules.requests.models import RideRequestEvent
-
-        rows = await self.session.execute(
-            select(RideRequestEvent.request_id)
-            .where(RideRequestEvent.request_id.in_(cancelled))
-            .where(RideRequestEvent.to_status == str(RequestStatus.assigned))
+        Configured when the operator said so. With exactly one client there is nothing to guess.
+        With several and none configured, the oldest is used and every such row says so.
+        """
+        clients = list(
+            (
+                await self.session.execute(
+                    select(Client.id)
+                    .where(Client.operator_id == operator_id)
+                    .order_by(Client.created_at, Client.id)
+                )
+            ).scalars()
         )
-        return set(rows.scalars())
+        if not clients:
+            raise NotFound("The operator has no clients")
+        if configured:
+            try:
+                chosen = uuid.UUID(configured)
+            except ValueError:
+                chosen = None
+            if chosen is not None and chosen in clients:
+                return chosen, False
+        return clients[0], len(clients) > 1
 
 
-# --- the rules, pure -----------------------------------------------------------------------
-
-
-def _billable(
-    request: RideRequest, treatment: dict[str, Any], *, was_assigned: bool
-) -> tuple[bool, str]:
-    """Is this ride on the invoice, and why (or why not)."""
-    status = request.status
-    if status == str(RequestStatus.dropped):
-        return True, "completed"
-    if status == str(RequestStatus.no_show):
-        return (
-            bool(treatment["no_show_billable"]),
-            "no_show_billed" if treatment["no_show_billable"] else "no_show_not_billed",
-        )
-    if status == str(RequestStatus.cancelled):
-        if not was_assigned:
-            return False, "cancelled_before_assignment"
-        return (
-            bool(treatment["late_cancel_billable"]),
-            "late_cancel_billed" if treatment["late_cancel_billable"] else "late_cancel_not_billed",
-        )
-    if status == str(RequestStatus.expired):
-        return False, "expired_unserved"
-    return False, "not_finished"
-
-
-def _direct_km(request: RideRequest, office: Office | None) -> float | None:
-    """The rider's own journey: great-circle x road factor, between where they are collected
-    and where they are dropped."""
-    if office is None:
-        return None
-    home = LatLng(*coords(request.pickup_location or request.location))
-    there = LatLng(*coords(office.location))
-    return haversine_km(home, there) * ROAD_FACTOR
-
-
-def _summary(rows: list[BillingRow], rate_per_km: float | None = None) -> dict[str, Any]:
-    billable = [row for row in rows if row.billable]
-    trips = {row.trip_id for row in billable if row.trip_id}
+def _summary(rows: list[BillingRow]) -> dict[str, Any]:
+    gps = [row.cab.gps_km for row in rows if row.cab.gps_km is not None]
+    odo = [row.cab.odometer_km for row in rows if row.cab.odometer_km is not None]
+    amounts = [row.cab.amount for row in rows if row.cab.amount is not None]
     return {
-        "rides": len(rows),
-        "billable_rides": len(billable),
-        "completed": sum(1 for r in rows if r.billable_reason == "completed"),
-        "no_shows": sum(1 for r in rows if r.status == str(RequestStatus.no_show)),
-        "cancellations": sum(1 for r in rows if r.status == str(RequestStatus.cancelled)),
-        "billable_trips": len(trips),
-        "riders": len({row.employee for row in billable}),
-        "billable_km": _round(sum(row.billable_km for row in billable)),
+        "cab_days": len(rows),
+        "cabs": len({row.cab.vehicle for row in rows}),
+        "gps_km": _round(sum(gps)) if gps else None,
+        "odometer_km": _round(sum(odo)) if odo else None,
+        "billed_km": _round(sum(row.cab.billed_km for row in rows)),
         # Kilometres x the operator's rate; `None` until a rate is set - never a guessed price.
-        "amount": (
-            _round(sum(row.billable_km for row in billable) * rate_per_km, 2)
-            if rate_per_km
-            else None
-        ),
+        "amount": _round(sum(amounts), 2) if amounts else None,
+        "flagged_days": sum(1 for row in rows if row.cab.flags),
     }
 
 

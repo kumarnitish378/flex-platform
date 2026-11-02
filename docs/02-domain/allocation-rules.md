@@ -20,11 +20,10 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
 | `optimizer_time_limit_seconds` | 10 | 1–60 | no | Hard cap on one DARP run. No solution within it falls back to single-insertion greedy. |
-| `billing_rate_per_km` | 0 | 0-100000 | no | What the operator charges a client company per km (OQ-03). 0 = no rate set: the billing export gives km and no amount. |
+| `billing_rate_per_km` | 0 | 0-100000 | no | What the operator charges a client company per km, on each cab's running km per day (OQ-03; Rs 8 for the pilot). 0 = no rate set: the billing export gives km and no amount. |
 | `stop_dwell_seconds` | 60 | 0–300 | no | Seconds a cab spends at each stop while riders get in or out; the optimizer plans with it (B31). **Provisional** - the real figure is a pilot measurement. |
-| `billing_no_show_billable` | true | bool | no | Whether a no-show is on the invoice (B38). **Provisional** (OQ-01/OQ-03). |
-| `billing_late_cancel_billable` | false | bool | no | Whether a cancellation after assignment is on the invoice (B38). **Provisional.** |
-| `billing_distance_basis` | `trip_share` | `trip_share` / `direct` | no | Kilometres billed per ride: an equal share of the trip's measured distance, or the rider's own journey (B38). **Provisional.** |
+| `billing_odometer_gap_percent` | 10 | 0-100 | no | A cab-day whose GPS km differ from the odometer's by more than this share of the odometer figure is flagged on the billing report (B38). |
+| `billing_default_client_id` | (empty) | client id | no | Where a cab-day is billed when the cab carried several clients' riders, or none (OQ-40). Empty = the operator's only client, else the oldest. |
 | `optimizer_failure_threshold` | 3 | 1–10 | no | This many most-recent optimizer runs all failing means it is down (`control-model.md` §6). **Provisional.** |
 | `optimizer_failure_memory_minutes` | 15 | 1–120 | no | A failed optimizer run older than this says nothing about now. **Provisional.** |
 | `optimizer_stall_seconds` | 180 | 60–3600 | no | A request ready this long with no optimizer run since means the worker is not running; never less than three batch windows. **Provisional.** |

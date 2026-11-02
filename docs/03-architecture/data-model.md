@@ -49,7 +49,7 @@ flowchart LR
 
 **driver** — `operator_id`, `user_id`, `name`, `phone`, `licence_last4`, `default_vehicle_id`, `active`.
 
-**duty_session** — `driver_id`, `vehicle_id`, `started_at`, `ended_at`.
+**duty_session** — `driver_id`, `vehicle_id`, `started_at`, `ended_at`, `odometer_start_km` / `odometer_end_km` (optional dashboard readings entered on going on / off duty), `gps_distance_m` (running metres from the cab's pings, fixed when the session closes; null if it sent too few), `billing_basis` (`gps` default / `odometer`, set by an operator admin) with `billing_basis_set_by` / `_at` / `_note`. The unit of per-cab-per-day billing (B38).
 
 ## Requests and trips
 **ride_request** — `operator_id`, `client_id`, `employee_id`, `direction` (`to_office`,`from_office`), `office_id`, `location` point (home/pickup or drop), `pickup_location` point nullable (collect here instead of the usual place for the direction - set when a breakdown strands a rider who was already on board, ADR-0016), `landmark`, `requested_time` timestamptz, `urgency` (`high`,`medium`,`low`) - **an input from the rider/client, never written by the platform** (ADR-0021), `no_sharing` bool, `status` (see lifecycle), `channel` (`app`,`supervisor`,`offer`,`sim`), `created_by_user_id`, `trip_id` nullable, `lock_vehicle_id` nullable, `forced_priority` bool, `hold_until` nullable, `override_until` nullable, `cancel_reason` nullable, `expires_at`, `escalated_at` nullable (set once when an unassigned request is escalated, so it escalates and alerts once - ADR-0019), `pooling_added_minutes` float nullable (minutes in the cab beyond riding alone, as of the last plan that touched the trip - B32).
