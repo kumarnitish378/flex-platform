@@ -1,0 +1,3 @@
+registration_no,model,vehicle_type,seat_capacity,tracker_type
+EXAMPLE-0001,Maruti Dzire,sedan_4,4,app
+EXAMPLE-0002,Toyota Innova,suv_6,6,app

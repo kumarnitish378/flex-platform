@@ -4,7 +4,7 @@
 # (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
 # reads the `## <description>` comment on the line above each target.
 
-.PHONY: phone-dev phone-dev-stop phone-dev-info seed-demo smoke help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
+.PHONY: phone-dev phone-dev-stop phone-dev-info seed-demo smoke onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
         test test-domain-coverage lint format api-client sim-quick sim-full sim-policies         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
@@ -99,6 +99,14 @@ phone-dev-info:
 ## Load the idempotent demo data (operator, client, cabs, drivers, riders, a login per role)
 seed-demo:
 	python scripts/venv_exec.py --cwd backend -m app.demo_seed
+
+## Create a real operator + its first admin (NAME= ADMIN_NAME= ADMIN_PHONE= [RATE=]); safe to repeat
+create-operator:
+	python scripts/venv_exec.py --cwd backend -m app.create_operator --name "$(NAME)" --admin-name "$(ADMIN_NAME)" --admin-phone "$(ADMIN_PHONE)" $(if $(RATE),--rate-per-km $(RATE))
+
+## Check a pilot onboarding pack (FILE=folder-or-zip of CSVs) and list every error; changes nothing
+onboard-dry-run:
+	python scripts/onboard_dry_run.py $(FILE)
 
 ## End-to-end smoke test against the running stack (needs make phone-dev + make seed-demo; ~4 min)
 smoke:

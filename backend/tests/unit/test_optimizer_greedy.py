@@ -239,7 +239,8 @@ def test_greedy_can_be_restricted_to_a_subset_of_the_batch() -> None:
 
 def test_stop_dwell_is_charged_to_everyone_aboard() -> None:
     """The first rider sits through the second's boarding: that minute is added ride time."""
-    from app.domain.optimizer.model import CostWeights, OptimizerParams
+    from app.domain.cost import CostWeights
+    from app.domain.optimizer.model import OptimizerParams
 
     cabs = [veh(1, minutes_out(12))]
     riders = [req(1, minutes_out(10)), req(2, minutes_out(6))]

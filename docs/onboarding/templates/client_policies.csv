@@ -1,0 +1,2 @@
+client_name,pooling_allowed,employee_opt_out_allowed,night_safety_enabled,night_start,night_end,max_detour_factor,max_detour_minutes,pickup_window_minutes,no_show_wait_minutes
+Example Corp Pvt Ltd,yes,yes,yes,20:00,06:00,1.3,15,10,5

@@ -511,6 +511,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Done when: internal testers install from Play; location declaration submitted.
   Configured release signing in `android/app/build.gradle.kts` with `key.properties` support. Built and verified release APK (`build\app\outputs\flutter-apk\app-release.apk`, 85.5MB). All 115 tests passing green and static analysis clean.
 
-- [ ] **R03 · Pilot onboarding kit** · deps R01, R02
+- [~] **R03 · Pilot onboarding kit** · deps R01, R02
   Do: operator data import (fleet, clients, employees), one-page guides per role (English + Hindi), support contact, baseline vs pilot metrics dashboard.
   Done when: pilot operator's real data loaded in production; supervisors trained.
+  **Built without real data (2026-11-02):** CSV templates with example rows (`docs/onboarding/templates/`), `make onboard-dry-run FILE=...` (validates a whole pack, reports every error and warning, changes nothing; `backend/app/domain/onboarding_pack.py`, tests `test_onboarding_pack.py`), `make create-operator` (first operator + admin; `backend/app/create_operator.py`) and the step-by-step `docs/runbook-pilot-onboarding.md`. **Still open, needs the pilot:** loading the real pack, supervisor training, Hindi/English role guides, support contact, baseline-vs-pilot dashboard. Not built: a bulk loader for vehicles/drivers/clients, and app screens for client policy and zones (the admin API does both).

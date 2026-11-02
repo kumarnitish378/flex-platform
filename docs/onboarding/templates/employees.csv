@@ -1,0 +1,4 @@
+client_name,name,phone,office_name,home_lat,home_lng,landmark,priority,is_vip,night_escort_required,gender
+Example Corp Pvt Ltd,Example Rider One,+919000000201,Example HQ,28.6120,77.3600,Near the metro station,5,no,no,female
+Example Corp Pvt Ltd,Example Rider Two,+919000000202,Example HQ,28.5000,77.3800,Opposite the park,5,no,no,male
+Example Corp Pvt Ltd,Example Rider Three,+919000000203,Example HQ,28.6200,77.3500,,3,yes,no,male

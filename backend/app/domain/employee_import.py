@@ -149,12 +149,12 @@ def _validate_row(index: int, row: dict[str, str]) -> list[RowError]:
     elif len(row["name"]) > 200:
         errors.append(RowError(index, "name", "Name is longer than 200 characters"))
 
-    errors.extend(_validate_phone(index, row.get("phone", "")))
+    errors.extend(validate_phone(index, row.get("phone", "")))
     if not row.get("office_name"):
         errors.append(RowError(index, "office_name", "Office name is required"))
 
-    errors.extend(_validate_coordinate(index, "home_lat", row.get("home_lat", ""), 90.0))
-    errors.extend(_validate_coordinate(index, "home_lng", row.get("home_lng", ""), 180.0))
+    errors.extend(validate_coordinate(index, "home_lat", row.get("home_lat", ""), 90.0))
+    errors.extend(validate_coordinate(index, "home_lng", row.get("home_lng", ""), 180.0))
     errors.extend(_validate_priority(index, row.get("priority", "")))
 
     gender = row.get("gender", "").lower()
@@ -169,7 +169,7 @@ def _validate_row(index: int, row: dict[str, str]) -> list[RowError]:
     return errors
 
 
-def _validate_phone(index: int, phone: str) -> list[RowError]:
+def validate_phone(index: int, phone: str) -> list[RowError]:
     if not phone:
         return [RowError(index, "phone", "Phone is required")]
     if not phone.startswith(PHONE_PREFIX):
@@ -192,7 +192,7 @@ def _validate_phone(index: int, phone: str) -> list[RowError]:
     return []
 
 
-def _validate_coordinate(index: int, column: str, value: str, limit: float) -> list[RowError]:
+def validate_coordinate(index: int, column: str, value: str, limit: float) -> list[RowError]:
     if not value:
         return [RowError(index, column, f"{column} is required")]
     try:
