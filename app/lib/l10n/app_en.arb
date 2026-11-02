@@ -308,5 +308,12 @@
   "navEmployeeForm": "Employee",
   "@navEmployeeForm": {
     "description": "Client admin employee form, L-02."
-  }
+  },
+
+  "grantLocationPermission": "Grant Location Permission",
+  "@grantLocationPermission": {
+    "description": "Button to grant location permission"
+  },
+
+  "permissionDeniedNotice": "Permission was denied or revoked. You can grant permissions in phone Settings or tap Continue."
 }

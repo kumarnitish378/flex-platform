@@ -66,5 +66,7 @@
   "navReports": "रिपोर्ट्स",
   "navSettings": "सेटिंग्स",
   "navEmployees": "कर्मचारी",
-  "navEmployeeForm": "कर्मचारी फ़ॉर्म"
+  "navEmployeeForm": "कर्मचारी फ़ॉर्म",
+  "grantLocationPermission": "स्थान अनुमति दें",
+  "permissionDeniedNotice": "अनुमति अस्वीकृत या रद्द कर दी गई थी। आप सेटिंग्स में अनुमति दे सकते हैं या जारी रख सकते हैं।"
 }
