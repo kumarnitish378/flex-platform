@@ -65,3 +65,6 @@ Thumbs.db
 # openapi-generator jar here on first run; it is pinned by version, so a checkout
 # reproduces the same client without carrying 27 MB of jar in history.
 .tooling/
+
+# Celery beat state written by `make phone-dev`
+backend/celerybeat-schedule*
