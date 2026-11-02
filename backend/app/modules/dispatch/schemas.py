@@ -88,6 +88,8 @@ class EscortOut(BaseModel):
     """The night escort gate on a trip (OQ-10): flagged, and whether a supervisor has cleared it."""
 
     required: bool
+    #: `lone_rider` or `last_out`; null when not flagged.
+    reason: str | None = None
     confirmed: bool
     basis: str | None = None
     confirmed_by: uuid.UUID | None = None

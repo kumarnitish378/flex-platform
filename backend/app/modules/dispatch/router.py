@@ -526,6 +526,7 @@ def _trip_with_stops(
         escort=(
             EscortOut(
                 required=escort.required,
+                reason=str(escort.reason) if escort.reason else None,
                 confirmed=escort.confirmed,
                 basis=escort.basis,
                 confirmed_by=escort.confirmed_by,

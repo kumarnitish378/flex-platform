@@ -86,6 +86,7 @@ from app.domain.suggestions import SuggestionFacts, named_riders
 from app.domain.suggestions import reasons as render_reasons
 from app.domain.timeofday import local_time
 from app.modules.config.service import ConfigService
+from app.modules.dispatch.escort import EscortService
 from app.modules.dispatch.models import MODE_MANUAL, Trip, TripEvent, TripStop
 from app.modules.fleet.duty_models import DutySession
 from app.modules.fleet.models import Vehicle
@@ -817,6 +818,11 @@ class DispatchService:
             },
         )
         await self.session.flush()
+
+        # The night escort flag exists from the moment the trip is planned (OQ-10): a woman who
+        # would be alone, or last out, shows on the board and raises its alert now, not at the
+        # next sweep.
+        await EscortService(self.session, self.clock, self.config).sync([trip])
 
         await self._notify_assigned(trip, request, employee, vehicle, driver_id, eta_seconds)
         logger.info(

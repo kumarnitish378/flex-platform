@@ -907,12 +907,16 @@ paths:
       tags: [dispatch]
       summary: Confirm the night escort for a flagged trip so it can start
       description: |
-        Night escort rule (OQ-10, owner decision 2026-11-01). After 20:00 (the client's night
-        window), if a **female rider would be the only rider in the cab**, the trip is flagged
-        (`Trip.escort.required`, an `escort_required` alert) and **the driver cannot start it** (409,
-        `details.reason = escort_confirmation_required`) until a supervisor confirms here that an
-        escort is arranged or that a male co-rider is present. A male rider on the same route sharing
-        the cab clears the flag by itself. Nothing is assigned automatically; who confirmed, when and
+        Night escort rule (OQ-10, owner decisions 2026-11-01 and 2026-11-02). After 20:00 (the
+        client's night window) a trip is flagged (`Trip.escort.required`, an `escort_required`
+        alert) in two cases, both worked out when the trip is **planned**: `escort.reason =
+        lone_rider` - a **woman would be the only rider in the cab**; and `last_out` - on a
+        **shared trip home** (`from_office`) a **woman is the last rider left in the cab**, whoever
+        shared the earlier part. **The driver cannot start a flagged trip** (409, `details.reason =
+        escort_confirmation_required`, `details.escort_reason`) until a supervisor confirms here.
+        `lone_rider` is cleared by `escort_arranged` or `male_co_rider_present`; `last_out` only by
+        `escort_arranged` (a man who shared the trip is gone by then - `male_co_rider_present` is a
+        422). A man sharing a lone woman's cab clears that flag by itself. Nothing is assigned automatically; who confirmed, when and
         on what basis is recorded on the trip and in its event history.
         409 `escort_not_required` if the trip is not flagged, 409 if it has already started.
       parameters:
@@ -1680,7 +1684,8 @@ components:
       required: [required, confirmed]
       properties:
         required: {type: boolean}
-        confirmed: {type: boolean}
+        reason: {type: [string, 'null'], enum: [lone_rider, last_out, null], description: 'Why it is flagged.'}
+        confirmed: {type: boolean, description: 'A confirmation answers the reason it was given for; a trip that became a different problem must be confirmed again.'}
         basis: {type: [string, 'null'], enum: [escort_arranged, male_co_rider_present, null]}
         confirmed_by: {type: [string, 'null'], format: uuid}
         confirmed_at: {type: [string, 'null'], format: date-time}
