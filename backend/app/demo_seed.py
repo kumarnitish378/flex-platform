@@ -40,6 +40,8 @@ OPERATOR_NAME = "Demo Cabs"
 CLIENT_NAME = "Demo Corp"
 RATE_PER_KM = 8.0
 
+NIGHT_START = time(20, 0)
+NIGHT_END = time(6, 0)
 OFFICE = ("Demo HQ", 28.5703, 77.3218)
 ZONES = (("sector_62", 28.62, 77.36), ("sector_135", 28.50, 77.38), ("sector_168", 28.46, 77.40))
 CABS = (
@@ -156,8 +158,8 @@ async def seed(session: AsyncSession) -> DemoSummary:
         operator_id=operator.id,
         client_id=client.id,
         night_safety_enabled=True,
-        night_start=time(20, 0),
-        night_end=time(6, 0),
+        night_start=NIGHT_START,
+        night_end=NIGHT_END,
     )
     office = await _ensure(
         session,

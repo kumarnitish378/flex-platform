@@ -135,7 +135,11 @@ class _WrongActiveRoleError(DomainError):
     http_status = 403
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+# `scope="function"`: the session is committed when the handler returns and BEFORE the response is
+# sent. The default scope runs the exit code after the response has gone, so a client that acts on
+# the 200 at once (a supervisor confirms, the driver taps start a moment later) can reach the next
+# request before the commit has landed and read the old state - found by the end-to-end smoke test.
+SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 ClockDep = Annotated[Clock, Depends(get_clock)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 EtaDep = Annotated["EtaService", Depends(get_eta)]

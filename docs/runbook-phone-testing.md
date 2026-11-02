@@ -116,12 +116,28 @@ moving about 5 m or every 60 s while still.
 
 The gate fires after 20:00 Asia/Kolkata when a woman would be the only rider. To try it in the daytime,
 set the demo client's night window to include now (operator admin: client policy `night_start` /
-`night_end`) - or run `python scripts/smoke.py --night`, which does it with a fake clock-free window.
-Then request a ride as a woman (odd-numbered rider), assign her alone to a cab, and try to start the
-trip as the driver: it is refused until the supervisor confirms "Escort arranged" or "Male co-rider
-present" on the trip.
+`night_end`; put it back afterwards). Then request a ride as a woman (odd-numbered rider), assign her
+alone to a cab, and try to start the trip as the driver: it is refused until the supervisor confirms
+"Escort arranged" or "Male co-rider present" on the trip. A woman who is the **last rider left** on a
+shared trip home is flagged too, and only "Escort arranged" clears that one.
 
-## 8. When something does not work
+`make smoke` does all of this headlessly (see section 9).
+
+## 8. The odometer and the billing report
+
+When the driver goes on duty the app can send the dashboard reading (`odometer_km`), and again when going
+off. The operator admin's billing report (Reports -> Billing, or `GET /reports/billing`) then shows one row
+per cab per day: GPS km, odometer km, billed km and the amount at Rs 8/km. A gap over 10% between GPS and
+odometer flags the row; the operator can mark that session as billed on its odometer.
+
+## 9. Smoke test
+
+`make smoke` (needs `make phone-dev` and `make seed-demo`) plays a driver, an employee, a supervisor and an
+operator admin against the running stack, with GPS published over MQTT in real time - a day trip, a night
+trip that needs escort confirmation, the odometer and the billing row - and prints PASS/FAIL per step. It
+takes about four minutes.
+
+## 10. When something does not work
 
 | Symptom | Likely cause |
 |---|---|
