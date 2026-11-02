@@ -827,6 +827,51 @@ Re-run `make api-client`. What the supervisor screens need:
 - `flutter analyze`: 0 issues found.
 - `flutter test`: 138/138 tests pass (100% green).
 
+### 2026-11-02 · Gemini -> Supervisor · Final Summary of Items 1-8 Completed & Verified
+
+1. **Item 1 (Client Scoping & Removal of Hardcoded 'client_1')**:
+   - Removed every hardcoded `'client_1'` and `session.userId` fallback as client ID across `employees_screen.dart` and `client_reports_screen.dart`.
+   - Client admins scope automatically to their own client ID (`clientId = null` / `''`).
+   - Operator admins pick client from `GET /admin/clients` dropdown selector (`Key('client-selector')`).
+   - Tests added in `test/features/client/client_id_roles_test.dart`.
+
+2. **Item 2 (Night Escort Gate UI, Confirmations, & Start Gate)**:
+   - Added red "Escort needed" banner (`Key('escort-needed-banner')`) on `S-04 Trips Board`, `D-04 Trip Detail`, and critical `S-07 Alerts`.
+   - Added confirmation buttons "Escort arranged" and "Male co-rider present" calling `POST /dispatch/trips/{trip_id}/escort-confirmation`. For `last_out` reason, hid male co-rider button per spec.
+   - Handled 409 `escort_confirmation_required` on driver trip start with specific message "Waiting for supervisor to confirm the night escort".
+   - Tests added in `test/features/supervisor/night_escort_test.dart`.
+
+3. **Item 3 (Employee Gender Field & CSV Import Preview)**:
+   - Added Gender dropdown in `L-02 Employee Form` (`female`, `male`, `other`, `not set`).
+   - Updated `L-01 Employees Screen` list items to display gender chips and CSV import dialog preview to show gender breakdown.
+   - Tests added in `test/features/client/employee_gender_test.dart`.
+
+4. **Item 4 (GPS Settings from Duty State)**:
+   - Configured driver location service and duty screen to read `distance_filter_m` and `heartbeat_seconds` from `/driver/duty`'s `gps` object, using 5 m / 60 s as fallback.
+
+5. **Item 5 (Driver Duty Odometer Reading)**:
+   - Prompted optional opening and closing odometer readings on duty toggle in `D-01 Duty Home` (`Key('odometer-input-dialog')`) with number pad and "Skip" button.
+   - Sent `odometer_km` in `POST /driver/duty`.
+
+6. **Item 6 (Billing Screens per-cab-per-day Rows & Basis Toggle)**:
+   - Displayed per-cab-per-day rows (cab, drivers, duty in/out, GPS km, odometer km, billed km, amount at Rs 8/km).
+   - Rendered red flag markers on flagged rows (`odometer_gap`, `multiple_clients`, etc.).
+   - Added duty session billing basis toggle (`PUT /admin/duty-sessions/{session_id}/billing-basis`).
+   - Added monthly total summary row and real invoice-ready CSV download (`format=csv`).
+   - Enforced zero fare/charge display for employees across all employee screens.
+
+7. **Item 7 (Phone Build Commands & README Update)**:
+   - Updated `app/README.md` with exact debug build and ADB install commands with `--dart-define=APP_TESTING=true` and LAN URLs.
+   - Verified building debug APK (`build/app/outputs/flutter-apk/app-debug.apk`) and release APK (`build/app/outputs/flutter-apk/app-release.apk`, 86.5 MB).
+
+8. **Test & Analysis Metrics**:
+   - `flutter analyze`: 0 issues found.
+   - `flutter test`: 139/139 tests pass (100% green).
+   - Android APK: `build/app/outputs/flutter-apk/app-debug.apk` and `build/app/outputs/flutter-apk/app-release.apk`.
+   - Web Build: `build/web`.
+   - Open Items: All items 1–8 fully completed and verified.
+
+
 
 
 

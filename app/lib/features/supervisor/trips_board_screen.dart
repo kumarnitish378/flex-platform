@@ -170,12 +170,13 @@ class _TripsBoardScreenState extends ConsumerState<TripsBoardScreen> {
                                             ),
                                             child: const Text('Escort arranged'),
                                           ),
-                                          OutlinedButton(
-                                            key: Key('male-co-rider-$tripId'),
-                                            onPressed: () =>
-                                                _confirmEscort(tripId, 'male_co_rider_present'),
-                                            child: const Text('Male co-rider present'),
-                                          ),
+                                          if (escort.note != 'last_out' && (escort.note == null || !escort.note!.contains('last_out')))
+                                            OutlinedButton(
+                                              key: Key('male-co-rider-$tripId'),
+                                              onPressed: () =>
+                                                  _confirmEscort(tripId, 'male_co_rider_present'),
+                                              child: const Text('Male co-rider present'),
+                                            ),
                                         ],
                                       ),
                                     ],
