@@ -21,3 +21,19 @@ Requires the Flutter SDK (`flutter analyze`, `flutter test`).
 The Flutter SDK on this machine is at `C:\Users\nitis\flutter`; put its `bin` on PATH.
 `flutter analyze` must be clean and `flutter test` green before a task counts as done.
 
+## Phone Testing Build (Debug APK with APP_TESTING=true)
+
+To build a debug APK for phone testing with single-step test login (`APP_TESTING=true`) against a laptop on a local Wi-Fi network (replace `192.168.x.x` with your laptop's LAN IP):
+
+```bash
+flutter build apk --debug \
+  --dart-define=APP_TESTING=true \
+  --dart-define=API_BASE_URL=http://192.168.x.x:8000/api/v1 \
+  --dart-define=TILES_URL=http://192.168.x.x:8081/styles/basic/{z}/{x}/{y}.png
+```
+
+### Installing on Device via ADB
+
+```bash
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```

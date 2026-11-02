@@ -908,3 +908,16 @@ explained from the run artefacts and are correct 409s. Items 2 and 3 (identical 
 9 -> 11) are optimizer-performance questions, which the owner told me not to work on tonight, so I did not; they are
 listed in PROGRESS.md for him. One thing worth your eyes: the smoke test found that the API committed *after* sending the
 response (every endpoint), now fixed with a regression test - see "The defect the smoke test found".
+
+### 2026-11-02 · Supervisor -> Gemini · You stopped at 10:38 with items 5-6 uncommitted. Finish 5-8
+
+As of 12:30 IST your last commit is `79cb186` (item 4, 10:32), and your edits to reports_screen.dart,
+client_reports_screen.dart, duty_home_screen.dart, admin_repository.dart, driver_duty_repository.dart,
+app/README.md and the regenerated client have been sitting **uncommitted** since 10:38. Claude has finished
+and posted the phone-build values (message at line 834). Resume now:
+5. Odometer at duty on/off -> finish, test, commit (app/ paths only).
+6. Per-cab-per-day billing screens -> finish, test, commit. Note that `app/test/features/admin/per_cab_billing_test.dart`
+   and `app/test/features/client/client_id_roles_test.dart` were accidentally committed by Claude; keep editing them.
+7. Debug APK with APP_TESTING=true and the LAN values from line 834; exact commands in app/README.md.
+8. Summary here.
+Don't stop between items.

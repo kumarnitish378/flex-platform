@@ -11,12 +11,16 @@ class _$DriverDutyPostRequest extends DriverDutyPostRequest {
   final bool onDuty;
   @override
   final String? vehicleId;
+  @override
+  final num? odometerKm;
 
   factory _$DriverDutyPostRequest(
           [void Function(DriverDutyPostRequestBuilder)? updates]) =>
       (DriverDutyPostRequestBuilder()..update(updates))._build();
 
-  _$DriverDutyPostRequest._({required this.onDuty, this.vehicleId}) : super._();
+  _$DriverDutyPostRequest._(
+      {required this.onDuty, this.vehicleId, this.odometerKm})
+      : super._();
   @override
   DriverDutyPostRequest rebuild(
           void Function(DriverDutyPostRequestBuilder) updates) =>
@@ -31,7 +35,8 @@ class _$DriverDutyPostRequest extends DriverDutyPostRequest {
     if (identical(other, this)) return true;
     return other is DriverDutyPostRequest &&
         onDuty == other.onDuty &&
-        vehicleId == other.vehicleId;
+        vehicleId == other.vehicleId &&
+        odometerKm == other.odometerKm;
   }
 
   @override
@@ -39,6 +44,7 @@ class _$DriverDutyPostRequest extends DriverDutyPostRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, onDuty.hashCode);
     _$hash = $jc(_$hash, vehicleId.hashCode);
+    _$hash = $jc(_$hash, odometerKm.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -47,7 +53,8 @@ class _$DriverDutyPostRequest extends DriverDutyPostRequest {
   String toString() {
     return (newBuiltValueToStringHelper(r'DriverDutyPostRequest')
           ..add('onDuty', onDuty)
-          ..add('vehicleId', vehicleId))
+          ..add('vehicleId', vehicleId)
+          ..add('odometerKm', odometerKm))
         .toString();
   }
 }
@@ -64,6 +71,10 @@ class DriverDutyPostRequestBuilder
   String? get vehicleId => _$this._vehicleId;
   set vehicleId(String? vehicleId) => _$this._vehicleId = vehicleId;
 
+  num? _odometerKm;
+  num? get odometerKm => _$this._odometerKm;
+  set odometerKm(num? odometerKm) => _$this._odometerKm = odometerKm;
+
   DriverDutyPostRequestBuilder() {
     DriverDutyPostRequest._defaults(this);
   }
@@ -73,6 +84,7 @@ class DriverDutyPostRequestBuilder
     if ($v != null) {
       _onDuty = $v.onDuty;
       _vehicleId = $v.vehicleId;
+      _odometerKm = $v.odometerKm;
       _$v = null;
     }
     return this;
@@ -97,6 +109,7 @@ class DriverDutyPostRequestBuilder
           onDuty: BuiltValueNullFieldError.checkNotNull(
               onDuty, r'DriverDutyPostRequest', 'onDuty'),
           vehicleId: vehicleId,
+          odometerKm: odometerKm,
         );
     replace(_$result);
     return _$result;

@@ -12,31 +12,26 @@ part 'billing_export_treatment.g.dart';
 /// BillingExportTreatment
 ///
 /// Properties:
-/// * [noShowBillable] 
-/// * [lateCancelBillable] 
-/// * [distanceBasis] 
-/// * [basis] - Clients are billed per kilometre (OQ-03, owner decision).
+/// * [basis] 
 /// * [ratePerKm] - Operator config billing_rate_per_km; null when no rate is set.
+/// * [odometerGapThresholdPercent] 
+/// * [defaultClientId] - Where a shared or empty cab-day is billed.
 @BuiltValue()
 abstract class BillingExportTreatment implements Built<BillingExportTreatment, BillingExportTreatmentBuilder> {
-  @BuiltValueField(wireName: r'no_show_billable')
-  bool? get noShowBillable;
-
-  @BuiltValueField(wireName: r'late_cancel_billable')
-  bool? get lateCancelBillable;
-
-  @BuiltValueField(wireName: r'distance_basis')
-  BillingExportTreatmentDistanceBasisEnum? get distanceBasis;
-  // enum distanceBasisEnum {  trip_share,  direct,  };
-
-  /// Clients are billed per kilometre (OQ-03, owner decision).
   @BuiltValueField(wireName: r'basis')
   BillingExportTreatmentBasisEnum? get basis;
-  // enum basisEnum {  per_km,  };
+  // enum basisEnum {  per_cab_per_day_km,  };
 
   /// Operator config billing_rate_per_km; null when no rate is set.
   @BuiltValueField(wireName: r'rate_per_km')
   num? get ratePerKm;
+
+  @BuiltValueField(wireName: r'odometer_gap_threshold_percent')
+  num? get odometerGapThresholdPercent;
+
+  /// Where a shared or empty cab-day is billed.
+  @BuiltValueField(wireName: r'default_client_id')
+  String? get defaultClientId;
 
   BillingExportTreatment._();
 
@@ -61,27 +56,6 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
     BillingExportTreatment object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    if (object.noShowBillable != null) {
-      yield r'no_show_billable';
-      yield serializers.serialize(
-        object.noShowBillable,
-        specifiedType: const FullType(bool),
-      );
-    }
-    if (object.lateCancelBillable != null) {
-      yield r'late_cancel_billable';
-      yield serializers.serialize(
-        object.lateCancelBillable,
-        specifiedType: const FullType(bool),
-      );
-    }
-    if (object.distanceBasis != null) {
-      yield r'distance_basis';
-      yield serializers.serialize(
-        object.distanceBasis,
-        specifiedType: const FullType(BillingExportTreatmentDistanceBasisEnum),
-      );
-    }
     if (object.basis != null) {
       yield r'basis';
       yield serializers.serialize(
@@ -94,6 +68,20 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
       yield serializers.serialize(
         object.ratePerKm,
         specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.odometerGapThresholdPercent != null) {
+      yield r'odometer_gap_threshold_percent';
+      yield serializers.serialize(
+        object.odometerGapThresholdPercent,
+        specifiedType: const FullType(num),
+      );
+    }
+    if (object.defaultClientId != null) {
+      yield r'default_client_id';
+      yield serializers.serialize(
+        object.defaultClientId,
+        specifiedType: const FullType(String),
       );
     }
   }
@@ -119,27 +107,6 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'no_show_billable':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(bool),
-          ) as bool;
-          result.noShowBillable = valueDes;
-          break;
-        case r'late_cancel_billable':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(bool),
-          ) as bool;
-          result.lateCancelBillable = valueDes;
-          break;
-        case r'distance_basis':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(BillingExportTreatmentDistanceBasisEnum),
-          ) as BillingExportTreatmentDistanceBasisEnum;
-          result.distanceBasis = valueDes;
-          break;
         case r'basis':
           final valueDes = serializers.deserialize(
             value,
@@ -154,6 +121,20 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
           ) as num?;
           if (valueDes == null) continue;
           result.ratePerKm = valueDes;
+          break;
+        case r'odometer_gap_threshold_percent':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(num),
+          ) as num;
+          result.odometerGapThresholdPercent = valueDes;
+          break;
+        case r'default_client_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.defaultClientId = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -184,26 +165,10 @@ class _$BillingExportTreatmentSerializer implements PrimitiveSerializer<BillingE
   }
 }
 
-class BillingExportTreatmentDistanceBasisEnum extends EnumClass {
-
-  @BuiltValueEnumConst(wireName: r'trip_share')
-  static const BillingExportTreatmentDistanceBasisEnum tripShare = _$billingExportTreatmentDistanceBasisEnum_tripShare;
-  @BuiltValueEnumConst(wireName: r'direct')
-  static const BillingExportTreatmentDistanceBasisEnum direct = _$billingExportTreatmentDistanceBasisEnum_direct;
-
-  static Serializer<BillingExportTreatmentDistanceBasisEnum> get serializer => _$billingExportTreatmentDistanceBasisEnumSerializer;
-
-  const BillingExportTreatmentDistanceBasisEnum._(String name): super(name);
-
-  static BuiltSet<BillingExportTreatmentDistanceBasisEnum> get values => _$billingExportTreatmentDistanceBasisEnumValues;
-  static BillingExportTreatmentDistanceBasisEnum valueOf(String name) => _$billingExportTreatmentDistanceBasisEnumValueOf(name);
-}
-
 class BillingExportTreatmentBasisEnum extends EnumClass {
 
-  /// Clients are billed per kilometre (OQ-03, owner decision).
-  @BuiltValueEnumConst(wireName: r'per_km')
-  static const BillingExportTreatmentBasisEnum perKm = _$billingExportTreatmentBasisEnum_perKm;
+  @BuiltValueEnumConst(wireName: r'per_cab_per_day_km')
+  static const BillingExportTreatmentBasisEnum perCabPerDayKm = _$billingExportTreatmentBasisEnum_perCabPerDayKm;
 
   static Serializer<BillingExportTreatmentBasisEnum> get serializer => _$billingExportTreatmentBasisEnumSerializer;
 

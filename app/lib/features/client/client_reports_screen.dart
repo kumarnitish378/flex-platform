@@ -6,9 +6,9 @@ import '../../core/file_download_helper.dart';
 import '../../core/session.dart';
 import '../../data/api/admin_repository.dart';
 
-/// Client usage & billing report screen (L-04 / A19).
+/// Client usage & billing report screen (L-04 / A19 / Item 6).
 ///
-/// Features billing treatment rules display (no_show_billable, late_cancel_billable, distance_basis)
+/// Features billing treatment rules display (rate per km, odometer gap threshold)
 /// above quantities table and CSV export download.
 class ClientReportsScreen extends ConsumerStatefulWidget {
   const ClientReportsScreen({super.key});
@@ -200,9 +200,9 @@ class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
                             style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 8),
-                          Text('• No-show billable: ${_billing?.treatment.noShowBillable ?? true}'),
-                          Text('• Late-cancel billable: ${_billing?.treatment.lateCancelBillable ?? false}'),
-                          Text('• Distance basis: ${_billing?.treatment.distanceBasis ?? 'trip_share'}'),
+                          Text('• Billing Basis: ${_billing?.treatment.basis?.name ?? 'per_cab_per_day_km'}'),
+                          Text('• Rate per KM: ₹${_billing?.treatment.ratePerKm ?? 8.0}'),
+                          Text('• Odometer Gap Threshold: ${_billing?.treatment.odometerGapThresholdPercent ?? 10}%'),
                         ],
                       ),
                     ),
@@ -215,12 +215,16 @@ class _ClientReportsScreenState extends ConsumerState<ClientReportsScreen> {
                   ),
                   const SizedBox(height: 12),
                   ListTile(
-                    title: const Text('Total Billable Rides'),
-                    trailing: Text('${_billing?.summary.billableRides ?? 0}'),
+                    title: const Text('Total Cab Days'),
+                    trailing: Text('${_billing?.summary.cabDays ?? 0}'),
                   ),
                   ListTile(
-                    title: const Text('Total Distance'),
-                    trailing: Text('${_billing?.summary.billableKm ?? 0} km'),
+                    title: const Text('Total Billed Distance'),
+                    trailing: Text('${_billing?.summary.billedKm ?? 0} km'),
+                  ),
+                  ListTile(
+                    title: const Text('Total Amount'),
+                    trailing: Text('₹${_billing?.summary.amount ?? 0}'),
                   ),
                 ],
               ),

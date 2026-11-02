@@ -21,16 +21,18 @@ class DriverDutyRepository {
 
   final api.DriverApi _api;
 
-  /// Toggle on/off duty status.
+  /// Toggle on/off duty status with optional odometer reading (Item 5).
   Future<api.DutyState> setDutyStatus({
     required bool onDuty,
     String? vehicleId,
+    num? odometerKm,
   }) async {
     try {
       final api.DriverDutyPostRequest request = api.DriverDutyPostRequest(
         (api.DriverDutyPostRequestBuilder b) => b
           ..onDuty = onDuty
-          ..vehicleId = vehicleId,
+          ..vehicleId = vehicleId
+          ..odometerKm = odometerKm,
       );
       final Response<api.DutyState> response = await _api.driverDutyPost(
         driverDutyPostRequest: request,

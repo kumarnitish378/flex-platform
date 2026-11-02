@@ -18,6 +18,8 @@ import 'package:smart_cab_api/src/model/admin_clients_client_id_employees_get200
 import 'package:smart_cab_api/src/model/admin_clients_client_id_offices_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_clients_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_drivers_get200_response.dart';
+import 'package:smart_cab_api/src/model/admin_duty_sessions_session_id_billing_basis_put200_response.dart';
+import 'package:smart_cab_api/src/model/admin_duty_sessions_session_id_billing_basis_put_request.dart';
 import 'package:smart_cab_api/src/model/admin_mode_settings_get200_response.dart';
 import 'package:smart_cab_api/src/model/admin_users_invite_post_request.dart';
 import 'package:smart_cab_api/src/model/admin_vehicles_get200_response.dart';
@@ -27,6 +29,7 @@ import 'package:smart_cab_api/src/model/alerts_get200_response.dart';
 import 'package:smart_cab_api/src/model/auth_refresh_post_request.dart';
 import 'package:smart_cab_api/src/model/billing_export.dart';
 import 'package:smart_cab_api/src/model/billing_export_rows_inner.dart';
+import 'package:smart_cab_api/src/model/billing_export_rows_inner_sessions_inner.dart';
 import 'package:smart_cab_api/src/model/billing_export_summary.dart';
 import 'package:smart_cab_api/src/model/billing_export_treatment.dart';
 import 'package:smart_cab_api/src/model/candidate.dart';
@@ -132,6 +135,8 @@ part 'serializers.g.dart';
   AdminClientsClientIdOfficesGet200Response,
   AdminClientsGet200Response,
   AdminDriversGet200Response,
+  AdminDutySessionsSessionIdBillingBasisPut200Response,
+  AdminDutySessionsSessionIdBillingBasisPutRequest,
   AdminModeSettingsGet200Response,
   AdminUsersInvitePostRequest,
   AdminVehiclesGet200Response,
@@ -141,6 +146,7 @@ part 'serializers.g.dart';
   AuthRefreshPostRequest,
   BillingExport,
   BillingExportRowsInner,
+  BillingExportRowsInnerSessionsInner,
   BillingExportSummary,
   BillingExportTreatment,
   Candidate,

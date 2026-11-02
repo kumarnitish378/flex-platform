@@ -7,7 +7,7 @@ import '../../data/api/driver_duty_repository.dart';
 /// Driver duty home screen (D-01).
 ///
 /// Features:
-/// - Big On/Off duty switch
+/// - Big On/Off duty switch with optional odometer reading dialog (Item 5)
 /// - Linked vehicle card
 /// - GPS status indicator showing config from /driver/duty's gps object (Item 4)
 /// - Today's trips count
@@ -27,7 +27,56 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
   final int _tripsToday = 4;
   String? _error;
 
-  Future<void> _toggleDuty(bool value) async {
+  void _promptOdometerAndToggle(bool targetDutyValue) {
+    final TextEditingController controller = TextEditingController();
+
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          key: const Key('odometer-input-dialog'),
+          title: Text(targetDutyValue ? 'Opening Odometer Reading' : 'Closing Odometer Reading'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text('Enter dashboard odometer reading in km (optional):'),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('odometer-input-field'),
+                controller: controller,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Odometer (km)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: const Key('skip-odometer'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _toggleDuty(targetDutyValue, odometerKm: null);
+              },
+              child: const Text('Skip'),
+            ),
+            ElevatedButton(
+              key: const Key('submit-odometer'),
+              onPressed: () {
+                final num? km = num.tryParse(controller.text.trim());
+                Navigator.of(dialogContext).pop();
+                _toggleDuty(targetDutyValue, odometerKm: km);
+              },
+              child: const Text('Submit'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _toggleDuty(bool value, {num? odometerKm}) async {
     setState(() {
       _updating = true;
       _error = null;
@@ -36,7 +85,7 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
     try {
       final api.DutyState state = await ref
           .read(driverDutyRepositoryProvider)
-          .setDutyStatus(onDuty: value);
+          .setDutyStatus(onDuty: value, odometerKm: odometerKm);
       if (mounted) {
         setState(() {
           _onDuty = state.onDuty ?? value;
@@ -98,7 +147,9 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       value: _onDuty,
-                      onChanged: _updating ? null : _toggleDuty,
+                      onChanged: _updating
+                          ? null
+                          : (bool val) => _promptOdometerAndToggle(val),
                     ),
                   ],
                 ),

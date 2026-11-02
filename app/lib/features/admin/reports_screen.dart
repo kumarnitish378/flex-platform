@@ -8,7 +8,8 @@ import '../../data/api/admin_repository.dart';
 /// Admin operational reports & billing export screen (A-07 / A19).
 ///
 /// Features wait distribution, pooling rate %, distance ("not measured" if null, never 0 km),
-/// two suggestion acceptance rates, client selector, and real CSV download action.
+/// two suggestion acceptance rates, per-cab-per-day billing rows with red flag markers,
+/// billing basis toggle (GPS / Odometer) (Item 6), and real CSV download action.
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
 
@@ -19,6 +20,7 @@ class ReportsScreen extends ConsumerStatefulWidget {
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   bool _loading = true;
   api.OperationsReport? _report;
+  api.BillingExport? _billing;
   List<api.Client> _clients = <api.Client>[];
   String? _selectedClientId;
   bool _downloading = false;
@@ -41,9 +43,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       final clientsList = await repo.getClients();
       final now = DateTime.now();
       final from = now.subtract(const Duration(days: 30));
+      final monthStr = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+
       final reportData = await repo.getOperationsReport(
         from: from,
         to: now,
+        clientId: _selectedClientId,
+      );
+
+      final billingData = await repo.getBillingExport(
+        month: monthStr,
         clientId: _selectedClientId,
       );
 
@@ -51,6 +60,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         setState(() {
           _clients = clientsList;
           _report = reportData;
+          _billing = billingData;
           _loading = false;
         });
       }
@@ -101,6 +111,28 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     }
   }
 
+  Future<void> _toggleBillingBasis(String sessionId, String currentBasis) async {
+    final String targetBasis = currentBasis == 'odometer' ? 'gps' : 'odometer';
+    try {
+      await ref.read(adminRepositoryProvider).updateDutySessionBillingBasis(
+            sessionId: sessionId,
+            basis: targetBasis,
+          );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Session billing basis set to $targetBasis')),
+        );
+      }
+      _loadClientsAndReport();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Basis update failed: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -116,6 +148,9 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     final String accRateAlt = _report?.suggestions.acceptanceRateWithAlternatives != null
         ? '${(_report!.suggestions.acceptanceRateWithAlternatives! * 100).toStringAsFixed(1)}%'
         : 'N/A (no offers answered)';
+
+    final List<api.BillingExportRowsInner> billingRows =
+        _billing?.rows.toList() ?? <api.BillingExportRowsInner>[];
 
     return Scaffold(
       key: const Key('A-07'),
@@ -179,6 +214,90 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                     ),
                     const SizedBox(height: 16),
                   ],
+
+                  // Per-Cab-Per-Day Billing Table Card (Item 6)
+                  Card(
+                    key: const Key('per-cab-billing-card'),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            'Per-Cab-Per-Day Billing (Rs 8/km)',
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+
+                          if (billingRows.isEmpty)
+                            const Text('No cab-day billing rows for this period.')
+                          else
+                            ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: billingRows.length,
+                              itemBuilder: (BuildContext context, int index) {
+                                final api.BillingExportRowsInner row = billingRows[index];
+                                final bool isFlagged = row.flags != null && row.flags!.isNotEmpty;
+                                final String flagText = row.flags?.map((f) => f.name).join(', ') ?? '';
+                                final String cabReg = row.cab ?? 'Cab #${index + 1}';
+                                final num amount = row.amount ?? ((row.billedKm ?? 0) * 8.0);
+
+                                return Card(
+                                  color: isFlagged ? Colors.red.shade50 : null,
+                                  margin: const EdgeInsets.only(bottom: 8.0),
+                                  child: ListTile(
+                                    leading: Icon(
+                                      isFlagged ? Icons.warning : Icons.local_taxi,
+                                      color: isFlagged ? Colors.red : Colors.blue,
+                                    ),
+                                    title: Text('$cabReg • Billed: ${row.billedKm ?? 0} km (₹$amount)'),
+                                    subtitle: Text(
+                                      'GPS: ${row.gpsKm ?? 'N/A'} km • Odo: ${row.odometerKm ?? 'N/A'} km'
+                                      '${isFlagged ? '\nFlags: $flagText' : ''}',
+                                    ),
+                                    trailing: row.sessions != null &&
+                                            row.sessions!.isNotEmpty &&
+                                            row.sessions!.first.id != null
+                                        ? IconButton(
+                                            key: Key('toggle-basis-${row.sessions!.first.id}'),
+                                            icon: const Icon(Icons.swap_horiz),
+                                            tooltip: 'Toggle GPS/Odometer basis',
+                                            onPressed: () => _toggleBillingBasis(
+                                              row.sessions!.first.id!,
+                                              row.sessions!.first.basis?.name ?? 'gps',
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                );
+                              },
+                            ),
+
+                          const Divider(),
+                          // Monthly Total Summary
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: <Widget>[
+                              Text(
+                                'Monthly Total:',
+                                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                '${_billing?.summary.billedKm ?? 0} km • ₹${_billing?.summary.amount ?? 0}',
+                                key: const Key('monthly-total-summary'),
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
 
                   // Distance & Fleet Efficiency Card
                   Card(

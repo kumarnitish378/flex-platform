@@ -113,12 +113,12 @@ class _FakeAdminRepository implements AdminRepository {
         ..clientId = 'c1'
         ..clientName = 'Client One'
         ..month = month
-        ..treatment.noShowBillable = true
-        ..treatment.lateCancelBillable = false
-        ..treatment.distanceBasis = api.BillingExportTreatmentDistanceBasisEnum.tripShare
-        ..summary.rides = 10
-        ..summary.billableRides = 8
-        ..summary.billableKm = 120.0
+        ..treatment.basis = api.BillingExportTreatmentBasisEnum.perCabPerDayKm
+        ..treatment.ratePerKm = 8.0
+        ..treatment.odometerGapThresholdPercent = 10.0
+        ..summary.cabDays = 10
+        ..summary.billedKm = 120.0
+        ..summary.amount = 960.0
         ..rows.replace([]),
     );
   }
@@ -139,4 +139,11 @@ class _FakeAdminRepository implements AdminRepository {
   }) async {
     return 'from,to,requests,completed\n${from.toIso8601String()},${to.toIso8601String()},10,8';
   }
+
+  @override
+  Future<void> updateDutySessionBillingBasis({
+    required String sessionId,
+    required String basis,
+    String? note,
+  }) async {}
 }

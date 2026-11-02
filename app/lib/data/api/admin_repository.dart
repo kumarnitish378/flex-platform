@@ -179,6 +179,33 @@ class AdminRepository {
       );
     }
   }
+
+  /// Choose whether a duty session is billed on GPS or odometer figure (Item 6).
+  Future<void> updateDutySessionBillingBasis({
+    required String sessionId,
+    required String basis,
+    String? note,
+  }) async {
+    try {
+      final api.AdminDutySessionsSessionIdBillingBasisPutRequest request =
+          api.AdminDutySessionsSessionIdBillingBasisPutRequest(
+        (b) => b
+          ..basis = basis == 'odometer'
+              ? api.AdminDutySessionsSessionIdBillingBasisPutRequestBasisEnum.odometer
+              : api.AdminDutySessionsSessionIdBillingBasisPutRequestBasisEnum.gps
+          ..note = note,
+      );
+      await _reportsApi.adminDutySessionsSessionIdBillingBasisPut(
+        sessionId: sessionId,
+        adminDutySessionsSessionIdBillingBasisPutRequest: request,
+      );
+    } on DioException catch (e) {
+      throw AdminException(
+        e.response?.data?.toString() ?? 'Failed to update billing basis',
+        statusCode: e.response?.statusCode,
+      );
+    }
+  }
 }
 
 final Provider<AdminRepository> adminRepositoryProvider =

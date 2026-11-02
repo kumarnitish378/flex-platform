@@ -8,38 +8,32 @@ part of 'billing_export_summary.dart';
 
 class _$BillingExportSummary extends BillingExportSummary {
   @override
-  final int? rides;
+  final int? cabDays;
   @override
-  final int? billableRides;
+  final int? cabs;
   @override
-  final int? completed;
+  final num? gpsKm;
   @override
-  final int? noShows;
+  final num? odometerKm;
   @override
-  final int? cancellations;
-  @override
-  final int? billableTrips;
-  @override
-  final int? riders;
-  @override
-  final num? billableKm;
+  final num? billedKm;
   @override
   final num? amount;
+  @override
+  final int? flaggedDays;
 
   factory _$BillingExportSummary(
           [void Function(BillingExportSummaryBuilder)? updates]) =>
       (BillingExportSummaryBuilder()..update(updates))._build();
 
   _$BillingExportSummary._(
-      {this.rides,
-      this.billableRides,
-      this.completed,
-      this.noShows,
-      this.cancellations,
-      this.billableTrips,
-      this.riders,
-      this.billableKm,
-      this.amount})
+      {this.cabDays,
+      this.cabs,
+      this.gpsKm,
+      this.odometerKm,
+      this.billedKm,
+      this.amount,
+      this.flaggedDays})
       : super._();
   @override
   BillingExportSummary rebuild(
@@ -54,29 +48,25 @@ class _$BillingExportSummary extends BillingExportSummary {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is BillingExportSummary &&
-        rides == other.rides &&
-        billableRides == other.billableRides &&
-        completed == other.completed &&
-        noShows == other.noShows &&
-        cancellations == other.cancellations &&
-        billableTrips == other.billableTrips &&
-        riders == other.riders &&
-        billableKm == other.billableKm &&
-        amount == other.amount;
+        cabDays == other.cabDays &&
+        cabs == other.cabs &&
+        gpsKm == other.gpsKm &&
+        odometerKm == other.odometerKm &&
+        billedKm == other.billedKm &&
+        amount == other.amount &&
+        flaggedDays == other.flaggedDays;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
-    _$hash = $jc(_$hash, rides.hashCode);
-    _$hash = $jc(_$hash, billableRides.hashCode);
-    _$hash = $jc(_$hash, completed.hashCode);
-    _$hash = $jc(_$hash, noShows.hashCode);
-    _$hash = $jc(_$hash, cancellations.hashCode);
-    _$hash = $jc(_$hash, billableTrips.hashCode);
-    _$hash = $jc(_$hash, riders.hashCode);
-    _$hash = $jc(_$hash, billableKm.hashCode);
+    _$hash = $jc(_$hash, cabDays.hashCode);
+    _$hash = $jc(_$hash, cabs.hashCode);
+    _$hash = $jc(_$hash, gpsKm.hashCode);
+    _$hash = $jc(_$hash, odometerKm.hashCode);
+    _$hash = $jc(_$hash, billedKm.hashCode);
     _$hash = $jc(_$hash, amount.hashCode);
+    _$hash = $jc(_$hash, flaggedDays.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -84,15 +74,13 @@ class _$BillingExportSummary extends BillingExportSummary {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'BillingExportSummary')
-          ..add('rides', rides)
-          ..add('billableRides', billableRides)
-          ..add('completed', completed)
-          ..add('noShows', noShows)
-          ..add('cancellations', cancellations)
-          ..add('billableTrips', billableTrips)
-          ..add('riders', riders)
-          ..add('billableKm', billableKm)
-          ..add('amount', amount))
+          ..add('cabDays', cabDays)
+          ..add('cabs', cabs)
+          ..add('gpsKm', gpsKm)
+          ..add('odometerKm', odometerKm)
+          ..add('billedKm', billedKm)
+          ..add('amount', amount)
+          ..add('flaggedDays', flaggedDays))
         .toString();
   }
 }
@@ -101,44 +89,33 @@ class BillingExportSummaryBuilder
     implements Builder<BillingExportSummary, BillingExportSummaryBuilder> {
   _$BillingExportSummary? _$v;
 
-  int? _rides;
-  int? get rides => _$this._rides;
-  set rides(int? rides) => _$this._rides = rides;
+  int? _cabDays;
+  int? get cabDays => _$this._cabDays;
+  set cabDays(int? cabDays) => _$this._cabDays = cabDays;
 
-  int? _billableRides;
-  int? get billableRides => _$this._billableRides;
-  set billableRides(int? billableRides) =>
-      _$this._billableRides = billableRides;
+  int? _cabs;
+  int? get cabs => _$this._cabs;
+  set cabs(int? cabs) => _$this._cabs = cabs;
 
-  int? _completed;
-  int? get completed => _$this._completed;
-  set completed(int? completed) => _$this._completed = completed;
+  num? _gpsKm;
+  num? get gpsKm => _$this._gpsKm;
+  set gpsKm(num? gpsKm) => _$this._gpsKm = gpsKm;
 
-  int? _noShows;
-  int? get noShows => _$this._noShows;
-  set noShows(int? noShows) => _$this._noShows = noShows;
+  num? _odometerKm;
+  num? get odometerKm => _$this._odometerKm;
+  set odometerKm(num? odometerKm) => _$this._odometerKm = odometerKm;
 
-  int? _cancellations;
-  int? get cancellations => _$this._cancellations;
-  set cancellations(int? cancellations) =>
-      _$this._cancellations = cancellations;
-
-  int? _billableTrips;
-  int? get billableTrips => _$this._billableTrips;
-  set billableTrips(int? billableTrips) =>
-      _$this._billableTrips = billableTrips;
-
-  int? _riders;
-  int? get riders => _$this._riders;
-  set riders(int? riders) => _$this._riders = riders;
-
-  num? _billableKm;
-  num? get billableKm => _$this._billableKm;
-  set billableKm(num? billableKm) => _$this._billableKm = billableKm;
+  num? _billedKm;
+  num? get billedKm => _$this._billedKm;
+  set billedKm(num? billedKm) => _$this._billedKm = billedKm;
 
   num? _amount;
   num? get amount => _$this._amount;
   set amount(num? amount) => _$this._amount = amount;
+
+  int? _flaggedDays;
+  int? get flaggedDays => _$this._flaggedDays;
+  set flaggedDays(int? flaggedDays) => _$this._flaggedDays = flaggedDays;
 
   BillingExportSummaryBuilder() {
     BillingExportSummary._defaults(this);
@@ -147,15 +124,13 @@ class BillingExportSummaryBuilder
   BillingExportSummaryBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
-      _rides = $v.rides;
-      _billableRides = $v.billableRides;
-      _completed = $v.completed;
-      _noShows = $v.noShows;
-      _cancellations = $v.cancellations;
-      _billableTrips = $v.billableTrips;
-      _riders = $v.riders;
-      _billableKm = $v.billableKm;
+      _cabDays = $v.cabDays;
+      _cabs = $v.cabs;
+      _gpsKm = $v.gpsKm;
+      _odometerKm = $v.odometerKm;
+      _billedKm = $v.billedKm;
       _amount = $v.amount;
+      _flaggedDays = $v.flaggedDays;
       _$v = null;
     }
     return this;
@@ -177,15 +152,13 @@ class BillingExportSummaryBuilder
   _$BillingExportSummary _build() {
     final _$result = _$v ??
         _$BillingExportSummary._(
-          rides: rides,
-          billableRides: billableRides,
-          completed: completed,
-          noShows: noShows,
-          cancellations: cancellations,
-          billableTrips: billableTrips,
-          riders: riders,
-          billableKm: billableKm,
+          cabDays: cabDays,
+          cabs: cabs,
+          gpsKm: gpsKm,
+          odometerKm: odometerKm,
+          billedKm: billedKm,
           amount: amount,
+          flaggedDays: flaggedDays,
         );
     replace(_$result);
     return _$result;

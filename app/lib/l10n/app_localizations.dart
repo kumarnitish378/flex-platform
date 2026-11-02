@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'app_localizations_en.dart';
+import 'app_localizations_hi.dart';
 
 // ignore_for_file: type=lint
 
@@ -91,7 +92,10 @@ abstract class AppText {
       ];
 
   /// A list of this localizations delegate's supported locales.
-  static const List<Locale> supportedLocales = <Locale>[Locale('en')];
+  static const List<Locale> supportedLocales = <Locale>[
+    Locale('en'),
+    Locale('hi'),
+  ];
 
   /// Shown on the splash screen and as the Android task name. The product name is not final (OQ-18), which is one reason every string lives here from day one.
   ///
@@ -446,7 +450,7 @@ class _AppTextDelegate extends LocalizationsDelegate<AppText> {
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en'].contains(locale.languageCode);
+      <String>['en', 'hi'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppTextDelegate old) => false;
@@ -457,6 +461,8 @@ AppText lookupAppText(Locale locale) {
   switch (locale.languageCode) {
     case 'en':
       return AppTextEn();
+    case 'hi':
+      return AppTextHi();
   }
 
   throw FlutterError(

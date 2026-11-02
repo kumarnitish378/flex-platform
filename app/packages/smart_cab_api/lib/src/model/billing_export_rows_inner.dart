@@ -3,7 +3,9 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
 import 'package:smart_cab_api/src/model/date.dart';
+import 'package:smart_cab_api/src/model/billing_export_rows_inner_sessions_inner.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -13,58 +15,61 @@ part 'billing_export_rows_inner.g.dart';
 ///
 /// Properties:
 /// * [date] 
-/// * [requestId] 
-/// * [employee] 
-/// * [direction] 
-/// * [status] 
-/// * [billable] 
-/// * [billableReason] 
-/// * [tripId] 
-/// * [vehicle] 
-/// * [ridersOnTrip] 
-/// * [directKm] 
-/// * [tripShareKm] 
-/// * [billableKm] 
+/// * [cab] - registration number
+/// * [drivers] 
+/// * [dutyIn] 
+/// * [dutyOut] 
+/// * [gpsKm] 
+/// * [odometerKm] 
+/// * [gapPercent] 
+/// * [billedKm] 
+/// * [ratePerKm] 
+/// * [amount] 
+/// * [flags] 
+/// * [sessions] - The duty sessions behind the row, so an operator can mark one as billed on its odometer.
 @BuiltValue()
 abstract class BillingExportRowsInner implements Built<BillingExportRowsInner, BillingExportRowsInnerBuilder> {
   @BuiltValueField(wireName: r'date')
   Date? get date;
 
-  @BuiltValueField(wireName: r'request_id')
-  String? get requestId;
+  /// registration number
+  @BuiltValueField(wireName: r'cab')
+  String? get cab;
 
-  @BuiltValueField(wireName: r'employee')
-  String? get employee;
+  @BuiltValueField(wireName: r'drivers')
+  BuiltList<String>? get drivers;
 
-  @BuiltValueField(wireName: r'direction')
-  String? get direction;
+  @BuiltValueField(wireName: r'duty_in')
+  DateTime? get dutyIn;
 
-  @BuiltValueField(wireName: r'status')
-  String? get status;
+  @BuiltValueField(wireName: r'duty_out')
+  DateTime? get dutyOut;
 
-  @BuiltValueField(wireName: r'billable')
-  bool? get billable;
+  @BuiltValueField(wireName: r'gps_km')
+  num? get gpsKm;
 
-  @BuiltValueField(wireName: r'billable_reason')
-  String? get billableReason;
+  @BuiltValueField(wireName: r'odometer_km')
+  num? get odometerKm;
 
-  @BuiltValueField(wireName: r'trip_id')
-  String? get tripId;
+  @BuiltValueField(wireName: r'gap_percent')
+  num? get gapPercent;
 
-  @BuiltValueField(wireName: r'vehicle')
-  String? get vehicle;
+  @BuiltValueField(wireName: r'billed_km')
+  num? get billedKm;
 
-  @BuiltValueField(wireName: r'riders_on_trip')
-  int? get ridersOnTrip;
+  @BuiltValueField(wireName: r'rate_per_km')
+  num? get ratePerKm;
 
-  @BuiltValueField(wireName: r'direct_km')
-  num? get directKm;
+  @BuiltValueField(wireName: r'amount')
+  num? get amount;
 
-  @BuiltValueField(wireName: r'trip_share_km')
-  num? get tripShareKm;
+  @BuiltValueField(wireName: r'flags')
+  BuiltList<BillingExportRowsInnerFlagsEnum>? get flags;
+  // enum flagsEnum {  odometer_gap,  multiple_clients,  no_client_trips,  default_client_unset,  still_on_duty,  no_gps,  odometer_billed,  };
 
-  @BuiltValueField(wireName: r'billable_km')
-  num? get billableKm;
+  /// The duty sessions behind the row, so an operator can mark one as billed on its odometer.
+  @BuiltValueField(wireName: r'sessions')
+  BuiltList<BillingExportRowsInnerSessionsInner>? get sessions;
 
   BillingExportRowsInner._();
 
@@ -96,88 +101,88 @@ class _$BillingExportRowsInnerSerializer implements PrimitiveSerializer<BillingE
         specifiedType: const FullType(Date),
       );
     }
-    if (object.requestId != null) {
-      yield r'request_id';
+    if (object.cab != null) {
+      yield r'cab';
       yield serializers.serialize(
-        object.requestId,
+        object.cab,
         specifiedType: const FullType(String),
       );
     }
-    if (object.employee != null) {
-      yield r'employee';
+    if (object.drivers != null) {
+      yield r'drivers';
       yield serializers.serialize(
-        object.employee,
-        specifiedType: const FullType(String),
+        object.drivers,
+        specifiedType: const FullType(BuiltList, [FullType(String)]),
       );
     }
-    if (object.direction != null) {
-      yield r'direction';
+    if (object.dutyIn != null) {
+      yield r'duty_in';
       yield serializers.serialize(
-        object.direction,
-        specifiedType: const FullType(String),
+        object.dutyIn,
+        specifiedType: const FullType(DateTime),
       );
     }
-    if (object.status != null) {
-      yield r'status';
+    if (object.dutyOut != null) {
+      yield r'duty_out';
       yield serializers.serialize(
-        object.status,
-        specifiedType: const FullType(String),
+        object.dutyOut,
+        specifiedType: const FullType.nullable(DateTime),
       );
     }
-    if (object.billable != null) {
-      yield r'billable';
+    if (object.gpsKm != null) {
+      yield r'gps_km';
       yield serializers.serialize(
-        object.billable,
-        specifiedType: const FullType(bool),
-      );
-    }
-    if (object.billableReason != null) {
-      yield r'billable_reason';
-      yield serializers.serialize(
-        object.billableReason,
-        specifiedType: const FullType(String),
-      );
-    }
-    if (object.tripId != null) {
-      yield r'trip_id';
-      yield serializers.serialize(
-        object.tripId,
-        specifiedType: const FullType.nullable(String),
-      );
-    }
-    if (object.vehicle != null) {
-      yield r'vehicle';
-      yield serializers.serialize(
-        object.vehicle,
-        specifiedType: const FullType.nullable(String),
-      );
-    }
-    if (object.ridersOnTrip != null) {
-      yield r'riders_on_trip';
-      yield serializers.serialize(
-        object.ridersOnTrip,
-        specifiedType: const FullType(int),
-      );
-    }
-    if (object.directKm != null) {
-      yield r'direct_km';
-      yield serializers.serialize(
-        object.directKm,
+        object.gpsKm,
         specifiedType: const FullType.nullable(num),
       );
     }
-    if (object.tripShareKm != null) {
-      yield r'trip_share_km';
+    if (object.odometerKm != null) {
+      yield r'odometer_km';
       yield serializers.serialize(
-        object.tripShareKm,
+        object.odometerKm,
         specifiedType: const FullType.nullable(num),
       );
     }
-    if (object.billableKm != null) {
-      yield r'billable_km';
+    if (object.gapPercent != null) {
+      yield r'gap_percent';
       yield serializers.serialize(
-        object.billableKm,
+        object.gapPercent,
+        specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.billedKm != null) {
+      yield r'billed_km';
+      yield serializers.serialize(
+        object.billedKm,
         specifiedType: const FullType(num),
+      );
+    }
+    if (object.ratePerKm != null) {
+      yield r'rate_per_km';
+      yield serializers.serialize(
+        object.ratePerKm,
+        specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.amount != null) {
+      yield r'amount';
+      yield serializers.serialize(
+        object.amount,
+        specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.flags != null) {
+      yield r'flags';
+      yield serializers.serialize(
+        object.flags,
+        specifiedType: const FullType(BuiltList, [FullType(BillingExportRowsInnerFlagsEnum)]),
+      );
+    }
+    if (object.sessions != null) {
+      yield r'sessions';
+      yield serializers.serialize(
+        object.sessions,
+        specifiedType: const FullType(BuiltList, [FullType(BillingExportRowsInnerSessionsInner)]),
       );
     }
   }
@@ -210,93 +215,95 @@ class _$BillingExportRowsInnerSerializer implements PrimitiveSerializer<BillingE
           ) as Date;
           result.date = valueDes;
           break;
-        case r'request_id':
+        case r'cab':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType(String),
           ) as String;
-          result.requestId = valueDes;
+          result.cab = valueDes;
           break;
-        case r'employee':
+        case r'drivers':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.employee = valueDes;
+            specifiedType: const FullType(BuiltList, [FullType(String)]),
+          ) as BuiltList<String>;
+          result.drivers.replace(valueDes);
           break;
-        case r'direction':
+        case r'duty_in':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.direction = valueDes;
+            specifiedType: const FullType(DateTime),
+          ) as DateTime;
+          result.dutyIn = valueDes;
           break;
-        case r'status':
+        case r'duty_out':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.status = valueDes;
-          break;
-        case r'billable':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(bool),
-          ) as bool;
-          result.billable = valueDes;
-          break;
-        case r'billable_reason':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(String),
-          ) as String;
-          result.billableReason = valueDes;
-          break;
-        case r'trip_id':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(String),
-          ) as String?;
+            specifiedType: const FullType.nullable(DateTime),
+          ) as DateTime?;
           if (valueDes == null) continue;
-          result.tripId = valueDes;
+          result.dutyOut = valueDes;
           break;
-        case r'vehicle':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(String),
-          ) as String?;
-          if (valueDes == null) continue;
-          result.vehicle = valueDes;
-          break;
-        case r'riders_on_trip':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(int),
-          ) as int;
-          result.ridersOnTrip = valueDes;
-          break;
-        case r'direct_km':
+        case r'gps_km':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType.nullable(num),
           ) as num?;
           if (valueDes == null) continue;
-          result.directKm = valueDes;
+          result.gpsKm = valueDes;
           break;
-        case r'trip_share_km':
+        case r'odometer_km':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType.nullable(num),
           ) as num?;
           if (valueDes == null) continue;
-          result.tripShareKm = valueDes;
+          result.odometerKm = valueDes;
           break;
-        case r'billable_km':
+        case r'gap_percent':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.gapPercent = valueDes;
+          break;
+        case r'billed_km':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType(num),
           ) as num;
-          result.billableKm = valueDes;
+          result.billedKm = valueDes;
+          break;
+        case r'rate_per_km':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.ratePerKm = valueDes;
+          break;
+        case r'amount':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.amount = valueDes;
+          break;
+        case r'flags':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltList, [FullType(BillingExportRowsInnerFlagsEnum)]),
+          ) as BuiltList<BillingExportRowsInnerFlagsEnum>;
+          result.flags.replace(valueDes);
+          break;
+        case r'sessions':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltList, [FullType(BillingExportRowsInnerSessionsInner)]),
+          ) as BuiltList<BillingExportRowsInnerSessionsInner>;
+          result.sessions.replace(valueDes);
           break;
         default:
           unhandled.add(key);
@@ -325,5 +332,30 @@ class _$BillingExportRowsInnerSerializer implements PrimitiveSerializer<BillingE
     );
     return result.build();
   }
+}
+
+class BillingExportRowsInnerFlagsEnum extends EnumClass {
+
+  @BuiltValueEnumConst(wireName: r'odometer_gap')
+  static const BillingExportRowsInnerFlagsEnum odometerGap = _$billingExportRowsInnerFlagsEnum_odometerGap;
+  @BuiltValueEnumConst(wireName: r'multiple_clients')
+  static const BillingExportRowsInnerFlagsEnum multipleClients = _$billingExportRowsInnerFlagsEnum_multipleClients;
+  @BuiltValueEnumConst(wireName: r'no_client_trips')
+  static const BillingExportRowsInnerFlagsEnum noClientTrips = _$billingExportRowsInnerFlagsEnum_noClientTrips;
+  @BuiltValueEnumConst(wireName: r'default_client_unset')
+  static const BillingExportRowsInnerFlagsEnum defaultClientUnset = _$billingExportRowsInnerFlagsEnum_defaultClientUnset;
+  @BuiltValueEnumConst(wireName: r'still_on_duty')
+  static const BillingExportRowsInnerFlagsEnum stillOnDuty = _$billingExportRowsInnerFlagsEnum_stillOnDuty;
+  @BuiltValueEnumConst(wireName: r'no_gps')
+  static const BillingExportRowsInnerFlagsEnum noGps = _$billingExportRowsInnerFlagsEnum_noGps;
+  @BuiltValueEnumConst(wireName: r'odometer_billed')
+  static const BillingExportRowsInnerFlagsEnum odometerBilled = _$billingExportRowsInnerFlagsEnum_odometerBilled;
+
+  static Serializer<BillingExportRowsInnerFlagsEnum> get serializer => _$billingExportRowsInnerFlagsEnumSerializer;
+
+  const BillingExportRowsInnerFlagsEnum._(String name): super(name);
+
+  static BuiltSet<BillingExportRowsInnerFlagsEnum> get values => _$billingExportRowsInnerFlagsEnumValues;
+  static BillingExportRowsInnerFlagsEnum valueOf(String name) => _$billingExportRowsInnerFlagsEnumValueOf(name);
 }
 

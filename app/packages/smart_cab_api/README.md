@@ -142,7 +142,8 @@ Class | Method | HTTP request | Description
 [*EmployeeApi*](doc/EmployeeApi.md) | [**rideRequestsRequestIdGet**](doc/EmployeeApi.md#riderequestsrequestidget) | **GET** /ride-requests/{request_id} | 
 [*EmployeeApi*](doc/EmployeeApi.md) | [**rideRequestsRequestIdRatingPost**](doc/EmployeeApi.md#riderequestsrequestidratingpost) | **POST** /ride-requests/{request_id}/rating | 
 [*EmployeeApi*](doc/EmployeeApi.md) | [**sosPost**](doc/EmployeeApi.md#sospost) | **POST** /sos | 
-[*ReportsApi*](doc/ReportsApi.md) | [**reportsBillingGet**](doc/ReportsApi.md#reportsbillingget) | **GET** /reports/billing | One client&#39;s month as quantities - rides, trips, riders, kilometres (B38, OPA-06)
+[*ReportsApi*](doc/ReportsApi.md) | [**adminDutySessionsSessionIdBillingBasisPut**](doc/ReportsApi.md#admindutysessionssessionidbillingbasisput) | **PUT** /admin/duty-sessions/{session_id}/billing-basis | Choose whether a duty session is billed on GPS or on the odometer figure
+[*ReportsApi*](doc/ReportsApi.md) | [**reportsBillingGet**](doc/ReportsApi.md#reportsbillingget) | **GET** /reports/billing | One client&#39;s month, one row per cab per day - running km, odometer check, amount (B38, OPA-06)
 [*ReportsApi*](doc/ReportsApi.md) | [**reportsOperationsGet**](doc/ReportsApi.md#reportsoperationsget) | **GET** /reports/operations | The full operator report (B39, OPA-05)
 [*ReportsApi*](doc/ReportsApi.md) | [**reportsTripsGet**](doc/ReportsApi.md#reportstripsget) | **GET** /reports/trips | 
 [*SimctlApi*](doc/SimctlApi.md) | [**simctlClockGet**](doc/SimctlApi.md#simctlclockget) | **GET** /simctl/clock | 
@@ -158,6 +159,8 @@ Class | Method | HTTP request | Description
  - [AdminClientsClientIdOfficesGet200Response](doc/AdminClientsClientIdOfficesGet200Response.md)
  - [AdminClientsGet200Response](doc/AdminClientsGet200Response.md)
  - [AdminDriversGet200Response](doc/AdminDriversGet200Response.md)
+ - [AdminDutySessionsSessionIdBillingBasisPut200Response](doc/AdminDutySessionsSessionIdBillingBasisPut200Response.md)
+ - [AdminDutySessionsSessionIdBillingBasisPutRequest](doc/AdminDutySessionsSessionIdBillingBasisPutRequest.md)
  - [AdminModeSettingsGet200Response](doc/AdminModeSettingsGet200Response.md)
  - [AdminUsersInvitePostRequest](doc/AdminUsersInvitePostRequest.md)
  - [AdminVehiclesGet200Response](doc/AdminVehiclesGet200Response.md)
@@ -167,6 +170,7 @@ Class | Method | HTTP request | Description
  - [AuthRefreshPostRequest](doc/AuthRefreshPostRequest.md)
  - [BillingExport](doc/BillingExport.md)
  - [BillingExportRowsInner](doc/BillingExportRowsInner.md)
+ - [BillingExportRowsInnerSessionsInner](doc/BillingExportRowsInnerSessionsInner.md)
  - [BillingExportSummary](doc/BillingExportSummary.md)
  - [BillingExportTreatment](doc/BillingExportTreatment.md)
  - [Candidate](doc/Candidate.md)

@@ -11,44 +11,36 @@ part 'billing_export_summary.g.dart';
 /// BillingExportSummary
 ///
 /// Properties:
-/// * [rides] 
-/// * [billableRides] 
-/// * [completed] 
-/// * [noShows] 
-/// * [cancellations] 
-/// * [billableTrips] 
-/// * [riders] 
-/// * [billableKm] 
-/// * [amount] - billable_km x rate_per_km; null when no rate is set. Never shown to riders.
+/// * [cabDays] 
+/// * [cabs] 
+/// * [gpsKm] 
+/// * [odometerKm] 
+/// * [billedKm] 
+/// * [amount] - null when no rate is set. Never shown to riders.
+/// * [flaggedDays] 
 @BuiltValue()
 abstract class BillingExportSummary implements Built<BillingExportSummary, BillingExportSummaryBuilder> {
-  @BuiltValueField(wireName: r'rides')
-  int? get rides;
+  @BuiltValueField(wireName: r'cab_days')
+  int? get cabDays;
 
-  @BuiltValueField(wireName: r'billable_rides')
-  int? get billableRides;
+  @BuiltValueField(wireName: r'cabs')
+  int? get cabs;
 
-  @BuiltValueField(wireName: r'completed')
-  int? get completed;
+  @BuiltValueField(wireName: r'gps_km')
+  num? get gpsKm;
 
-  @BuiltValueField(wireName: r'no_shows')
-  int? get noShows;
+  @BuiltValueField(wireName: r'odometer_km')
+  num? get odometerKm;
 
-  @BuiltValueField(wireName: r'cancellations')
-  int? get cancellations;
+  @BuiltValueField(wireName: r'billed_km')
+  num? get billedKm;
 
-  @BuiltValueField(wireName: r'billable_trips')
-  int? get billableTrips;
-
-  @BuiltValueField(wireName: r'riders')
-  int? get riders;
-
-  @BuiltValueField(wireName: r'billable_km')
-  num? get billableKm;
-
-  /// billable_km x rate_per_km; null when no rate is set. Never shown to riders.
+  /// null when no rate is set. Never shown to riders.
   @BuiltValueField(wireName: r'amount')
   num? get amount;
+
+  @BuiltValueField(wireName: r'flagged_days')
+  int? get flaggedDays;
 
   BillingExportSummary._();
 
@@ -73,60 +65,39 @@ class _$BillingExportSummarySerializer implements PrimitiveSerializer<BillingExp
     BillingExportSummary object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    if (object.rides != null) {
-      yield r'rides';
+    if (object.cabDays != null) {
+      yield r'cab_days';
       yield serializers.serialize(
-        object.rides,
+        object.cabDays,
         specifiedType: const FullType(int),
       );
     }
-    if (object.billableRides != null) {
-      yield r'billable_rides';
+    if (object.cabs != null) {
+      yield r'cabs';
       yield serializers.serialize(
-        object.billableRides,
+        object.cabs,
         specifiedType: const FullType(int),
       );
     }
-    if (object.completed != null) {
-      yield r'completed';
+    if (object.gpsKm != null) {
+      yield r'gps_km';
       yield serializers.serialize(
-        object.completed,
-        specifiedType: const FullType(int),
-      );
-    }
-    if (object.noShows != null) {
-      yield r'no_shows';
-      yield serializers.serialize(
-        object.noShows,
-        specifiedType: const FullType(int),
-      );
-    }
-    if (object.cancellations != null) {
-      yield r'cancellations';
-      yield serializers.serialize(
-        object.cancellations,
-        specifiedType: const FullType(int),
-      );
-    }
-    if (object.billableTrips != null) {
-      yield r'billable_trips';
-      yield serializers.serialize(
-        object.billableTrips,
-        specifiedType: const FullType(int),
-      );
-    }
-    if (object.riders != null) {
-      yield r'riders';
-      yield serializers.serialize(
-        object.riders,
-        specifiedType: const FullType(int),
-      );
-    }
-    if (object.billableKm != null) {
-      yield r'billable_km';
-      yield serializers.serialize(
-        object.billableKm,
+        object.gpsKm,
         specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.odometerKm != null) {
+      yield r'odometer_km';
+      yield serializers.serialize(
+        object.odometerKm,
+        specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.billedKm != null) {
+      yield r'billed_km';
+      yield serializers.serialize(
+        object.billedKm,
+        specifiedType: const FullType(num),
       );
     }
     if (object.amount != null) {
@@ -134,6 +105,13 @@ class _$BillingExportSummarySerializer implements PrimitiveSerializer<BillingExp
       yield serializers.serialize(
         object.amount,
         specifiedType: const FullType.nullable(num),
+      );
+    }
+    if (object.flaggedDays != null) {
+      yield r'flagged_days';
+      yield serializers.serialize(
+        object.flaggedDays,
+        specifiedType: const FullType(int),
       );
     }
   }
@@ -159,62 +137,42 @@ class _$BillingExportSummarySerializer implements PrimitiveSerializer<BillingExp
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'rides':
+        case r'cab_days':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType(int),
           ) as int;
-          result.rides = valueDes;
+          result.cabDays = valueDes;
           break;
-        case r'billable_rides':
+        case r'cabs':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType(int),
           ) as int;
-          result.billableRides = valueDes;
+          result.cabs = valueDes;
           break;
-        case r'completed':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(int),
-          ) as int;
-          result.completed = valueDes;
-          break;
-        case r'no_shows':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(int),
-          ) as int;
-          result.noShows = valueDes;
-          break;
-        case r'cancellations':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(int),
-          ) as int;
-          result.cancellations = valueDes;
-          break;
-        case r'billable_trips':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(int),
-          ) as int;
-          result.billableTrips = valueDes;
-          break;
-        case r'riders':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(int),
-          ) as int;
-          result.riders = valueDes;
-          break;
-        case r'billable_km':
+        case r'gps_km':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType.nullable(num),
           ) as num?;
           if (valueDes == null) continue;
-          result.billableKm = valueDes;
+          result.gpsKm = valueDes;
+          break;
+        case r'odometer_km':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.odometerKm = valueDes;
+          break;
+        case r'billed_km':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(num),
+          ) as num;
+          result.billedKm = valueDes;
           break;
         case r'amount':
           final valueDes = serializers.deserialize(
@@ -223,6 +181,13 @@ class _$BillingExportSummarySerializer implements PrimitiveSerializer<BillingExp
           ) as num?;
           if (valueDes == null) continue;
           result.amount = valueDes;
+          break;
+        case r'flagged_days':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(int),
+          ) as int;
+          result.flaggedDays = valueDes;
           break;
         default:
           unhandled.add(key);

@@ -20,6 +20,12 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(AdminClientsClientIdOfficesGet200Response.serializer)
       ..add(AdminClientsGet200Response.serializer)
       ..add(AdminDriversGet200Response.serializer)
+      ..add(AdminDutySessionsSessionIdBillingBasisPut200Response.serializer)
+      ..add(AdminDutySessionsSessionIdBillingBasisPut200ResponseBasisEnum
+          .serializer)
+      ..add(AdminDutySessionsSessionIdBillingBasisPutRequest.serializer)
+      ..add(
+          AdminDutySessionsSessionIdBillingBasisPutRequestBasisEnum.serializer)
       ..add(AdminModeSettingsGet200Response.serializer)
       ..add(AdminUsersInvitePostRequest.serializer)
       ..add(AdminUsersInvitePostRequestRoleEnum.serializer)
@@ -33,10 +39,12 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..add(AuthRefreshPostRequest.serializer)
       ..add(BillingExport.serializer)
       ..add(BillingExportRowsInner.serializer)
+      ..add(BillingExportRowsInnerFlagsEnum.serializer)
+      ..add(BillingExportRowsInnerSessionsInner.serializer)
+      ..add(BillingExportRowsInnerSessionsInnerBasisEnum.serializer)
       ..add(BillingExportSummary.serializer)
       ..add(BillingExportTreatment.serializer)
       ..add(BillingExportTreatmentBasisEnum.serializer)
-      ..add(BillingExportTreatmentDistanceBasisEnum.serializer)
       ..add(Candidate.serializer)
       ..add(CandidateAddedMinutesExistingInner.serializer)
       ..add(Client.serializer)
@@ -221,6 +229,17 @@ Serializers _$serializers = (Serializers().toBuilder()
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(String)]),
           () => ListBuilder<String>())
+      ..addBuilderFactory(
+          const FullType(BuiltList, const [const FullType(String)]),
+          () => ListBuilder<String>())
+      ..addBuilderFactory(
+          const FullType(BuiltList,
+              const [const FullType(BillingExportRowsInnerFlagsEnum)]),
+          () => ListBuilder<BillingExportRowsInnerFlagsEnum>())
+      ..addBuilderFactory(
+          const FullType(BuiltList,
+              const [const FullType(BillingExportRowsInnerSessionsInner)]),
+          () => ListBuilder<BillingExportRowsInnerSessionsInner>())
       ..addBuilderFactory(
           const FullType(BuiltList, const [const FullType(String)]),
           () => ListBuilder<String>())

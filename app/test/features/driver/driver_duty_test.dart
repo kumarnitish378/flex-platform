@@ -37,6 +37,10 @@ void main() {
       await tester.tap(find.byKey(const Key('duty-switch')));
       await tester.pumpAndSettle();
 
+      expect(find.byKey(const Key('odometer-input-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('skip-odometer')));
+      await tester.pumpAndSettle();
+
       expect(find.text('ON DUTY'), findsOneWidget);
     });
 
@@ -72,6 +76,7 @@ class _FakeDriverDutyRepository implements DriverDutyRepository {
   Future<api.DutyState> setDutyStatus({
     required bool onDuty,
     String? vehicleId,
+    num? odometerKm,
   }) async {
     return api.DutyState(
       (api.DutyStateBuilder b) => b

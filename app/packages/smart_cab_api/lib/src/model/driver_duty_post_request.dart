@@ -13,6 +13,7 @@ part 'driver_duty_post_request.g.dart';
 /// Properties:
 /// * [onDuty] 
 /// * [vehicleId] - defaults to driver's default vehicle
+/// * [odometerKm] - The dashboard reading in km - the opening one when going on duty, the closing one when going off. Optional. A closing reading below the opening one is a 422. Per-cab-per-day billing cross-checks GPS km against it.
 @BuiltValue()
 abstract class DriverDutyPostRequest implements Built<DriverDutyPostRequest, DriverDutyPostRequestBuilder> {
   @BuiltValueField(wireName: r'on_duty')
@@ -21,6 +22,10 @@ abstract class DriverDutyPostRequest implements Built<DriverDutyPostRequest, Dri
   /// defaults to driver's default vehicle
   @BuiltValueField(wireName: r'vehicle_id')
   String? get vehicleId;
+
+  /// The dashboard reading in km - the opening one when going on duty, the closing one when going off. Optional. A closing reading below the opening one is a 422. Per-cab-per-day billing cross-checks GPS km against it.
+  @BuiltValueField(wireName: r'odometer_km')
+  num? get odometerKm;
 
   DriverDutyPostRequest._();
 
@@ -55,6 +60,13 @@ class _$DriverDutyPostRequestSerializer implements PrimitiveSerializer<DriverDut
       yield serializers.serialize(
         object.vehicleId,
         specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.odometerKm != null) {
+      yield r'odometer_km';
+      yield serializers.serialize(
+        object.odometerKm,
+        specifiedType: const FullType.nullable(num),
       );
     }
   }
@@ -94,6 +106,14 @@ class _$DriverDutyPostRequestSerializer implements PrimitiveSerializer<DriverDut
           ) as String?;
           if (valueDes == null) continue;
           result.vehicleId = valueDes;
+          break;
+        case r'odometer_km':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(num),
+          ) as num?;
+          if (valueDes == null) continue;
+          result.odometerKm = valueDes;
           break;
         default:
           unhandled.add(key);

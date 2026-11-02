@@ -107,4 +107,11 @@ class _FakeAdminRepository implements AdminRepository {
     required DateTime to,
     String? clientId,
   }) async => 'csv_content';
+
+  @override
+  Future<void> updateDutySessionBillingBasis({
+    required String sessionId,
+    required String basis,
+    String? note,
+  }) async {}
 }

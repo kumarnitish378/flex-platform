@@ -142,15 +142,21 @@ class _TrackingAdminRepository implements AdminRepository {
         ..clientId = clientId ?? 'c_self'
         ..clientName = 'Client Self'
         ..month = month
-        ..treatment.noShowBillable = true
-        ..treatment.lateCancelBillable = false
-        ..treatment.distanceBasis = api.BillingExportTreatmentDistanceBasisEnum.tripShare
-        ..summary.rides = 10
-        ..summary.billableRides = 8
-        ..summary.billableKm = 120.0
+        ..treatment.basis = api.BillingExportTreatmentBasisEnum.perCabPerDayKm
+        ..treatment.ratePerKm = 8.0
+        ..treatment.odometerGapThresholdPercent = 10.0
+        ..summary.cabDays = 10
+        ..summary.billedKm = 120.0
         ..rows.replace([]),
     );
   }
+
+  @override
+  Future<void> updateDutySessionBillingBasis({
+    required String sessionId,
+    required String basis,
+    String? note,
+  }) async {}
 
   @override
   Future<String> getBillingExportCsv({

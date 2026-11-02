@@ -6,40 +6,15 @@ part of 'billing_export_treatment.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
-const BillingExportTreatmentDistanceBasisEnum
-    _$billingExportTreatmentDistanceBasisEnum_tripShare =
-    const BillingExportTreatmentDistanceBasisEnum._('tripShare');
-const BillingExportTreatmentDistanceBasisEnum
-    _$billingExportTreatmentDistanceBasisEnum_direct =
-    const BillingExportTreatmentDistanceBasisEnum._('direct');
-
-BillingExportTreatmentDistanceBasisEnum
-    _$billingExportTreatmentDistanceBasisEnumValueOf(String name) {
-  switch (name) {
-    case 'tripShare':
-      return _$billingExportTreatmentDistanceBasisEnum_tripShare;
-    case 'direct':
-      return _$billingExportTreatmentDistanceBasisEnum_direct;
-    default:
-      throw ArgumentError(name);
-  }
-}
-
-final BuiltSet<BillingExportTreatmentDistanceBasisEnum>
-    _$billingExportTreatmentDistanceBasisEnumValues = BuiltSet<
-        BillingExportTreatmentDistanceBasisEnum>(const <BillingExportTreatmentDistanceBasisEnum>[
-  _$billingExportTreatmentDistanceBasisEnum_tripShare,
-  _$billingExportTreatmentDistanceBasisEnum_direct,
-]);
-
-const BillingExportTreatmentBasisEnum _$billingExportTreatmentBasisEnum_perKm =
-    const BillingExportTreatmentBasisEnum._('perKm');
+const BillingExportTreatmentBasisEnum
+    _$billingExportTreatmentBasisEnum_perCabPerDayKm =
+    const BillingExportTreatmentBasisEnum._('perCabPerDayKm');
 
 BillingExportTreatmentBasisEnum _$billingExportTreatmentBasisEnumValueOf(
     String name) {
   switch (name) {
-    case 'perKm':
-      return _$billingExportTreatmentBasisEnum_perKm;
+    case 'perCabPerDayKm':
+      return _$billingExportTreatmentBasisEnum_perCabPerDayKm;
     default:
       throw ArgumentError(name);
   }
@@ -48,55 +23,20 @@ BillingExportTreatmentBasisEnum _$billingExportTreatmentBasisEnumValueOf(
 final BuiltSet<BillingExportTreatmentBasisEnum>
     _$billingExportTreatmentBasisEnumValues = BuiltSet<
         BillingExportTreatmentBasisEnum>(const <BillingExportTreatmentBasisEnum>[
-  _$billingExportTreatmentBasisEnum_perKm,
+  _$billingExportTreatmentBasisEnum_perCabPerDayKm,
 ]);
 
-Serializer<BillingExportTreatmentDistanceBasisEnum>
-    _$billingExportTreatmentDistanceBasisEnumSerializer =
-    _$BillingExportTreatmentDistanceBasisEnumSerializer();
 Serializer<BillingExportTreatmentBasisEnum>
     _$billingExportTreatmentBasisEnumSerializer =
     _$BillingExportTreatmentBasisEnumSerializer();
 
-class _$BillingExportTreatmentDistanceBasisEnumSerializer
-    implements PrimitiveSerializer<BillingExportTreatmentDistanceBasisEnum> {
-  static const Map<String, Object> _toWire = const <String, Object>{
-    'tripShare': 'trip_share',
-    'direct': 'direct',
-  };
-  static const Map<Object, String> _fromWire = const <Object, String>{
-    'trip_share': 'tripShare',
-    'direct': 'direct',
-  };
-
-  @override
-  final Iterable<Type> types = const <Type>[
-    BillingExportTreatmentDistanceBasisEnum
-  ];
-  @override
-  final String wireName = 'BillingExportTreatmentDistanceBasisEnum';
-
-  @override
-  Object serialize(Serializers serializers,
-          BillingExportTreatmentDistanceBasisEnum object,
-          {FullType specifiedType = FullType.unspecified}) =>
-      _toWire[object.name] ?? object.name;
-
-  @override
-  BillingExportTreatmentDistanceBasisEnum deserialize(
-          Serializers serializers, Object serialized,
-          {FullType specifiedType = FullType.unspecified}) =>
-      BillingExportTreatmentDistanceBasisEnum.valueOf(
-          _fromWire[serialized] ?? (serialized is String ? serialized : ''));
-}
-
 class _$BillingExportTreatmentBasisEnumSerializer
     implements PrimitiveSerializer<BillingExportTreatmentBasisEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
-    'perKm': 'per_km',
+    'perCabPerDayKm': 'per_cab_per_day_km',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
-    'per_km': 'perKm',
+    'per_cab_per_day_km': 'perCabPerDayKm',
   };
 
   @override
@@ -120,26 +60,23 @@ class _$BillingExportTreatmentBasisEnumSerializer
 
 class _$BillingExportTreatment extends BillingExportTreatment {
   @override
-  final bool? noShowBillable;
-  @override
-  final bool? lateCancelBillable;
-  @override
-  final BillingExportTreatmentDistanceBasisEnum? distanceBasis;
-  @override
   final BillingExportTreatmentBasisEnum? basis;
   @override
   final num? ratePerKm;
+  @override
+  final num? odometerGapThresholdPercent;
+  @override
+  final String? defaultClientId;
 
   factory _$BillingExportTreatment(
           [void Function(BillingExportTreatmentBuilder)? updates]) =>
       (BillingExportTreatmentBuilder()..update(updates))._build();
 
   _$BillingExportTreatment._(
-      {this.noShowBillable,
-      this.lateCancelBillable,
-      this.distanceBasis,
-      this.basis,
-      this.ratePerKm})
+      {this.basis,
+      this.ratePerKm,
+      this.odometerGapThresholdPercent,
+      this.defaultClientId})
       : super._();
   @override
   BillingExportTreatment rebuild(
@@ -154,21 +91,19 @@ class _$BillingExportTreatment extends BillingExportTreatment {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is BillingExportTreatment &&
-        noShowBillable == other.noShowBillable &&
-        lateCancelBillable == other.lateCancelBillable &&
-        distanceBasis == other.distanceBasis &&
         basis == other.basis &&
-        ratePerKm == other.ratePerKm;
+        ratePerKm == other.ratePerKm &&
+        odometerGapThresholdPercent == other.odometerGapThresholdPercent &&
+        defaultClientId == other.defaultClientId;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
-    _$hash = $jc(_$hash, noShowBillable.hashCode);
-    _$hash = $jc(_$hash, lateCancelBillable.hashCode);
-    _$hash = $jc(_$hash, distanceBasis.hashCode);
     _$hash = $jc(_$hash, basis.hashCode);
     _$hash = $jc(_$hash, ratePerKm.hashCode);
+    _$hash = $jc(_$hash, odometerGapThresholdPercent.hashCode);
+    _$hash = $jc(_$hash, defaultClientId.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -176,11 +111,10 @@ class _$BillingExportTreatment extends BillingExportTreatment {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'BillingExportTreatment')
-          ..add('noShowBillable', noShowBillable)
-          ..add('lateCancelBillable', lateCancelBillable)
-          ..add('distanceBasis', distanceBasis)
           ..add('basis', basis)
-          ..add('ratePerKm', ratePerKm))
+          ..add('ratePerKm', ratePerKm)
+          ..add('odometerGapThresholdPercent', odometerGapThresholdPercent)
+          ..add('defaultClientId', defaultClientId))
         .toString();
   }
 }
@@ -188,22 +122,6 @@ class _$BillingExportTreatment extends BillingExportTreatment {
 class BillingExportTreatmentBuilder
     implements Builder<BillingExportTreatment, BillingExportTreatmentBuilder> {
   _$BillingExportTreatment? _$v;
-
-  bool? _noShowBillable;
-  bool? get noShowBillable => _$this._noShowBillable;
-  set noShowBillable(bool? noShowBillable) =>
-      _$this._noShowBillable = noShowBillable;
-
-  bool? _lateCancelBillable;
-  bool? get lateCancelBillable => _$this._lateCancelBillable;
-  set lateCancelBillable(bool? lateCancelBillable) =>
-      _$this._lateCancelBillable = lateCancelBillable;
-
-  BillingExportTreatmentDistanceBasisEnum? _distanceBasis;
-  BillingExportTreatmentDistanceBasisEnum? get distanceBasis =>
-      _$this._distanceBasis;
-  set distanceBasis(BillingExportTreatmentDistanceBasisEnum? distanceBasis) =>
-      _$this._distanceBasis = distanceBasis;
 
   BillingExportTreatmentBasisEnum? _basis;
   BillingExportTreatmentBasisEnum? get basis => _$this._basis;
@@ -213,6 +131,16 @@ class BillingExportTreatmentBuilder
   num? get ratePerKm => _$this._ratePerKm;
   set ratePerKm(num? ratePerKm) => _$this._ratePerKm = ratePerKm;
 
+  num? _odometerGapThresholdPercent;
+  num? get odometerGapThresholdPercent => _$this._odometerGapThresholdPercent;
+  set odometerGapThresholdPercent(num? odometerGapThresholdPercent) =>
+      _$this._odometerGapThresholdPercent = odometerGapThresholdPercent;
+
+  String? _defaultClientId;
+  String? get defaultClientId => _$this._defaultClientId;
+  set defaultClientId(String? defaultClientId) =>
+      _$this._defaultClientId = defaultClientId;
+
   BillingExportTreatmentBuilder() {
     BillingExportTreatment._defaults(this);
   }
@@ -220,11 +148,10 @@ class BillingExportTreatmentBuilder
   BillingExportTreatmentBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
-      _noShowBillable = $v.noShowBillable;
-      _lateCancelBillable = $v.lateCancelBillable;
-      _distanceBasis = $v.distanceBasis;
       _basis = $v.basis;
       _ratePerKm = $v.ratePerKm;
+      _odometerGapThresholdPercent = $v.odometerGapThresholdPercent;
+      _defaultClientId = $v.defaultClientId;
       _$v = null;
     }
     return this;
@@ -246,11 +173,10 @@ class BillingExportTreatmentBuilder
   _$BillingExportTreatment _build() {
     final _$result = _$v ??
         _$BillingExportTreatment._(
-          noShowBillable: noShowBillable,
-          lateCancelBillable: lateCancelBillable,
-          distanceBasis: distanceBasis,
           basis: basis,
           ratePerKm: ratePerKm,
+          odometerGapThresholdPercent: odometerGapThresholdPercent,
+          defaultClientId: defaultClientId,
         );
     replace(_$result);
     return _$result;
