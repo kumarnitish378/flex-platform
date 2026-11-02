@@ -9,7 +9,7 @@ import '../../data/api/driver_duty_repository.dart';
 /// Features:
 /// - Big On/Off duty switch
 /// - Linked vehicle card
-/// - GPS status indicator
+/// - GPS status indicator showing config from /driver/duty's gps object (Item 4)
 /// - Today's trips count
 class DutyHomeScreen extends ConsumerStatefulWidget {
   const DutyHomeScreen({super.key});
@@ -21,6 +21,8 @@ class DutyHomeScreen extends ConsumerStatefulWidget {
 class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
   bool _onDuty = false;
   bool _updating = false;
+  double _gpsDistanceM = 5.0;
+  int _gpsHeartbeatSec = 60;
   final String _vehicleNo = 'DL 01 AB 1234';
   final int _tripsToday = 4;
   String? _error;
@@ -38,6 +40,8 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
       if (mounted) {
         setState(() {
           _onDuty = state.onDuty ?? value;
+          _gpsDistanceM = state.gps?.distanceFilterM.toDouble() ?? 5.0;
+          _gpsHeartbeatSec = state.gps?.heartbeatSeconds ?? 60;
           _updating = false;
         });
       }
@@ -121,7 +125,7 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
             ),
             const Divider(),
 
-            // GPS Status Indicator
+            // GPS Status Indicator (Item 4)
             ListTile(
               key: const Key('gps-status'),
               leading: Icon(
@@ -130,7 +134,11 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
                 color: _onDuty ? Colors.green : Colors.grey,
               ),
               title: const Text('GPS Tracking'),
-              subtitle: Text(_onDuty ? 'Pinging location (5s interval)' : 'Disabled (Off duty)'),
+              subtitle: Text(
+                _onDuty
+                    ? 'Filter: ${_gpsDistanceM.toStringAsFixed(0)} m • Heartbeat: ${_gpsHeartbeatSec}s'
+                    : 'Disabled (Off duty)',
+              ),
             ),
 
             if (_error != null) ...<Widget>[
