@@ -71,6 +71,10 @@ $Commands = @{
     'sim-quick'   = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick', '--platform', $SimPlatform) }
     'sim-policies' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'policies', 'scenarios/pooling_efficiency.yaml', '--platform', $SimPlatform) }
     'sim-full'    = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'full', '--platform', $SimPlatform) }
+    'phone-dev'      = { Invoke-InDir '.' 'python' @('scripts/phone_dev.py', 'up') }
+    'phone-dev-stop' = { Invoke-InDir '.' 'python' @('scripts/phone_dev.py', 'down') }
+    'phone-dev-info' = { Invoke-InDir '.' 'python' @('scripts/phone_dev.py', 'info') }
+    'seed-demo'      = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'backend', '-m', 'app.demo_seed') }
     'sim-offline' = { Invoke-InDir '.' 'python' @('scripts/venv_exec.py', '--cwd', 'simulator', '-m', 'sim', 'suite', 'quick') }
     'maps'        = { Invoke-InDir '.' 'python' @('scripts/not_ready.py', 'maps', 'I02b') }
 }

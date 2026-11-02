@@ -4,7 +4,7 @@
 # (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
 # reads the `## <description>` comment on the line above each target.
 
-.PHONY: help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
+.PHONY: phone-dev phone-dev-stop phone-dev-info seed-demo help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
         test test-domain-coverage lint format api-client sim-quick sim-full sim-policies         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
@@ -83,6 +83,22 @@ api-client:
 # evaluated. Without it a run finishes and reports "assertions not checked" - useful for
 # checking the agents move, worthless as a pass. `make stack-up` starts one.
 SIM_PLATFORM ?= http://localhost:8000/api/v1
+
+## Start everything a phone on the same Wi-Fi needs (API on 0.0.0.0, broker, tiles, test login)
+phone-dev:
+	python scripts/phone_dev.py up
+
+## Stop the processes `make phone-dev` started (Docker infrastructure keeps running)
+phone-dev-stop:
+	python scripts/phone_dev.py down
+
+## Print the phone URLs and the --dart-define values again
+phone-dev-info:
+	python scripts/phone_dev.py info
+
+## Load the idempotent demo data (operator, client, cabs, drivers, riders, a login per role)
+seed-demo:
+	python scripts/venv_exec.py --cwd backend -m app.demo_seed
 
 ## Start the stack a scenario needs (broker, migrations, API, GPS ingestor)
 stack-up:
