@@ -103,6 +103,8 @@ Map URLs are read from config everywhere — never hard-code them in backend, ap
 |---|---|
 | `make up` / `make down` | Start/stop infra containers |
 | `make migrate` | `alembic upgrade head` |
+| `make seed-demo` | Idempotent demo world for phone testing: Rs 8/km operator, night-safety client, 5 cabs + drivers, 20 riders (odd = women), a login per role - numbers in `docs/runbook-phone-testing.md` |
+| `make phone-dev` | Stack reachable from a phone on the same Wi-Fi (API on 0.0.0.0, LAN broker address, test login) - see the runbook |
 | `make seed` | Load dev fixture (1 operator, 1 client, offices, employees, vehicles, users for each role) |
 | `make backend-dev` | Uvicorn with reload |
 | `make ingestor` | Run MQTT ingestor |
