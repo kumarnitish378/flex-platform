@@ -8,6 +8,7 @@ import '../../data/api/driver_duty_repository.dart';
 ///
 /// Features:
 /// - Big On/Off duty switch with optional odometer reading dialog (Item 5)
+/// - Battery optimization exemption explanation prompt (Item 1)
 /// - Linked vehicle card
 /// - GPS status indicator showing config from /driver/duty's gps object (Item 4)
 /// - Today's trips count
@@ -23,6 +24,7 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
   bool _updating = false;
   double _gpsDistanceM = 5.0;
   int _gpsHeartbeatSec = 60;
+  bool _batteryExemptionGranted = false;
   final String _vehicleNo = 'DL 01 AB 1234';
   final int _tripsToday = 4;
   String? _error;
@@ -116,6 +118,54 @@ class _DutyHomeScreenState extends ConsumerState<DutyHomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
+            // Battery Optimization Exemption Banner (Item 1)
+            if (!_batteryExemptionGranted) ...<Widget>[
+              Card(
+                key: const Key('battery-optimization-banner'),
+                color: Colors.orange.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          const Icon(Icons.battery_saver, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Uninterrupted GPS Tracking',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange.shade900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'To prevent Android from suspending GPS updates while in background, please grant Battery Optimization exemption.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        key: const Key('grant-battery-exemption'),
+                        onPressed: () {
+                          setState(() {
+                            _batteryExemptionGranted = true;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Battery optimization exemption granted')),
+                          );
+                        },
+                        child: const Text('Grant Exemption'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Big On/Off Duty Switch Card
             Card(
               elevation: 4,

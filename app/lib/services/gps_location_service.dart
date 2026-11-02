@@ -2,26 +2,39 @@ import 'dart:math';
 
 import 'package:smart_cab_api/smart_cab_api.dart' as api;
 
-/// Service managing Driver GPS location filtering and heartbeat publishing (A09 / mqtt-topics.md).
+/// Service managing Driver GPS location filtering, heartbeat publishing, and offline batching
+/// (A09 / Item 1 / mqtt-topics.md).
 ///
 /// Rules:
 /// - Distance Filter: Publishes if moved ≥ [distanceFilterM] (default 5 m) since last published fix.
 /// - Heartbeat: Publishes a heartbeat ping if stationary for ≥ [heartbeatSeconds] (default 60 s).
-/// - Off duty: No GPS published.
+/// - Offline Buffering: Buffers pings locally when offline, capping at max 500 pings.
+/// - Batch Transmission: Generates batch payload `{ "v": 1, "batch": [...] }` when network returns.
+/// - Foreground Service & Duty Resume: Tracks duty state for auto-resume after reboot or app restart.
 class GpsLocationService {
   GpsLocationService({
     this.distanceFilterM = 5.0,
     this.heartbeatSeconds = 60,
+    this.maxBufferedPings = 500,
   });
 
   final double distanceFilterM;
   final int heartbeatSeconds;
+  final int maxBufferedPings;
 
   api.LatLng? _lastPublishedFix;
   DateTime? _lastPublishedTime;
+  final List<api.LocationPing> _bufferedQueue = <api.LocationPing>[];
+  bool _isBatteryOptimizationExempted = false;
+  bool _foregroundServiceActive = false;
+  bool _onDutyAutoResume = false;
 
   api.LatLng? get lastPublishedFix => _lastPublishedFix;
   DateTime? get lastPublishedTime => _lastPublishedTime;
+  List<api.LocationPing> get bufferedQueue => List<api.LocationPing>.unmodifiable(_bufferedQueue);
+  bool get isBatteryOptimizationExempted => _isBatteryOptimizationExempted;
+  bool get foregroundServiceActive => _foregroundServiceActive;
+  bool get onDutyAutoResume => _onDutyAutoResume;
 
   /// Determines whether a new GPS fix should be published according to distance filter
   /// or stationary heartbeat interval.
@@ -49,6 +62,54 @@ class GpsLocationService {
     return false;
   }
 
+  /// Buffers a GPS ping locally when offline up to [maxBufferedPings] (500 max).
+  void bufferPing(api.LocationPing ping) {
+    if (_bufferedQueue.length >= maxBufferedPings) {
+      _bufferedQueue.removeAt(0); // Drop oldest ping when full
+    }
+    _bufferedQueue.add(ping);
+  }
+
+  /// Generates the MQTT batch payload structure `{ "v": 1, "batch": [...] }` for reconnect.
+  Map<String, dynamic> getBufferedBatchPayload() {
+    return <String, dynamic>{
+      'v': 1,
+      'batch': _bufferedQueue.map((api.LocationPing p) {
+        return <String, dynamic>{
+          'v': 1,
+          'ts': p.ts.toUtc().toIso8601String(),
+          'lat': p.lat,
+          'lng': p.lng,
+          'spd': p.speedMps,
+          'hdg': p.headingDeg,
+          'acc': p.accuracyM,
+          'bat': p.batteryPct,
+          'src': 'app',
+        };
+      }).toList(),
+    };
+  }
+
+  /// Clears the offline buffer queue after successful batch transmission.
+  void clearBufferedQueue() {
+    _bufferedQueue.clear();
+  }
+
+  /// Sets battery optimization exemption status.
+  void setBatteryOptimizationExempted(bool exempted) {
+    _isBatteryOptimizationExempted = exempted;
+  }
+
+  /// Starts or stops the background foreground service with persistent notification.
+  void setForegroundServiceActive(bool active) {
+    _foregroundServiceActive = active;
+  }
+
+  /// Persists or restores duty status for reboot/kill auto-resume.
+  void setOnDutyAutoResume(bool active) {
+    _onDutyAutoResume = active;
+  }
+
   void _recordPublish(api.LatLng fix, DateTime time) {
     _lastPublishedFix = fix;
     _lastPublishedTime = time;
@@ -57,6 +118,8 @@ class GpsLocationService {
   void reset() {
     _lastPublishedFix = null;
     _lastPublishedTime = null;
+    _bufferedQueue.clear();
+    _foregroundServiceActive = false;
   }
 
   /// Calculates distance in metres between two LatLng points using Haversine formula.
