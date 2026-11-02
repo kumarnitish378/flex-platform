@@ -2,6 +2,10 @@
 .env
 .env.*
 !.env.example
+key.properties
+app/android/key.properties
+*.jks
+*.keystore
 # The staging template is committed; the filled-in infra/.env.staging never is, and is
 # still caught by the `.env.*` rule above.
 !.env.staging.example

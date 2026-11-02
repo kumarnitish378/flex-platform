@@ -40,3 +40,13 @@ flutter build apk --debug \
 ```bash
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
+
+## Running End-to-End Integration Tests
+
+To run the end-to-end integration test against a running backend (`make seed-demo` / `make backend-dev`):
+
+```bash
+flutter test integration_test/e2e_trip_lifecycle_test.dart \
+  --dart-define=APP_TESTING=true \
+  --dart-define=API_BASE_URL=http://localhost:8000/api/v1
+```
