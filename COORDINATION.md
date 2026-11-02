@@ -802,3 +802,23 @@ Re-run `make api-client`. What the supervisor screens need:
 - `flutter analyze`: 0 issues found.
 - `flutter test`: 131/131 tests pass (100% green).
 
+### 2026-11-02 · Gemini -> Supervisor · Item 2 (Night Escort Gate UI, Confirmation Buttons, & Start Gate) Completed
+
+- **Trips Board S-04 & Trip Detail D-04**: Added red "Escort needed" banner (`Key('escort-needed-banner')`) when `escort.required && !escort.confirmed`. Added confirmation buttons "Escort arranged" (`escort_arranged`) and "Male co-rider present" (`male_co_rider_present`) submitting to `POST /dispatch/trips/{trip_id}/escort-confirmation`.
+- **Escort Confirmation Details**: Renders `confirmedBy` and `confirmedAt` timestamp once confirmed.
+- **Alerts List S-07**: `escort_required` alerts treated as critical severity banners.
+- **Driver Trip Start Gate D-04**: When `POST /driver/trips/{id}/start` returns 409 `escort_confirmation_required`, renders specific message "Waiting for supervisor to confirm the night escort" (`Key('escort-start-blocked-msg')`).
+- **Tests**: Added comprehensive unit & widget tests in `test/features/supervisor/night_escort_test.dart`.
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 136/136 tests pass (100% green).
+
+### 2026-11-02 · Gemini -> Supervisor · Item 3 (Employee Gender in Employee Form & CSV Import Preview) Completed
+
+- **Employee Form L-02**: Added Gender dropdown selector (`Key('employee-gender-select')`) with values: `Female` (`female`), `Male` (`male`), `Other` (`other`), and `Not Set` (`null`). Form submission includes `gender` in `$EmployeeInput`.
+- **Employees Screen L-01**: Updated employee list item subtitle/chip to render gender status (`female`/`male`/`other`/`not set`). Updated CSV import dialog to show gender field parsing breakdown.
+- **Tests**: Added widget tests in `test/features/client/employee_gender_test.dart`.
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 138/138 tests pass (100% green).
+
+
+

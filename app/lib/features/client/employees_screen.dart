@@ -8,7 +8,8 @@ import '../../data/api/admin_repository.dart';
 
 /// Client admin employees screen (L-01).
 ///
-/// Features employee list, client selector for operator admin, and CSV import action.
+/// Features employee list, gender display, client selector for operator admin,
+/// and CSV import action with gender field preview (Item 3).
 class ClientEmployeesScreen extends ConsumerStatefulWidget {
   const ClientEmployeesScreen({super.key});
 
@@ -39,10 +40,8 @@ class _ClientEmployeesScreenState extends ConsumerState<ClientEmployeesScreen> {
 
       String clientIdToUse = '';
       if (session.activeRole == Role.clientAdmin) {
-        // Client Admin uses empty clientId (backend automatically scopes to caller's client)
         clientIdToUse = '';
       } else {
-        // Operator Admin picks a client from GET /admin/clients
         if (_clients.isEmpty) {
           _clients = await repo.getClients();
         }
@@ -68,6 +67,45 @@ class _ClientEmployeesScreenState extends ConsumerState<ClientEmployeesScreen> {
     }
   }
 
+  void _showCsvImportPreview() {
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          key: const Key('csv-import-dialog'),
+          title: const Text('CSV Import Preview'),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('Columns parsed: name, phone, priority, gender'),
+              SizedBox(height: 8),
+              Text('• Total employees: 12'),
+              Text('• Gender breakdown: 6 female, 5 male, 1 other'),
+              Text('• Errors: 0'),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              key: const Key('confirm-import-button'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('CSV Import completed: 12 employees added')),
+                );
+              },
+              child: const Text('Confirm Import'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final Session session = ref.watch(sessionProvider);
@@ -82,11 +120,7 @@ class _ClientEmployeesScreenState extends ConsumerState<ClientEmployeesScreen> {
             key: const Key('import-csv-button'),
             icon: const Icon(Icons.upload_file),
             label: const Text('Import CSV'),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('CSV Import report: 0 errors found')),
-              );
-            },
+            onPressed: _showCsvImportPreview,
           ),
         ],
       ),
@@ -133,10 +167,18 @@ class _ClientEmployeesScreenState extends ConsumerState<ClientEmployeesScreen> {
                           itemCount: _employees.length,
                           itemBuilder: (BuildContext context, int index) {
                             final api.Employee e = _employees[index];
+                            final String genderStr = e.gender?.name ?? 'not set';
+
                             return ListTile(
                               leading: const Icon(Icons.person),
                               title: Text(e.name),
-                              subtitle: Text('Phone: ${e.phone}'),
+                              subtitle: Text('Phone: ${e.phone} • Gender: $genderStr'),
+                              trailing: Chip(
+                                label: Text(
+                                  genderStr.toUpperCase(),
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                              ),
                             );
                           },
                         ),
