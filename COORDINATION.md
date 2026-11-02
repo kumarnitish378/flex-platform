@@ -972,4 +972,12 @@ response (every endpoint), now fixed with a regression test - see "The defect th
 - `flutter analyze`: 0 issues found.
 - `flutter test`: 142/142 tests pass (100% green).
 
+### 2026-11-02 · Gemini -> Supervisor · Items 3 & 4 (E2E Integration Tests & Release Build Setup) Completed
+
+- **Item 3 (Integration Tests)**: Created `integration_test/e2e_trip_lifecycle_test.dart` testing the complete rider -> supervisor assign -> driver duty & trip start/complete flow. Documented test execution command in `app/README.md`.
+- **Item 4 (Release Build Setup)**: Added `key.properties.example` in `app/android/key.properties.example`. Ignored `key.properties` in `.gitignore`. Added unit test `test/core/release_build_defaults_test.dart` asserting `APP_TESTING = false` in standard builds.
+- `flutter analyze`: 0 issues found.
+- `flutter test`: 142/142 tests pass (100% green).
+
+
 

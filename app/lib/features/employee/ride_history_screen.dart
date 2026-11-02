@@ -4,9 +4,9 @@ import 'package:smart_cab_api/smart_cab_api.dart' as api;
 
 import '../../data/api/ride_request_repository.dart';
 
-/// Ride history screen (E-06).
+/// Ride history screen (E-06 / Item 5).
 ///
-/// Displays history list of past ride requests/trips up to 90 days.
+/// Displays history list of past ride requests/trips up to 90 days with pull-to-refresh.
 class RideHistoryScreen extends ConsumerStatefulWidget {
   const RideHistoryScreen({super.key});
 
@@ -17,6 +17,7 @@ class RideHistoryScreen extends ConsumerStatefulWidget {
 class _RideHistoryScreenState extends ConsumerState<RideHistoryScreen> {
   bool _loading = true;
   List<api.RideRequest> _history = <api.RideRequest>[];
+  String? _error;
 
   @override
   void initState() {
@@ -25,6 +26,11 @@ class _RideHistoryScreenState extends ConsumerState<RideHistoryScreen> {
   }
 
   Future<void> _loadHistory() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
       final List<api.RideRequest> requests =
           await ref.read(rideRequestRepositoryProvider).getMyRequests();
@@ -34,10 +40,11 @@ class _RideHistoryScreenState extends ConsumerState<RideHistoryScreen> {
           _loading = false;
         });
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() {
           _loading = false;
+          _error = e.toString();
         });
       }
     }
@@ -50,20 +57,40 @@ class _RideHistoryScreenState extends ConsumerState<RideHistoryScreen> {
       appBar: AppBar(title: const Text('Ride History')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _history.isEmpty
-              ? const Center(child: Text('No ride history found.'))
-              : ListView.builder(
-                  key: const Key('history-list'),
-                  itemCount: _history.length,
-                  itemBuilder: (BuildContext context, int index) {
-                    final api.RideRequest req = _history[index];
-                    return ListTile(
-                      leading: const Icon(Icons.history),
-                      title: Text(req.landmark ?? 'Ride Request'),
-                      subtitle: Text('${req.direction?.name} • ${req.status?.name}'),
-                    );
-                  },
-                ),
+          : RefreshIndicator(
+              onRefresh: _loadHistory,
+              child: _error != null
+                  ? ListView(
+                      children: <Widget>[
+                        const SizedBox(height: 100),
+                        Center(
+                          child: Text(
+                            _error!,
+                            style: TextStyle(color: Theme.of(context).colorScheme.error),
+                          ),
+                        ),
+                      ],
+                    )
+                  : _history.isEmpty
+                      ? ListView(
+                          children: const <Widget>[
+                            SizedBox(height: 100),
+                            Center(child: Text('No ride history found.')),
+                          ],
+                        )
+                      : ListView.builder(
+                          key: const Key('history-list'),
+                          itemCount: _history.length,
+                          itemBuilder: (BuildContext context, int index) {
+                            final api.RideRequest req = _history[index];
+                            return ListTile(
+                              leading: const Icon(Icons.history),
+                              title: Text(req.landmark ?? 'Ride Request'),
+                              subtitle: Text('${req.direction?.name} • ${req.status?.name}'),
+                            );
+                          },
+                        ),
+            ),
     );
   }
 }
