@@ -40,10 +40,14 @@ from app.domain.state_machines import (
     RequestStatus,
     StopStatus,
     TransitionEvent,
+    TripStatus,
+    VehicleStatus,
     actor_type_for,
     is_terminal_request,
     transition_request,
     transition_stop,
+    transition_trip,
+    transition_vehicle,
 )
 from app.modules.alerts.models import Alert
 from app.modules.config.service import ConfigService
@@ -443,6 +447,72 @@ class RideRequestService:
                 trip_id=str(request.trip_id),
                 skipped=skipped,
             )
+            await self._close_trip_if_empty(request.trip_id)
+
+    async def _close_trip_if_empty(self, trip_id: uuid.UUID) -> None:
+        """Cancel a trip that has not started once its last rider has gone, and free the cab.
+
+        `trip-lifecycle.md` section 2: a trip is `cancelled` "before start". Left `planned` with
+        every stop skipped, the driver's list (which shows trips with live stops) hides it, so
+        they cannot complete it, and the cab stays `on_trip` - the driver cannot even go off
+        duty. The supervisor's cancel already did this (`OverrideService._close_trip`); a rider
+        cancelling on their own did not. A started trip is the driver's to finish.
+        """
+        from app.modules.dispatch.models import Trip, TripEvent, TripStop
+        from app.modules.fleet.models import Vehicle
+
+        trip = await self.session.get(Trip, trip_id)
+        if trip is None or trip.status not in (str(TripStatus.planned), str(TripStatus.dispatched)):
+            return
+        # Sessions here do not autoflush: the skipped stops must reach the query below.
+        await self.session.flush()
+        live = await self.session.scalar(
+            select(func.count())
+            .select_from(TripStop)
+            .where(TripStop.trip_id == trip.id)
+            .where(TripStop.status.not_in((str(StopStatus.done), str(StopStatus.skipped))))
+        )
+        if live:
+            return
+
+        reason = "Every rider cancelled"
+        event = transition_trip(TripStatus(trip.status), TripStatus.cancelled, Actor.system, reason)
+        self.session.add(
+            TripEvent(
+                operator_id=trip.operator_id,
+                trip_id=trip.id,
+                from_status=trip.status,
+                to_status=event.to_status,
+                actor_type=actor_type_for(Actor.system),
+                reason=reason,
+                at=self.clock.now(),
+                data={"action": "trip_cancelled"},
+            )
+        )
+        trip.status = event.to_status
+
+        # Only if this was the cab's last live trip; a vehicle with another one stays on_trip.
+        other_live = await self.session.scalar(
+            select(func.count())
+            .select_from(Trip)
+            .where(Trip.vehicle_id == trip.vehicle_id)
+            .where(Trip.id != trip.id)
+            .where(
+                Trip.status.in_(
+                    (
+                        str(TripStatus.planned),
+                        str(TripStatus.dispatched),
+                        str(TripStatus.in_progress),
+                    )
+                )
+            )
+        )
+        vehicle = await self.session.get(Vehicle, trip.vehicle_id)
+        if not other_live and vehicle is not None and vehicle.status == str(VehicleStatus.on_trip):
+            vehicle.status = transition_vehicle(
+                VehicleStatus.on_trip, VehicleStatus.available, Actor.system, reason
+            ).to_status
+        logger.info("trip_cancelled_empty", trip_id=str(trip.id), reason=reason)
 
     async def _user_of_employee(self, employee_id: uuid.UUID) -> uuid.UUID | None:
         return await self.session.scalar(select(Employee.user_id).where(Employee.id == employee_id))

@@ -784,6 +784,84 @@ async def test_an_already_finished_stop_is_left_alone_by_a_cancellation(
     assert pickup.status == str(StopStatus.done)
 
 
+# --- the last rider cancelling frees a trip that has not started (load test, 2026-11-03) ---
+
+
+async def cancel_as_rider(db_session: AsyncSession, world: dict[str, Any], who: str) -> None:
+    request = world["requests"][who]
+    await RideRequestService(db_session, FakeClock(NOW)).cancel(
+        operator_id=world["operator_id"],
+        request_id=request.id,
+        actor_role=Role.employee,
+        actor_user_id=world["users"][who].id,
+        reason="Plans changed",
+        caller_employee_id=request.employee_id,
+    )
+
+
+async def test_the_last_rider_cancelling_cancels_a_trip_that_has_not_started(
+    world: dict[str, Any], db_session: AsyncSession
+) -> None:
+    """Otherwise the cab stays `on_trip` for a trip with nothing left to do.
+
+    The driver's list shows only trips with live stops, so they cannot see it, cannot complete
+    it, and cannot go off duty ("finish or hand over the current trip"). The load test left
+    every cab in that state. The supervisor's own cancel already closed an emptied trip
+    (`OverrideService._close_trip`); the rider's did not.
+    """
+    await cancel_as_rider(db_session, world, "first")
+    await db_session.refresh(world["trip"])
+    assert world["trip"].status == str(TripStatus.planned), "one rider is still going"
+
+    await cancel_as_rider(db_session, world, "second")
+    await db_session.refresh(world["trip"])
+    await db_session.refresh(world["vehicle"])
+    assert world["trip"].status == str(TripStatus.cancelled)
+    assert world["vehicle"].status == str(VehicleStatus.available)
+
+    events = (
+        (await db_session.execute(select(TripEvent).where(TripEvent.trip_id == world["trip_id"])))
+        .scalars()
+        .all()
+    )
+    assert [(e.from_status, e.to_status) for e in events][-1] == ("planned", "cancelled")
+
+
+async def test_an_emptied_trip_that_has_started_is_left_for_the_driver(
+    client: AsyncClient, world: dict[str, Any], driver: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A started trip is the driver's: they finish it (`complete` is how the cab is freed)."""
+    await start(client, driver, world["trip_id"])
+    await cancel_as_rider(db_session, world, "first")
+    await cancel_as_rider(db_session, world, "second")
+
+    await db_session.refresh(world["trip"])
+    assert world["trip"].status == str(TripStatus.in_progress)
+
+
+async def test_a_cab_with_another_live_trip_is_not_freed(
+    world: dict[str, Any], db_session: AsyncSession
+) -> None:
+    other = Trip(
+        operator_id=world["operator_id"],
+        vehicle_id=world["vehicle"].id,
+        driver_id=world["drivers"]["driver"].id,
+        direction=Direction.to_office,
+        office_id=world["trip"].office_id,
+        status=TripStatus.planned,
+        planned_start=NOW,
+        mode_used="manual",
+    )
+    db_session.add(other)
+    await db_session.flush()
+
+    await cancel_as_rider(db_session, world, "first")
+    await cancel_as_rider(db_session, world, "second")
+
+    await db_session.refresh(world["vehicle"])
+    assert world["vehicle"].status == str(VehicleStatus.on_trip)
+
+
 # --- a breakdown ends the trip, it does not just park the cab (S05) ----------
 
 

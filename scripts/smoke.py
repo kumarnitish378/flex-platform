@@ -375,6 +375,12 @@ class Smoke:
             json={"request_id": request_id, "vehicle_id": self.state["vehicle_id"]},
         )
         self.state[f"trip_{tag}"] = trip
+        # The driver's phone must be able to find the trip it was just given. A new trip is
+        # `planned`, which only scope=upcoming lists (the default, scope=active, is dispatched +
+        # in_progress): the load test found the driver app asking for the default.
+        upcoming = self.call("driver", "GET", "/driver/trips?scope=upcoming")["items"]
+        if trip["id"] not in {item["id"] for item in upcoming}:
+            raise Failed("the driver's upcoming list does not show the trip just assigned")
         return f"trip {trip['id'][:8]} with {len(trip['stops'])} stops"
 
     def s_start(self, tag: str) -> str:

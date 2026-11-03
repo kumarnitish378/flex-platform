@@ -88,6 +88,33 @@ class NullEventPublisher:
         return None
 
 
+class DeferredEvents:
+    """One request's events, held until the data they announce is committed.
+
+    A client that receives `request.assigned` fetches the request at once; if the event left before
+    the commit it reads the old state (found by the load test, 2026-11-03). Handlers publish into
+    this; the session dependency flushes it after `commit()` and discards it on a rollback.
+    `has_session` tells the events dependency whether a commit is coming (so it need not flush).
+    """
+
+    def __init__(self, target: EventPublisher) -> None:
+        self._target = target
+        self._pending: list[Event] = []
+        self.has_session = False
+
+    async def publish(self, event: Event) -> None:
+        self._pending.append(event)
+
+    async def flush(self) -> None:
+        """Send what is held, in order. Safe to call again: it only ever sends each event once."""
+        pending, self._pending = self._pending, []
+        for event in pending:
+            await self._target.publish(event)
+
+    def discard(self) -> None:
+        self._pending.clear()
+
+
 class RecordingEventPublisher:
     """Keeps events in a list. For tests that assert who was notified."""
 

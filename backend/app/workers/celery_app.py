@@ -128,7 +128,9 @@ _sessions: async_sessionmaker[AsyncSession] | None = None
 def _session_factory(settings: Settings) -> async_sessionmaker[AsyncSession]:
     global _engine, _sessions
     if _sessions is None:
-        _engine = create_engine(settings)
+        # Unpooled: every sweep is its own `asyncio.run`, and a pooled asyncpg connection
+        # cannot outlive the loop that opened it (found by the load test, 2026-11-03).
+        _engine = create_engine(settings, pooled=False)
         _sessions = create_session_factory(_engine)
     return _sessions
 
@@ -166,9 +168,12 @@ async def _refresh_stop_etas() -> dict[str, int]:
         ),
         clock,
     )
-    async with _session_factory(settings)() as session:
-        result = await EtaRefresher(session, clock, eta).refresh_due()
-        await session.commit()
+    try:
+        async with _session_factory(settings)() as session:
+            result = await EtaRefresher(session, clock, eta).refresh_due()
+            await session.commit()
+    finally:
+        await redis.aclose()
     return {"stops": result.stops}
 
 

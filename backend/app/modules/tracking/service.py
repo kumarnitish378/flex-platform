@@ -48,6 +48,15 @@ EVENT_NAME = "vehicle.location"
 #: times over, and the bound keeps the query off older partitions.
 STALE_LOOKBACK = timedelta(hours=2)
 
+#: `trip.{id}` carries a cab's position to the riders on that trip (`websocket-protocol.md` section
+#: 4). Which trips a cab is on changes a few times an hour, so the ingestor reads the whole map
+#: from the database at most this often instead of once per ping. The price is that a trip assigned
+#: this second starts receiving positions within this many seconds.
+TRIP_MAP_REFRESH_SECONDS = 5
+LIVE_TRIP_QUERY = text(
+    "SELECT vehicle_id, id FROM trip WHERE status IN ('planned', 'dispatched', 'in_progress')"
+)
+
 #: Flush at least this often, or once this many pings are queued — whichever first.
 FLUSH_INTERVAL_SECONDS = 5
 FLUSH_MAX_ROWS = 1000
@@ -93,8 +102,17 @@ class GpsIngestor:
         #: concurrent use: overlapping writes on one connection stall each other, which
         #: showed up as the map lagging the broker by tens of seconds under a burst.
         self._writing = asyncio.Lock()
+        #: Held by the ingestor process around "write, then commit": the message handler and the
+        #: flush timer share this one session, and `_writing` is released between a write and
+        #: its commit, so the other task could start an INSERT while the commit was in flight
+        #: ("session is in 'prepared' state") and the whole batch was rolled back and lost.
+        #: Found by the load test, 2026-11-03.
+        self.session_lock = asyncio.Lock()
         #: Last accepted ping per vehicle, for the jump check and ordering.
         self._latest: dict[uuid.UUID, Ping] = {}
+        #: vehicle -> the trips it is on now, and when that was read.
+        self._live_trips: dict[uuid.UUID, list[uuid.UUID]] = {}
+        self._live_trips_read_at: datetime | None = None
 
     # --- ingestion ----------------------------------------------------------
 
@@ -204,15 +222,43 @@ class GpsIngestor:
             )
             publish = getattr(self.redis, "publish", None)
             if publish is not None:
-                channel = EVENT_CHANNEL.format(operator_id=operator_id)
-                await publish(
-                    channel,
-                    json.dumps(
-                        {"type": "event", "event": EVENT_NAME, "channel": channel, "data": payload}
-                    ),
-                )
+                channels = [
+                    EVENT_CHANNEL.format(operator_id=operator_id),
+                    *[f"trip.{trip_id}" for trip_id in await self._trips_of(vehicle_id)],
+                ]
+                for channel in channels:
+                    await publish(
+                        channel,
+                        json.dumps(
+                            {
+                                "type": "event",
+                                "event": EVENT_NAME,
+                                "channel": channel,
+                                "data": payload,
+                            }
+                        ),
+                    )
         except Exception as exc:  # noqa: BLE001 - a stale map beats a dropped ping
             logger.warning("gps_latest_write_failed", error=type(exc).__name__)
+
+    async def _trips_of(self, vehicle_id: uuid.UUID) -> list[uuid.UUID]:
+        """The live trips this cab is on, from a map refreshed every few seconds."""
+        now = self.clock.now()
+        stale = self._live_trips_read_at is None or (
+            now - self._live_trips_read_at >= timedelta(seconds=TRIP_MAP_REFRESH_SECONDS)
+        )
+        if stale:
+            try:
+                rows = (await self.session.execute(LIVE_TRIP_QUERY)).all()
+            except Exception as exc:  # noqa: BLE001 - riders' maps lag; the operator map must not
+                logger.warning("gps_trip_map_failed", error=type(exc).__name__)
+                self._live_trips_read_at = now
+                return self._live_trips.get(vehicle_id, [])
+            fresh: dict[uuid.UUID, list[uuid.UUID]] = {}
+            for vehicle, trip in rows:
+                fresh.setdefault(vehicle, []).append(trip)
+            self._live_trips, self._live_trips_read_at = fresh, now
+        return self._live_trips.get(vehicle_id, [])
 
     async def latest_position(self, vehicle_id: uuid.UUID) -> dict[str, Any] | None:
         if self.redis is None:

@@ -20,6 +20,7 @@ infra/maps/fonts/
 
 # --- phone testing (make phone-dev) ---
 .phone-dev/
+.loadtest/
 
 # --- Python ----------------------------------------------------------------
 __pycache__/

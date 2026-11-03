@@ -34,6 +34,7 @@ STATE = ROOT / ".phone-dev"
 API_PORT = int(os.environ.get("API_PORT", "8000"))
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 TILES_PORT = int(os.environ.get("TILES_PORT", "8081"))
+OSRM_PORT = int(os.environ.get("OSRM_PORT", "5000"))
 TILE_STYLE = "basic"
 #: The public OSM tiles, used only when the self-hosted tile server has no data. The app sends
 #: its own User-Agent and honours the cache headers (ADR-0010 rule 7).
@@ -81,9 +82,15 @@ def lan_ip(override: str | None = None) -> str:
 
 
 def backend_environment(
-    host: str, base: dict[str, str] | None = None
+    host: str, base: dict[str, str] | None = None, self_hosted_maps: bool = False
 ) -> dict[str, str]:
-    """The environment the backend processes run with for phone testing."""
+    """The environment the backend processes run with for phone testing.
+
+    `self_hosted_maps`: the NCR extract has been prepared, so `make phone-dev` started the OSRM
+    container too - route through it rather than the public demo server. Switched by config only
+    (ADR-0010); without it every assignment waits on the public server's shared 1 request/second
+    (about a second each, found by the load test).
+    """
     env = dict(os.environ if base is None else base)
     env.update(
         {
@@ -97,6 +104,8 @@ def backend_environment(
         }
     )
     env.setdefault("MQTT_HOST", "localhost")
+    if self_hosted_maps:
+        env["OSRM_URL"] = f"http://localhost:{OSRM_PORT}"
     return env
 
 
@@ -244,7 +253,7 @@ def print_info(host: str, ready: bool) -> None:
 def up() -> None:
     host = lan_ip(os.environ.get("PHONE_DEV_HOST"))
     ready = tiles_ready()
-    env = backend_environment(host)
+    env = backend_environment(host, self_hosted_maps=ready)
 
     print(f"LAN address: {host}")
     files = ["-f", "infra/docker-compose.yml"]

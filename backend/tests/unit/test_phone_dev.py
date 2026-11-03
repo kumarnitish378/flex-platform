@@ -24,6 +24,17 @@ def test_detection_returns_a_non_loopback_address_or_the_hostname_fallback() -> 
     assert phone_dev.lan_ip() != ""
 
 
+def test_prepared_maps_route_through_the_local_osrm_not_the_public_one() -> None:
+    assert "OSRM_URL" not in phone_dev.backend_environment(LAN, {})
+    env = phone_dev.backend_environment(LAN, {}, self_hosted_maps=True)
+    assert env["OSRM_URL"] == "http://localhost:5000"
+    settings = Settings(
+        osrm_url=env["OSRM_URL"],
+        database_url="postgresql+asyncpg://t:t@localhost:5432/t",
+    )
+    assert settings.uses_public_osrm is False
+
+
 def test_the_backend_is_told_to_hand_the_phone_the_lan_address() -> None:
     env = phone_dev.backend_environment(LAN, {})
 

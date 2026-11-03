@@ -121,5 +121,13 @@ re-fetches rather than replaying.
   and a reconnecting client re-fetches. Nothing that matters may exist *only* as an event.
 - **Latency budget.** Assignment and location events must reach the client within 10
   seconds (`non-functional.md`).
+- **After the commit.** An event is published only once the data it announces is committed (the
+  request's events are held until its session commits, and dropped if it rolls back). A client may
+  therefore refetch the moment it receives one and read the new state. Events published by the
+  workers (the sweeps, the ETA refresh) are sent when the sweep publishes them.
+- **`vehicle.location` on `trip.{id}`.** The ingestor publishes each accepted position to
+  `operator.{id}.vehicles` and to the `trip.{id}` of every live trip (`planned`, `dispatched`,
+  `in_progress`) of that vehicle. Which trips a vehicle is on is re-read at most every 5 seconds, so
+  a trip assigned this second starts receiving positions within about 5 seconds.
 - **Ordering** is per channel and best-effort. Clients must tolerate an out-of-order
   `stop.eta` (compare timestamps) rather than assume monotonicity.

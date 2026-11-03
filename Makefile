@@ -4,7 +4,7 @@
 # (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
 # reads the `## <description>` comment on the line above each target.
 
-.PHONY: phone-dev phone-dev-stop phone-dev-info seed-demo smoke onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
+.PHONY: phone-dev phone-dev-stop phone-dev-info seed-demo smoke loadtest-seed loadtest onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
         test test-domain-coverage lint format api-client sim-quick sim-full sim-policies         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
@@ -103,6 +103,14 @@ seed-demo:
 ## Create a real operator + its first admin (NAME= ADMIN_NAME= ADMIN_PHONE= [RATE=]); safe to repeat
 create-operator:
 	python scripts/venv_exec.py --cwd backend -m app.create_operator --name "$(NAME)" --admin-name "$(ADMIN_NAME)" --admin-phone "$(ADMIN_PHONE)" $(if $(RATE),--rate-per-km $(RATE))
+
+## Load the load-test world (35 cabs, 300 riders, 2 supervisors); idempotent, dev only
+loadtest-seed:
+	python scripts/venv_exec.py --cwd backend -m app.loadtest_seed
+
+## Pilot-sized load test against the running stack (needs phone-dev + loadtest-seed; ARGS="--minutes 20")
+loadtest:
+	python scripts/venv_exec.py scripts/loadtest.py $(ARGS)
 
 ## Check a pilot onboarding pack (FILE=folder-or-zip of CSVs) and list every error; changes nothing
 onboard-dry-run:

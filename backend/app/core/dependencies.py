@@ -13,7 +13,7 @@ from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
-from app.core.events import EventPublisher
+from app.core.events import DeferredEvents, EventPublisher, NullEventPublisher
 from app.core.security import AccessTokenClaims, InvalidTokenError, decode_access_token
 from app.core.settings import Settings
 from app.domain.enums import Role
@@ -32,14 +32,19 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     boundary: a handler that raises halfway cannot leave half its writes behind.
     """
     factory = request.app.state.session_factory
+    deferred = _deferred_events(request)
+    deferred.has_session = True
     async with factory() as session:
         try:
             yield session
         except Exception:
             await session.rollback()
+            deferred.discard()
             raise
         else:
             await session.commit()
+            # Only now do the realtime events go out: a client reacting to one reads committed data.
+            await deferred.flush()
 
 
 def get_clock(request: Request) -> Clock:
@@ -53,10 +58,31 @@ def get_eta(request: Request) -> EtaService:
     return eta
 
 
-def get_events(request: Request) -> EventPublisher:
-    """Where realtime events go (`architecture.md` section 4)."""
-    publisher: EventPublisher = request.app.state.events
-    return publisher
+def _deferred_events(request: Request) -> DeferredEvents:
+    """The request's held events, created on first use and shared by the session and events deps."""
+    held: DeferredEvents | None = getattr(request.state, "deferred_events", None)
+    if held is None:
+        target: EventPublisher = getattr(request.app.state, "events", None) or NullEventPublisher()
+        held = DeferredEvents(target)
+        request.state.deferred_events = held
+    return held
+
+
+async def get_events(request: Request) -> AsyncIterator[EventPublisher]:
+    """Where realtime events go (`architecture.md` section 4) - after the commit, not before.
+
+    Events a handler publishes are held and sent once its session has committed. A route with no
+    session has nothing to wait for, so they go out when it finishes.
+    """
+    deferred = _deferred_events(request)
+    try:
+        yield deferred
+    except Exception:
+        deferred.discard()
+        raise
+    else:
+        if not deferred.has_session:
+            await deferred.flush()
 
 
 def get_push_sender(request: Request) -> PushSender:
@@ -143,6 +169,6 @@ SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 ClockDep = Annotated[Clock, Depends(get_clock)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 EtaDep = Annotated["EtaService", Depends(get_eta)]
-EventsDep = Annotated[EventPublisher, Depends(get_events)]
+EventsDep = Annotated[EventPublisher, Depends(get_events, scope="function")]
 PushDep = Annotated["PushSender", Depends(get_push_sender)]
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]

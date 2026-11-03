@@ -132,24 +132,32 @@ async def _handle(ingestor: GpsIngestor, message: Any) -> None:
 
     # One bad vehicle must never stop the stream for the other 199.
     try:
-        result = await ingestor.ingest(vehicle_id, operator_id, payload)
-        if result.written:
-            # Commit as soon as rows are written, not only on the flush loop's timer.
-            # `flush()` issues the INSERT inside an open transaction, so until something
-            # commits, the API's own connection cannot see those positions. The timer
-            # runs every 5 *real* seconds, which at `speed_factor: 60` left every
-            # position up to five simulated minutes invisible - long past
-            # `stale_gps_seconds`, so dispatch judged every cab stale and the sweep
-            # alerted on cabs that were driving (OQ-33).
-            #
-            # No extra cost in production: `flush_if_due` already rate-limits writes to
-            # one per `FLUSH_INTERVAL_SECONDS`, so this is the same commit, sooner.
-            await ingestor.session.commit()
+        async with ingestor.session_lock:
+            await _ingest_and_commit(ingestor, vehicle_id, operator_id, payload)
     except Exception as exc:  # noqa: BLE001
         await _recover(ingestor.session)
         logger.exception(
             "ingestor_handler_failed", vehicle_id=str(vehicle_id), error=type(exc).__name__
         )
+
+
+async def _ingest_and_commit(
+    ingestor: GpsIngestor, vehicle_id: uuid.UUID, operator_id: uuid.UUID, payload: Any
+) -> None:
+    """One message: take it in and, if that wrote rows, commit them. Caller holds the lock."""
+    result = await ingestor.ingest(vehicle_id, operator_id, payload)
+    if result.written:
+        # Commit as soon as rows are written, not only on the flush loop's timer.
+        # `flush()` issues the INSERT inside an open transaction, so until something
+        # commits, the API's own connection cannot see those positions. The timer
+        # runs every 5 *real* seconds, which at `speed_factor: 60` left every
+        # position up to five simulated minutes invisible - long past
+        # `stale_gps_seconds`, so dispatch judged every cab stale and the sweep
+        # alerted on cabs that were driving (OQ-33).
+        #
+        # No extra cost in production: `flush_if_due` already rate-limits writes to
+        # one per `FLUSH_INTERVAL_SECONDS`, so this is the same commit, sooner.
+        await ingestor.session.commit()
 
 
 async def _flush_loop(ingestor: GpsIngestor, session: Any, stopping: asyncio.Event) -> None:
@@ -162,8 +170,9 @@ async def _flush_loop(ingestor: GpsIngestor, session: Any, stopping: asyncio.Eve
             refresh = getattr(ingestor.clock, "refresh", None)
             if refresh is not None:
                 await refresh()
-            if await ingestor.flush():
-                await session.commit()
+            async with ingestor.session_lock:
+                if await ingestor.flush():
+                    await session.commit()
         except Exception as exc:  # noqa: BLE001
             # Roll back, or the session stays in an aborted transaction and *every*
             # later flush fails with "current transaction is aborted" - one bad batch
