@@ -205,9 +205,11 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name pg --platform linux/arm64 --network host             -e POSTGRES_DB=smartcab -e POSTGRES_USER=smartcab -e POSTGRES_PASSWORD=smartcab             imresamu/postgis:16-3.4
-          for _ in $(seq 1 90); do
-            docker exec pg pg_isready -U smartcab -d smartcab && break
-            sleep 2
+          # Not pg_isready: the image's init script runs a temporary server that answers it
+          # before the PostGIS extension has been created. Wait for the thing we need.
+          for _ in $(seq 1 120); do
+            docker exec pg psql -U smartcab -d smartcab -tAc "select postgis_version()" >/dev/null 2>&1 && break
+            sleep 3
           done
           docker exec pg psql -U smartcab -d smartcab -tAc "select postgis_version(), current_setting('server_version')"
           docker exec pg uname -m | grep -q aarch64
