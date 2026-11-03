@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     #: exercised before SMS exists. Off unless set, and the app refuses to start with it on
     #: anywhere but dev, test or sim (`_guard_production`).
     auth_test_login: bool = False
+    #: Lets `python -m app.demo_seed` run with APP_ENV=staging (never prod): a staging box with
+    #: no real riders yet can be given the demo operator so `make smoke` has something to drive.
+    #: Safe by itself - the demo logins still need an OTP there, because the test login stays
+    #: refused outside dev, test and sim. Leave unset once a real operator's data is loaded.
+    demo_data_allowed: bool = False
 
     # --- storage / transport ------------------------------------------------
     database_url: str = "postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab"

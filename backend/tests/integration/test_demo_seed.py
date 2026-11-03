@@ -98,6 +98,30 @@ async def test_it_refuses_to_run_against_staging() -> None:
         demo_seed.refuse_outside_dev(settings)
 
 
+def _settings(env: str, **extra: object) -> Settings:
+    return Settings(
+        app_env=env,
+        jwt_secret="x" * 40,
+        osm_contact_email="ops@example.com",
+        database_url="postgresql+asyncpg://t:t@localhost:5432/t",
+        **extra,  # type: ignore[arg-type]
+    )
+
+
+def test_staging_may_be_seeded_only_when_asked_for_and_prod_never() -> None:
+    demo_seed.refuse_outside_dev(_settings("staging", demo_data_allowed=True))
+    with pytest.raises(SystemExit, match="DEMO_DATA_ALLOWED"):
+        demo_seed.refuse_outside_dev(_settings("staging"))
+    with pytest.raises(SystemExit):
+        demo_seed.refuse_outside_dev(_settings("prod", demo_data_allowed=True))
+
+
+def test_allowing_demo_data_does_not_allow_the_otp_free_login_on_staging() -> None:
+    """The flag is about data. The no-OTP login stays a dev, test and sim thing."""
+    with pytest.raises(ValueError, match="AUTH_TEST_LOGIN"):
+        _settings("staging", demo_data_allowed=True, auth_test_login=True)
+
+
 def test_the_runbook_lists_the_numbers_the_seed_creates() -> None:
     from pathlib import Path
 

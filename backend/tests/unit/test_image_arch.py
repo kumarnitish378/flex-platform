@@ -80,3 +80,17 @@ def test_ci_builds_and_runs_the_backend_for_arm64() -> None:
     assert "platforms: linux/arm64" in ci
     assert "check_image_arch.py" in ci
     assert "alembic upgrade head" in ci
+
+
+def test_the_oracle_runbook_uses_commands_and_files_that_exist() -> None:
+    """A runbook that names a make target or script that is gone is worse than none."""
+    runbook = (ROOT / "docs" / "runbook-oracle-free.md").read_text("utf-8")
+    makefile = (ROOT / "Makefile").read_text("utf-8")
+    import re
+
+    for target in set(re.findall(r"\bmake (?:-s )?(staging-[a-z-]+|smoke)\b", runbook)):
+        assert f"\n{target}:" in makefile, f"make {target} is in the runbook but not the Makefile"
+    for script in set(re.findall(r"python scripts/([a-z_]+\.py)", runbook)):
+        assert (ROOT / "scripts" / script).exists(), script
+    for port in ("22", "80", "443", "8883"):
+        assert f"| {port} |" in runbook

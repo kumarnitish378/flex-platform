@@ -2,6 +2,7 @@
 
     python scripts/smoke.py                      # against http://localhost:8000/api/v1
     python scripts/smoke.py --api http://192.168.1.57:8000/api/v1
+    python scripts/smoke.py --api https://<ip>.sslip.io/api/v1 --otp-command "ssh ... make -s staging-otp PHONE={phone}"
     make smoke
 
 The stack must be up (`make phone-dev`, which turns the test login on) and the demo data loaded
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import subprocess
 import sys
 import time
 import uuid
@@ -77,6 +79,9 @@ class Failed(Exception):
 class Smoke:
     api: str
     speed_kph: float
+    #: Shell command that prints the one-time code just sent to `{phone}` (staging, where the test
+    #: login does not exist). Empty: use the dev/test/sim test login.
+    otp_command: str = ""
     http: httpx.Client = field(init=False)
     tokens: dict[str, str] = field(default_factory=dict)
     state: dict[str, Any] = field(default_factory=dict)
@@ -117,7 +122,28 @@ class Smoke:
         )
 
     def login(self, who: str, phone: str) -> None:
-        body = self.call("-", "POST", "/auth/test-login", json={"phone": phone})
+        if not self.otp_command:
+            body = self.call("-", "POST", "/auth/test-login", json={"phone": phone})
+            self.tokens[who] = body["access_token"]
+            return
+        # The real login: ask for a code, fetch it the way the operator would (the console OTP
+        # provider logs it), and verify - what a phone does once SMS exists.
+        self.call("-", "POST", "/auth/otp/request", (200, 202, 204), json={"phone": phone})
+        time.sleep(1.5)
+        done = subprocess.run(
+            self.otp_command.replace("{phone}", phone),
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+        words = done.stdout.split()
+        if done.returncode != 0 or not words:
+            raise Failed(f"could not fetch the code for {phone}: {done.stderr.strip()[:200]}")
+        body = self.call(
+            "-", "POST", "/auth/otp/verify", json={"phone": phone, "code": words[-1]}
+        )
         self.tokens[who] = body["access_token"]
 
     def event(self) -> dict[str, Any]:
@@ -319,6 +345,8 @@ class Smoke:
             mqtt.CallbackAPIVersion.VERSION2, client_id=f"smoke-{uuid.uuid4().hex[:8]}"
         )
         client.username_pw_set(duty["username"], duty["password"])
+        if duty.get("tls"):
+            client.tls_set()  # staging: MQTTS on 8883 with the certificate Caddy obtained
         client.connect(duty["host"], duty["port"], keepalive=30)
         client.loop_start()
         self.mqtt = client

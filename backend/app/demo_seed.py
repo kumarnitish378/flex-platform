@@ -7,7 +7,7 @@ to flag), and one login per role with a fixed phone number. The numbers are list
 
 **Idempotent**: every row has an id derived from its name, so a second run finds the rows it made
 and leaves them as they are. It never deletes anything, and it refuses to run outside dev, test
-and sim - the logins it creates work with the test login.
+and sim (staging only with DEMO_DATA_ALLOWED=true) - the logins it creates work with the test login.
 """
 
 from __future__ import annotations
@@ -277,8 +277,15 @@ async def _counts(session: AsyncSession) -> dict[str, int]:
 
 
 def refuse_outside_dev(settings: Settings) -> None:
-    if settings.app_env not in (AppEnv.dev, AppEnv.sim, AppEnv.test):
-        raise SystemExit(f"seed-demo refuses to run with APP_ENV={settings.app_env}")
+    """Dev, test and sim always; staging only when `DEMO_DATA_ALLOWED=true`; never prod."""
+    if settings.app_env in (AppEnv.dev, AppEnv.sim, AppEnv.test):
+        return
+    if settings.app_env is AppEnv.staging and settings.demo_data_allowed:
+        return
+    raise SystemExit(
+        f"seed-demo refuses to run with APP_ENV={settings.app_env}"
+        + (" (staging needs DEMO_DATA_ALLOWED=true)" if settings.app_env is AppEnv.staging else "")
+    )
 
 
 async def main() -> None:

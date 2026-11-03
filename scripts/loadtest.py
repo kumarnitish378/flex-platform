@@ -321,7 +321,13 @@ class PahoPublisher:
     """
 
     def __init__(
-        self, host: str, port: int, username: str, password: str, client_id: str
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        client_id: str,
+        tls: bool = False,
     ) -> None:
         import paho.mqtt.client as paho
 
@@ -329,6 +335,8 @@ class PahoPublisher:
             paho.CallbackAPIVersion.VERSION2, client_id=client_id
         )
         self._client.username_pw_set(username, password)
+        if tls:
+            self._client.tls_set()
         self._client.reconnect_delay_set(min_delay=1, max_delay=10)
         self._address = (host, port)
 
@@ -413,6 +421,7 @@ async def driver_agent(number: int, shared: Shared, delay: float) -> None:
             mqtt["username"],
             mqtt["password"],
             f"lt-{number}-{uuid.uuid4().hex[:6]}",
+            bool(mqtt.get("tls")),
         ) as client:
             await publish(client)
             while not shared.stop.is_set():

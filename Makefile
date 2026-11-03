@@ -4,7 +4,7 @@
 # (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
 # reads the `## <description>` comment on the line above each target.
 
-.PHONY: staging-addresses staging-broker-cert phone-dev phone-dev-stop phone-dev-info seed-demo smoke loadtest-seed loadtest onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
+.PHONY: staging-seed-demo staging-otp staging-addresses staging-broker-cert phone-dev phone-dev-stop phone-dev-info seed-demo smoke loadtest-seed loadtest onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
         test test-domain-coverage lint format api-client sim-quick sim-full sim-policies         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
@@ -116,9 +116,9 @@ loadtest:
 onboard-dry-run:
 	python scripts/onboard_dry_run.py $(FILE)
 
-## End-to-end smoke test against the running stack (needs make phone-dev + make seed-demo; ~4 min)
+## End-to-end smoke test against the running stack (needs make phone-dev + make seed-demo; ~4 min). ARGS="--api https://HOST/api/v1 --otp-command ..." for staging
 smoke:
-	python scripts/venv_exec.py scripts/smoke.py
+	python scripts/venv_exec.py scripts/smoke.py $(ARGS)
 
 ## Start the stack a scenario needs (broker, migrations, API, GPS ingestor)
 stack-up:
@@ -174,6 +174,14 @@ staging-logs:
 staging-mqtt-cert:
 	$(STAGING) up mqtt-certs
 	$(STAGING) restart mosquitto
+
+## Load the demo operator, cabs and riders into the staging database (idempotent; needs DEMO_DATA_ALLOWED=true in .env.staging)
+staging-seed-demo:
+	$(STAGING) exec api python -m app.demo_seed
+
+## Print the newest login code sent to PHONE (the console OTP provider logs it; masked number, so the last 4 digits match)
+staging-otp:
+	@$(STAGING) logs --no-log-prefix --since 3m api 2>/dev/null | grep otp_console_delivery | grep -F -- '$(shell echo $(PHONE) | tail -c 5)' | tail -1 | sed -n 's/.*"code": "\([0-9]*\)".*/\1/p'
 
 ## Print SITE_ADDRESS / MONITORING_ADDRESS for a box with an IP and no domain (IP=<public IPv4>; uses sslip.io)
 staging-addresses:
