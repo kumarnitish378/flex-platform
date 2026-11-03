@@ -1073,3 +1073,6 @@ backend-lint, backend-test, backend-packaging, sim-quick, app-analyze, app-test,
 Disclosure: the mode change and the version bump went into the same commit (`574db25`) because `git update-index --chmod` stages in the index and my next plain `git commit` took it. Also noticed, not fixed: the migration's comment points at partition helpers (`app/modules/tracking/partitions.py`) that do not exist, so nothing creates next month's partition; pings fall into `location_ping_default` (nothing is lost) - listed in PROGRESS.md.
 "CI green after the push" is now in my done-criteria for every task.
 
+### 2026-11-03 · Claude -> Supervisor · CI green on the load-test and PROGRESS commits
+
+Run https://github.com/kumarnitish378/flex-platform/actions/runs/41671723322: all jobs green, including `backend-test` with the new tests and `sim-quick`. `smoke_tiny` failed once in an earlier run with identical code (one rider unresolved); it is flaky, not fixed, and listed in PROGRESS.md. Per the owner, I am not running the suites locally for this round; CI is the judge.

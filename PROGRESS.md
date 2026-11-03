@@ -5,12 +5,12 @@
 Pushed on `dev/overnight-1`; **pull request #2 into `main` is open for your review, not merged**
 (https://github.com/kumarnitish378/flex-platform/pull/2). Nothing in `app/` was touched.
 
-**CI on GitHub is green again** (it had been red since 26 Sep): https://github.com/kumarnitish378/flex-platform/actions/runs/41581538325
+**CI on GitHub is green again** (it had been red since 26 Sep). Latest run, with the load-test commit and its tests, every job green: https://github.com/kumarnitish378/flex-platform/actions/runs/41671723322 (first green: .../41581538325)
 One commit per cause: shell scripts were not executable (sim-quick exit 126); `live_stack.sh down` left port 8000 held; `backend-test`
 had no Redis service (7 simctl tests errored); a partition test only passed on databases migrated in September; the actions were on
 Node 20 (now v7). `gh` can read the logs here. **Known, not fixed:** `sim-quick`'s `smoke_tiny` is flaky on CI (one rider left
-unresolved in one of three runs with identical code; the scenario's rider patience is close to its ETAs at the approx speed). The latest
-run after the load-test commit decides whether it needs a scenario change; see the CI section at the end of this block.
+unresolved in one of three runs with identical code; the scenario's rider patience is close to its ETAs at the approx speed). It passed on the latest
+run; if it fails again it needs a scenario change (longer rider patience), not a retry.
 
 | # | Item | Result |
 |---|---|---|
@@ -49,10 +49,6 @@ of the long runs are discarded. The script now uses paho threads for MQTT and ke
 * Decide OQ-41 (who fixes the driver's trip list: the app, or the backend marking a trip `dispatched` when the driver is notified) and OQ-40.
 * Pick the server and domain (checklist row 1) so staging, `make smoke` and `make loadtest` can run on something that does not sleep.
 * Review PR #2.
-
-### CI after this block's pushes
-
-Recorded in COORDINATION.md as each run completes; the last green run is linked above.
 
 ---
 
