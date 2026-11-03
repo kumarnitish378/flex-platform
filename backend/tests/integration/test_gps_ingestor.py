@@ -161,6 +161,15 @@ async def test_the_ping_lands_in_the_right_partition(
     """Partitioning is invisible to the query but must actually route the row."""
     from sqlalchemy import text
 
+    # The migration creates monthly partitions around the day it is *run* (last month and the
+    # next three), so a database migrated in November has none for this test's September clock -
+    # which made the test pass on a developer's old database and fail on a fresh CI one.
+    await db_session.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS location_ping_2026_09 PARTITION OF location_ping "
+            "FOR VALUES FROM ('2026-09-01') TO ('2026-10-01')"
+        )
+    )
     ingestor = GpsIngestor(db_session, clock)
     await ingestor.ingest(world["vehicle_id"], world["operator_id"], ping())
     await ingestor.flush()
