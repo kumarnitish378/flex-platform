@@ -71,3 +71,12 @@ def test_no_workflow_or_doc_still_points_at_the_amd64_only_image() -> None:
         if "postgis/postgis" in path.read_text("utf-8").replace("imresamu/postgis", "")
     ]
     assert offenders == []
+
+
+def test_ci_builds_and_runs_the_backend_for_arm64() -> None:
+    """The regression guard for aarch64 is a CI job, so the job itself must not be dropped."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
+    assert "\n  arm64:\n" in ci
+    assert "platforms: linux/arm64" in ci
+    assert "check_image_arch.py" in ci
+    assert "alembic upgrade head" in ci

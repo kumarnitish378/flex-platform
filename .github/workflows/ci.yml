@@ -152,6 +152,68 @@ jobs:
           print('production install imports cleanly')
           "
 
+  # Staging runs on an Oracle Cloud Always Free ARM VM (aarch64). An image with no arm64 build,
+  # or a Python dependency with no aarch64 wheel, is discovered when somebody deploys - so the
+  # backend is built for linux/arm64 here (under QEMU), imports its heavy dependencies, and the
+  # migrations run against the multi-arch PostGIS image, also as arm64.
+  arm64:
+    needs: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - if: needs.detect.outputs.backend != 'true'
+        run: echo "backend/ does not exist yet - nothing to build."
+      - if: needs.detect.outputs.backend == 'true'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - if: needs.detect.outputs.backend == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - if: needs.detect.outputs.backend == 'true'
+        name: Every image the compose files pull has a linux/arm64 build
+        run: python3 scripts/check_image_arch.py infra/docker-compose.yml infra/docker-compose.staging.yml
+
+      - if: needs.detect.outputs.backend == 'true'
+        name: The backend image builds for arm64
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          platforms: linux/arm64
+          load: true
+          tags: smartcab-backend:arm64
+          cache-from: type=gha,scope=backend-arm64
+          cache-to: type=gha,scope=backend-arm64,mode=max
+
+      - if: needs.detect.outputs.backend == 'true'
+        name: It runs on arm64 and imports the compiled dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 smartcab-backend:arm64 python - <<'PY'
+          import platform
+          assert platform.machine() == "aarch64", platform.machine()
+          import app.ingestor, app.workers.celery_app  # noqa: E401
+          import asyncpg, ortools, shapely, geoalchemy2, aiomqtt, celery, redis  # noqa: E401, F401
+          print("arm64 ok:", platform.machine(), "ortools", ortools.__version__, "shapely", shapely.__version__)
+          PY
+
+      - if: needs.detect.outputs.backend == 'true'
+        name: PostGIS starts on arm64 and the migrations apply to it
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name pg --platform linux/arm64 --network host             -e POSTGRES_DB=smartcab -e POSTGRES_USER=smartcab -e POSTGRES_PASSWORD=smartcab             imresamu/postgis:16-3.4
+          for _ in $(seq 1 90); do
+            docker exec pg pg_isready -U smartcab -d smartcab && break
+            sleep 2
+          done
+          docker exec pg psql -U smartcab -d smartcab -tAc "select postgis_version(), current_setting('server_version')"
+          docker exec pg uname -m | grep -q aarch64
+          docker run --rm --platform linux/arm64 --network host             -e DATABASE_URL=postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab             smartcab-backend:arm64 python -m alembic upgrade head
+          docker exec pg psql -U smartcab -d smartcab -tAc "select count(*) from location_ping"
+
   # The staging deployment is code too (task R01). A Dockerfile that no longer builds,
   # or a compose file with a typo in it, is discovered at the worst possible moment -
   # when somebody is deploying. Both are cheap to check on every push.
