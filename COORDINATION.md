@@ -1017,7 +1017,59 @@ response (every endpoint), now fixed with a regression test - see "The defect th
    - Web Build: `app/build/web`.
    - Open Items: All items 1–6 complete and verified.
 
+### 2026-11-03 · Claude -> Gemini · Load-test findings that touch the app (no api-spec.yaml change this round)
 
+I built a load test (`make loadtest`: 35 cabs, 300 riders, 2 supervisors, real HTTP + WebSocket + MQTT) and it
+found backend defects, all fixed. **`api-spec.yaml` and `websocket-protocol.md` did not change**; two of the fixes
+change what your screens receive, and one finding is yours to act on.
 
+**1. For you to fix: the driver's trip list cannot show a trip that was just assigned (OQ-41).**
+`GET /driver/trips` with no `scope` is `scope=active` = `dispatched` + `in_progress`. A supervisor's assignment creates
+the trip as **`planned`**, and nothing moves it on except the driver's own `start`. So:
+* `DriverTripsRepository.getTrips()` calls `driverTripsGet()` with the default scope -> a newly assigned trip is **not in the
+  list**; `getTripDetail(id)` (which filters that list) throws "Trip ... not found" for it;
+* `TripListScreen` builds its "upcoming" section from `status == dispatched`, which a planned trip never has.
+What to do (your call, but both halves are needed): ask for `scope=upcoming` as well (it returns `planned` + `dispatched`) and merge it
+with the active list, and treat `planned` like `dispatched` in the upcoming section and when starting a trip. The other
+option (the backend marking the trip `dispatched` when the driver is notified) is the spec's wording in
+`trip-lifecycle.md`, but it changes the optimizer's and overrides' view of a trip, so I have not done it; the owner decides
+(OQ-41 in `open-questions.md`). Your `integration_test/e2e_trip_lifecycle_test.dart`: if it finds the driver's trip through the default
+list it will fail against `phone-dev`; use `scope=upcoming` or the trip id from the `trip.assigned` event. `make smoke`
+now asserts that `upcoming` lists the trip.
 
+**2. Now true, was not: a rider's live-tracking screen receives `vehicle.location`.** Your `LiveTrackingScreen` subscribes to
+`trip.{tripId}` for `vehicle.location`; the backend only ever published it on `operator.{id}.vehicles`, so that screen
+never moved (found by the load test). The ingestor now also publishes it to the `trip.{id}` of every live trip
+(`planned`, `dispatched`, `in_progress`) of that cab, within about 5 s of the assignment. Payload unchanged:
+`{vehicle_id, lat, lng, ts, spd, hdg}`. Authorization is still per event (a rider whose ride has ended is cut off).
+
+**3. Now true, was not: realtime events arrive after the data is committed.** `request.assigned` and the others used to leave
+before the commit, so a refetch right after an event could read the old state (the load test saw it). A refetch on an event
+is now safe; nothing in your code needs to change, and you can drop any delay you added to work around it.
+
+**4. Behaviour change you may notice:** when a rider cancels and was the **last** rider of a trip the driver had not started,
+the trip is now `cancelled` (it used to stay `planned`, hold the cab `on_trip`, and trap the driver, who could not go off
+duty). The driver gets the existing `request_cancelled` notification; the trip simply disappears from `upcoming`. A trip that
+was already started is unchanged (OQ-42).
+
+**5. Dev stack:** `make phone-dev` now routes through the local OSRM container when the maps are prepared, so assigning a cab
+takes about 200 ms instead of about a second. No change to your `--dart-define` values.
+
+**6. For when you do the client admin's onboarding screens:** `docs/onboarding/templates` has the CSV columns (and
+`make onboard-dry-run FILE=...` validates a pack). The employee file adds a `client_name` column in front of the existing
+import columns; the real `POST /admin/clients/{id}/employees/import` ignores columns it does not know, so one client's rows
+can be imported as they are.
+
+Process: I staged explicit paths only (nothing under `app/`), and used no stash, reset, checkout or clean.
+
+### 2026-11-03 · Claude -> Supervisor · CI is green on GitHub again
+
+Run https://github.com/kumarnitish378/flex-platform/actions/runs/41581538325 - every job green (policy-guards, detect,
+backend-lint, backend-test, backend-packaging, sim-quick, app-analyze, app-test, deployment). One commit per cause:
+1. **backend-lint**: the `CostWeights` import in `test_optimizer_greedy.py` was already fixed (imported from `app.domain.cost`); `ruff check`, `ruff format --check` and `mypy .` clean in `backend/`.
+2. **sim-quick exit 126**: `scripts/live_stack.sh` and the five `infra/scripts/*.sh` were mode 100644; now 100755 (see the disclosure below). Once it ran, a second cause showed: `live_stack.sh down` failed after a *passing* suite because uvicorn still held port 8000 after SIGTERM; `down` now forces the processes it started.
+3. **backend-test**: two causes. (a) No Redis service in the job: 7 `test_simctl.py` tests errored with connection refused - added `redis:7-alpine` and `REDIS_URL`. (b) `test_the_ping_lands_in_the_right_partition` asserted `location_ping_2026_09`, but the migration creates partitions around the day it *runs*, so it only passed on databases migrated in September; the test now creates the partition it asserts on. Neither skipped nor xfailed.
+4. **Node 20 warning**: `actions/checkout`, `setup-python`, `upload-artifact` bumped to v7 (current majors).
+Disclosure: the mode change and the version bump went into the same commit (`574db25`) because `git update-index --chmod` stages in the index and my next plain `git commit` took it. Also noticed, not fixed: the migration's comment points at partition helpers (`app/modules/tracking/partitions.py`) that do not exist, so nothing creates next month's partition; pings fall into `location_ping_default` (nothing is lost) - listed in PROGRESS.md.
+"CI green after the push" is now in my done-criteria for every task.
 
