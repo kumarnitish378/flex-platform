@@ -66,7 +66,7 @@ jobs:
     # they skip, and tenant-isolation regressions would reach main unnoticed.
     services:
       postgres:
-        image: postgis/postgis:16-3.4
+        image: imresamu/postgis:16-3.4
         env:
           POSTGRES_DB: smartcab
           POSTGRES_USER: smartcab
@@ -273,7 +273,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgis/postgis:16-3.4
+        image: imresamu/postgis:16-3.4
         env:
           POSTGRES_DB: smartcab
           POSTGRES_USER: smartcab

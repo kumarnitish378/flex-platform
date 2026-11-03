@@ -12,7 +12,7 @@ name: smartcab
 
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    image: imresamu/postgis:16-3.4
     container_name: smartcab-postgres
     restart: unless-stopped
     environment:

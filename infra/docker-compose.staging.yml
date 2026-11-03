@@ -46,7 +46,7 @@ x-backend: &backend
 services:
   # --- data ------------------------------------------------------------------
   postgres:
-    image: postgis/postgis:16-3.4
+    image: imresamu/postgis:16-3.4
     container_name: smartcab-staging-postgres
     restart: unless-stopped
     environment:
@@ -423,7 +423,7 @@ services:
 
   # --- backups ----------------------------------------------------------------------
   backup:
-    image: postgis/postgis:16-3.4
+    image: imresamu/postgis:16-3.4
     container_name: smartcab-staging-backup
     restart: unless-stopped
     environment:

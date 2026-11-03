@@ -18,13 +18,13 @@ Everything below runs from the repository root on the VM.
 | `broker-seed` | same image | writes Mosquitto's credential files once, before it starts | — |
 | `broker-sync` | same image | rewrites them on duty changes and SIGHUPs the broker | nothing |
 | `migrate` | same image | `alembic upgrade head`, runs once and exits | — |
-| `postgres` | `postgis/postgis:16-3.4` | the database | the compose network only |
+| `postgres` | `imresamu/postgis:16-3.4` | the database | the compose network only |
 | `redis` | `redis:7-alpine` | cache, pub/sub, Celery broker | the compose network only |
 | `mosquitto` | `eclipse-mosquitto:2` | MQTT broker, **TLS on 8883** | driver phones |
 | `prometheus` | `prom/prometheus` | metrics, 30-day retention | Grafana only |
 | `grafana` | `grafana/grafana` | dashboards | the internet, on its own hostname |
 | `loki` + `promtail` | `grafana/*` | log shipping and search | Grafana only |
-| `backup` | `postgis/postgis` | `pg_dump` daily, 14-day retention | — |
+| `backup` | `imresamu/postgis` | `pg_dump` daily, 14-day retention | — |
 
 Four processes share one image on purpose: the API, the ingestor, the worker and the beat
 are the same code with different entrypoints, and building them separately would let them

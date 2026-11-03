@@ -12,7 +12,7 @@
 ## 2. Services (infra/docker-compose.yml)
 | Service | Image (suggested) | Port | Notes |
 |---|---|---|---|
-| postgres | `postgis/postgis:16-3.4` | 5432 | DB `smartcab` |
+| postgres | `imresamu/postgis:16-3.4` | 5432 | DB `smartcab` |
 | redis | `redis:7` | 6379 | |
 | mosquitto | `eclipse-mosquitto:2` | 1883 (dev), 8883 (TLS) | config in `infra/mosquitto/` |
 | caddy | `caddy:2-alpine` | 80/443 | staging/prod only (`docker-compose.staging.yml`) |
