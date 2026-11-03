@@ -1,5 +1,33 @@
 # Smart Cab - PROGRESS
 
+## Before a real pilot: exactly what is still needed (2026-11-03)
+
+Nothing below is code I can write for you: each needs a decision, an account or a payment that is yours.
+"Elapsed" is how long it takes **you** (including waiting on others); "then" is what I or Gemini do once you have
+done it. Items are ordered by what blocks the others.
+
+| # | What | Why it blocks | Your action | Elapsed | Then (engineering) |
+|---|---|---|---|---|---|
+| 1 | **A server with HTTPS (R01, staging)** | No VM exists; the phones need HTTPS (a release build refuses plain `http://`), the broker needs TLS, and ACME needs a real DNS name. Everything else is staged for it: `docs/05-engineering/deployment.md`, `make staging-up`, Caddy, Prometheus, Grafana, Loki, backups | Rent one Linux VM (4 vCPU / 8 GB to start; 8 vCPU / 16 GB once the maps are self-hosted), buy or pick a domain, point an A record (and `grafana.` / `mqtt.` if separate) at it, open ports 80, 443, 8883 | 1-2 days (DNS can take hours) | Half a day to bring it up and run `make smoke` and `make loadtest` against it. The laptop numbers below are an upper bound; the VM's are the ones that count |
+| 2 | **SMS for the login OTP (OQ-16)** | `OTP_PROVIDER=console` prints the code in a log; no rider or driver can log in on a real phone. The test login that phones use now is blocked outside development on purpose | Choose a provider; in India register the company on **DLT** with the telecom operator, then a sender ID and the OTP message template (company PAN/GST and an authorisation letter are typical), and give me the API key | DLT approval: about 1-2 weeks; the provider account: 1-3 days | About a day: the adapter, a sandbox test, switching `OTP_PROVIDER`, a runbook entry. Cost per SMS is the provider's; budget it before the choice |
+| 3 | **Push notifications (OQ-20)** | `PUSH_PROVIDER=log`: nobody is told their cab is assigned unless the app is open (the WebSocket carries it only while connected) | Decide FCM (the default in the docs) or self-hosted ntfy. For FCM: a Firebase project, the Android app registered with the release package name, the service-account JSON for the server and `google-services.json` for Gemini | 1-2 hours for FCM | Gemini: the `firebase_messaging` wiring, token registration (the `POST /devices` endpoint exists); me: the FCM v1 sender and a test. About 2-3 days together |
+| 4 | **Play Console (R02)** | A release build exists (`app-release.apk`) but cannot reach testers without a Play listing; Google must also approve the **background-location** declaration, which a driver app cannot run without | Create the Play developer account (a one-time fee; an organisation account needs a D-U-N-S number and takes longer than a personal one), make the app, host the privacy-policy URL, fill in the background-location and data-safety forms, and keep the **upload keystore** safe and backed up (`key.properties` is deliberately not in the repo) | Account verification 2-7 days; the location review 1-2 weeks | Gemini attaches the signed bundle to the internal track. Until approved, drivers can side-load the APK |
+| 5 | **CI (F02)** | The pipeline is written and parked in `.github/workflows-pending/` because no credential here has GitHub's `workflow` scope; nothing runs on a pull request | `gh auth refresh -s workflow` (once, as the repository owner) | 10 minutes | I move the file, push, and fix whatever the first real run shows (an hour or two) |
+| 6 | **Self-hosted maps on the server** | The public OSM tile and routing servers may be used for a demo, not for a 35-cab fleet; the policy asks for self-hosting beyond that (ADR-0010) | Give the VM enough disk and RAM for the NCR extract (8 vCPU / 16 GB is the documented size) | Same day as item 1 | Half a day: `make maps` on the VM, then `OSRM_URL` / `TILES_URL` in the environment (config only) |
+| 7 | **Alerts that reach a person** | Prometheus rules evaluate and show in Grafana; **nothing pages anyone**, and there is no off-site backup copy | Say where alerts should go (WhatsApp is out of scope by decision; email, Telegram or SMS) and where a backup copy should live | A decision | A day: Alertmanager and the off-site copy |
+| 8 | **The operator's real data** | R03 stays open until it is loaded | Fill the seven CSVs and run `make onboard-dry-run` (`docs/runbook-pilot-onboarding.md`) | About a day of the operator's time | Half a day to load; training half a day |
+| 9 | **Two product decisions** | OQ-40 (a cab that serves several clients in a day) changes the billing report; OQ-41 (the driver's trip list) decides who fixes a bug that currently hides a newly assigned trip from the driver app | Decide both | A conversation | OQ-41 is a few lines either way |
+| 10 | **What the app tells drivers and riders about location** | Drivers' location is tracked while on duty, riders' homes are stored; the Play form and the operator's own staff will ask | Get the wording reviewed by whoever advises the company on data protection; I do not give legal advice | A few days | Gemini puts the agreed text in the app and the privacy page |
+
+**Not blocking, but worth saying out loud:** the optimizer's performance (vehicles used, median wait) is parked at your
+instruction; manual and `semi_auto` run the pilot's first weeks without it. The simulator suites and `make smoke` have not
+yet been run against a real phone's GPS - `docs/runbook-phone-testing.md` is the first step toward that.
+
+Also found and not fixed: the partition migration's comment points at helpers (`app/modules/tracking/partitions.py`) that do not exist, so nothing creates next month's `location_ping` partition. Pings fall into `location_ping_default`, so nothing is lost, but a monthly job is needed before the pilot has months of data.
+
+
+---
+
 ## Overnight run 2026-11-02 - read this first
 
 Everything below is committed and pushed on `dev/overnight-1` (one commit per item). Nothing in `app/` was touched.
