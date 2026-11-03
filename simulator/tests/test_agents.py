@@ -128,6 +128,17 @@ def engine() -> Engine:
     return Engine(scenario)
 
 
+@pytest.fixture
+def one_hour_engine() -> Engine:
+    """smoke_tiny shortened to the hour it used to be.
+
+    The OQ-29 tests need the demand window to close *before* a waiting rider's patience runs out,
+    which the two-hour scenario no longer guarantees.
+    """
+    scenario = load_scenario(SCENARIOS / "smoke_tiny.yaml").model_copy(update={"duration_hours": 1})
+    return Engine(scenario)
+
+
 def with_platform(engine: Engine, platform: FakePlatform) -> FakePlatform:
     engine.platform = platform  # type: ignore[assignment]
     return platform
@@ -297,7 +308,8 @@ def test_a_scenario_can_refuse_to_wait(engine: Engine) -> None:
     assert summary.drain_capped is True
 
 
-def test_a_rider_nobody_came_for_is_unresolved(engine: Engine) -> None:
+def test_a_rider_nobody_came_for_is_unresolved(one_hour_engine: Engine) -> None:
+    engine = one_hour_engine
     """OQ-29. They asked for a cab and never got an answer. Counted as `not_travelling`
     this was the platform's worst failure recorded as no demand at all, and
     `all_requests_terminal` passed straight over it."""
@@ -317,7 +329,8 @@ def test_a_rider_nobody_came_for_is_unresolved(engine: Engine) -> None:
     assert summary.abandoned == 1
 
 
-def test_a_rider_left_waiting_does_not_cancel_after_the_window(engine: Engine) -> None:
+def test_a_rider_left_waiting_does_not_cancel_after_the_window(one_hour_engine: Engine) -> None:
+    engine = one_hour_engine
     """Their patience runs out during the drain, which is not a moment the day contained.
     Giving up there would report a cancellation that never happened and hide the
     abandonment behind a `gave_up`."""

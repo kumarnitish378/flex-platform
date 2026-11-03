@@ -324,7 +324,7 @@ def test_one_request_is_handled_at_a_time(engine: Engine) -> None:
 
     engine.run()
 
-    assert 0 < len(platform.assigned) <= 31
+    assert 0 < len(platform.assigned) <= 61
 
 
 def test_a_faster_supervisor_gets_through_more(engine: Engine) -> None:
