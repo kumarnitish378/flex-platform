@@ -157,9 +157,11 @@ case "${1:-up}" in
     echo "stack up on http://localhost:${API_PORT}"
     ;;
   down)
+    pids=""
     for name in api ingestor; do
       pid="$(cat "$PID_DIR/$name" 2>/dev/null || echo)"
       [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+      pids="$pids $pid"
       rm -f "$PID_DIR/$name"
     done
     docker rm -f "$BROKER_NAME" >/dev/null 2>&1 || true
@@ -172,6 +174,22 @@ case "${1:-up}" in
       port_is_free "$API_PORT" && break
       sleep 1
     done
+    # uvicorn on SIGTERM waits for its open connections (the simulator's keep-alive and
+    # WebSocket clients) and can take longer than that; CI then failed "stack down" after a
+    # passing suite. A stack that was ours to stop is ours to force.
+    if ! port_is_free "$API_PORT"; then
+      # shellcheck disable=SC2086
+      kill -9 $pids 2>/dev/null || true
+      if command -v fuser >/dev/null 2>&1; then
+        fuser -k -9 "${API_PORT}/tcp" >/dev/null 2>&1 || true
+      elif command -v lsof >/dev/null 2>&1; then
+        lsof -ti ":${API_PORT}" | xargs -r kill -9 2>/dev/null || true
+      fi
+      for _ in $(seq 1 5); do
+        port_is_free "$API_PORT" && break
+        sleep 1
+      done
+    fi
     if port_is_free "$API_PORT"; then
       echo "stack down"
     else
