@@ -4,7 +4,7 @@
 # (see README.md). Targets and descriptions are parsed by scripts/make_help.py, which
 # reads the `## <description>` comment on the line above each target.
 
-.PHONY: phone-dev phone-dev-stop phone-dev-info seed-demo smoke loadtest-seed loadtest onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
+.PHONY: staging-addresses staging-broker-cert phone-dev phone-dev-stop phone-dev-info seed-demo smoke loadtest-seed loadtest onboard-dry-run create-operator help venv install up down check-infra up-maps migrate seed backend-dev ingestor worker beat \
         test test-domain-coverage lint format api-client sim-quick sim-full sim-policies         sim-offline stack-up stack-down maps
 
 ## List available targets and whether their prerequisites exist
@@ -174,6 +174,14 @@ staging-logs:
 staging-mqtt-cert:
 	$(STAGING) up mqtt-certs
 	$(STAGING) restart mosquitto
+
+## Print SITE_ADDRESS / MONITORING_ADDRESS for a box with an IP and no domain (IP=<public IPv4>; uses sslip.io)
+staging-addresses:
+	python scripts/sslip.py $(IP)
+
+## Check the MQTT broker's certificate is valid for HOST (a phone's check); HOST=<SITE_ADDRESS>
+staging-broker-cert:
+	python scripts/check_broker_cert.py $(HOST)
 
 ## Take a database backup now (the staging stack also takes one daily)
 backup:

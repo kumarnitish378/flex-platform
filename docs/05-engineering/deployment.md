@@ -46,6 +46,14 @@ The development compose publishes them so a developer can connect; that is why
 
    Caddy proves control of these over HTTP; if they do not resolve yet, the ACME
    challenge fails and you get no certificate and no MQTTS.
+   **No domain?** Use sslip.io, which resolves any name that spells an address:
+   `make staging-addresses IP=<the VM's public IPv4>` prints `SITE_ADDRESS=1-2-3-4.sslip.io` and
+   `MONITORING_ADDRESS=grafana.1-2-3-4.sslip.io` for `.env.staging`. Caddy obtains a real certificate
+   for that name, the broker serves the same certificate (its SAN is `SITE_ADDRESS`), and the phone's
+   MQTT host is `SITE_ADDRESS`, so the names match with nothing else to configure. After the stack is up,
+   `make staging-broker-cert HOST=<SITE_ADDRESS>` checks the broker the way a phone does. Let's
+   Encrypt's per-domain weekly limit is shared by every sslip.io user; Caddy falls back to ZeroSSL on
+   its own if it is hit.
 3. **Secrets**, generated on the VM:
    ```bash
    cp infra/.env.staging.example infra/.env.staging
