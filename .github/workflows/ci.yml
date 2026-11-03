@@ -29,7 +29,7 @@ jobs:
       app: ${{ steps.check.outputs.app }}
       simulator: ${{ steps.check.outputs.simulator }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: check
         shell: bash
         run: |
@@ -42,11 +42,11 @@ jobs:
     needs: detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.backend != 'true'
         run: echo "backend/ does not exist yet (task B01) - nothing to lint."
       - if: needs.detect.outputs.backend == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -81,11 +81,11 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.backend != 'true'
         run: echo "backend/ does not exist yet (task B01) - nothing to test."
       - if: needs.detect.outputs.backend == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -119,11 +119,11 @@ jobs:
     needs: detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.backend != 'true'
         run: echo "backend/ does not exist yet (task B01) - nothing to install."
       - if: needs.detect.outputs.backend == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -148,7 +148,7 @@ jobs:
     needs: detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.backend != 'true'
         run: echo "backend/ does not exist yet (task B01) - nothing to build."
 
@@ -221,7 +221,7 @@ jobs:
     needs: detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.app != 'true'
         run: echo "app/ has no pubspec.yaml yet (task A01) - nothing to analyze."
       - if: needs.detect.outputs.app == 'true'
@@ -239,7 +239,7 @@ jobs:
     needs: detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.app != 'true'
         run: echo "app/ has no pubspec.yaml yet (task A01) - nothing to test."
       - if: needs.detect.outputs.app == 'true'
@@ -287,11 +287,11 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab
       REDIS_URL: redis://localhost:6379/0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: needs.detect.outputs.simulator != 'true'
         run: echo "simulator/ does not exist yet (task M01) - nothing to run."
       - if: needs.detect.outputs.simulator == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -308,7 +308,7 @@ jobs:
       - if: always() && needs.detect.outputs.simulator == 'true'
         run: scripts/live_stack.sh down
       - if: failure() && needs.detect.outputs.simulator == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sim-quick-diagnostics
           path: |
@@ -320,7 +320,7 @@ jobs:
   policy-guards:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: No hard-coded map service URLs outside config and docs
         shell: bash
         run: |
