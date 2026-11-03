@@ -200,8 +200,8 @@ def test_engine_runs_to_the_scenario_end() -> None:
     assert summary.scenario == "smoke_tiny"
     assert summary.seed == 42
     assert summary.routing == "approx"
-    assert summary.simulated_seconds == 3600
-    assert summary.ended_at - summary.started_at == timedelta(hours=1)
+    assert summary.simulated_seconds == 7200
+    assert summary.ended_at - summary.started_at == timedelta(hours=2)
     assert summary.vehicles == 3
     assert summary.employees == 10
 

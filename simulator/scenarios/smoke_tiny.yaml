@@ -1,10 +1,14 @@
-# S01 smoke_tiny (scenarios.md): 3 cabs, 10 employees, 1 hour.
+# S01 smoke_tiny (scenarios.md): 3 cabs, 10 employees, 2 hours.
 # The CI scenario - it must stay small and fast.
 name: smoke_tiny
 version: 1
 seed: 42
 start: "2026-10-05T00:30:00Z"      # 06:00 IST
-duration_hours: 1
+# Two hours, not one: at the `approx` provider's city speeds a cross-town pickup is a 25-30 minute
+# drive, so with an hour a pooled rider's pickup could land either side of the closing time and
+# the run passed or failed on live timing (about one run in two on CI). Riders still waiting when
+# the window closes are 'unresolved' by design (OQ-29); this scenario must not depend on that edge.
+duration_hours: 2
 speed_factor: 60
 routing: approx                    # ADR-0010 rule 6: never the public OSM servers
 
