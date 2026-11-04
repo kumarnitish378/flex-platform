@@ -23,7 +23,7 @@ import simpy
 
 from sim.engine import Engine
 from sim.geo import LatLng, haversine_km
-from sim.pings import Ping, PingSink, ping_interval_seconds
+from sim.pings import DISTANCE_FILTER_M, HEARTBEAT_SECONDS, Ping, PingSink, ping_interval_seconds
 from sim.routing import Route
 
 # simulator-spec.md §4.
@@ -57,9 +57,29 @@ class VehicleAgent:
         self.engine = engine
         self.vehicle_id = vehicle_id
         self.position = start
+        #: Kilometres this cab has actually moved. Counted from the movement itself,
+        #: not from the pings (which carry GPS noise and are dropped on purpose by
+        #: some scenarios) and not from what dispatch planned: M11 measures what the
+        #: drivers drove.
+        self.odometer_km = 0.0
         self.speed_ms = 0.0
         self.heading = 0.0
         self.on_duty = False
+        #: True while `drive_to` is running, so a background `idle` pinger stays quiet.
+        self.driving = False
+
+        # Two faults that are NOT "off duty", and are not the same as each other (S06).
+        # Off duty means no GPS is collected at all - a privacy rule (non-functional.md),
+        # not a fault - so neither of these may be modelled by going off duty.
+        #: False while the receiver has no fix: nothing is recorded, so nothing exists to
+        #: send later. Those positions are gone.
+        self.has_fix = True
+        #: False while the phone has no network: positions are still recorded and are
+        #: uploaded in order once it reconnects (mqtt-topics.md).
+        self.connected = True
+        self._held: list[Ping] = []
+        #: Where and when the phone last published: the distance filter and heartbeat read it.
+        self._last_published: tuple[LatLng, float] | None = None
 
         self._sink = sink
         self._config = config or VehicleConfig()
@@ -81,19 +101,67 @@ class VehicleAgent:
         self.speed_ms = 0.0
         self.engine.record(f"{self.vehicle_id} off duty")
 
+    # --- faults (S06) -------------------------------------------------------
+
+    def lose_fix(self) -> None:
+        """The receiver stops resolving a position. Nothing is recorded meanwhile."""
+        self.has_fix = False
+        self.engine.record(f"{self.vehicle_id} lost its GPS fix")
+
+    def regain_fix(self) -> None:
+        self.has_fix = True
+        self.engine.record(f"{self.vehicle_id} regained its GPS fix")
+
+    def disconnect(self) -> None:
+        """The phone loses network. Positions keep being recorded, not sent."""
+        self.connected = False
+        self.engine.record(f"{self.vehicle_id} went offline")
+
+    def reconnect(self) -> int:
+        """Upload everything recorded while offline, oldest first.
+
+        In order, deliberately: `mqtt-topics.md` allows a batch upload after a
+        reconnection and the backend is expected to accept it, so a simulator that
+        shuffled or dropped the backlog would never test that.
+        """
+        self.connected = True
+        held, self._held = self._held, []
+        for ping in held:
+            self._sink.emit(ping)
+        self.engine.record(f"{self.vehicle_id} reconnected and uploaded {len(held)} pings")
+        return len(held)
+
+    @property
+    def held_pings(self) -> int:
+        """How many positions are waiting for a network."""
+        return len(self._held)
+
     # --- processes ----------------------------------------------------------
 
     def idle(self) -> Generator[simpy.Event, Any, None]:
-        """Sit still, pinging at the stationary cadence while on duty."""
+        """Sit still, pinging at the stationary cadence while on duty.
+
+        Stays quiet while `driving` is set: `drive_to` emits its own pings along the
+        route, and a background pinger running at the same time would double every
+        position the map receives.
+        """
         while True:
-            self._maybe_emit()
+            if not self.driving:
+                self._maybe_emit()
             yield self.engine.env.timeout(self._current_interval())
 
     def drive_to(self, destination: LatLng) -> Generator[simpy.Event, Any, None]:
         """Follow the routed geometry to `destination`, pinging on the way."""
+        self.driving = True
+        try:
+            yield from self._drive_to(destination)
+        finally:
+            self.driving = False
+
+    def _drive_to(self, destination: LatLng) -> Generator[simpy.Event, Any, None]:
         route = self.route_to(destination)
         if route.duration_seconds <= 0:
-            self.position = destination
+            self._move_to(destination)
             self._maybe_emit()
             return
 
@@ -106,12 +174,12 @@ class VehicleAgent:
                 break
 
             previous = self.position
-            self.position = route.position_at(elapsed)
+            self._move_to(route.position_at(elapsed))
             self._update_motion(previous, self.position, self._current_interval())
             self._maybe_emit()
             yield self.engine.env.timeout(self._current_interval())
 
-        self.position = destination
+        self._move_to(destination)
         self.speed_ms = 0.0
         self._stationary_since = self.engine.env.now
         self._maybe_emit()
@@ -140,6 +208,11 @@ class VehicleAgent:
         )
         return ping_interval_seconds(self.speed_ms, stationary_for)
 
+    def _move_to(self, point: LatLng) -> None:
+        """Move, and count the distance."""
+        self.odometer_km += haversine_km(self.position, point)
+        self.position = point
+
     def _update_motion(self, previous: LatLng, current: LatLng, seconds: float) -> None:
         distance_m = haversine_km(previous, current) * 1000.0
         self.speed_ms = distance_m / seconds if seconds > 0 else 0.0
@@ -151,26 +224,50 @@ class VehicleAgent:
             self._stationary_since = None
 
     def _maybe_emit(self) -> None:
-        """Emit a ping unless off duty, or unless this one is 'lost'."""
+        """Emit a ping unless off duty, without a fix, or unless this one is 'lost'."""
         if not self.on_duty:
+            return
+        if not self.has_fix:
+            # No fix means no position was ever known. Nothing to buffer.
+            return
+        if not self._phone_would_publish():
             return
         if self._config.ping_loss_rate > 0 and self._rng.random() < self._config.ping_loss_rate:
             return
 
         self._battery = max(0.0, self._battery - 0.001)
-        self._sink.emit(
-            Ping(
-                vehicle_id=self.vehicle_id,
-                ts=self.engine.now(),
-                lat=self._noisy_lat(),
-                lng=self._noisy_lng(),
-                spd=self.speed_ms,
-                hdg=self.heading,
-                acc=self._config.gps_noise_metres,
-                bat=int(self._battery),
-                src="sim",
-            )
+        ping = Ping(
+            vehicle_id=self.vehicle_id,
+            ts=self.engine.now(),
+            lat=self._noisy_lat(),
+            lng=self._noisy_lng(),
+            spd=self.speed_ms,
+            hdg=self.heading,
+            acc=self._config.gps_noise_metres,
+            bat=int(self._battery),
+            src="sim",
         )
+        if not self.connected:
+            # The driver app keeps recording and uploads on reconnect.
+            self._held.append(ping)
+            return
+        self._sink.emit(ping)
+
+    def _phone_would_publish(self) -> bool:
+        """The driver app's rule: a position after moving about 5 m, else a 60 s heartbeat.
+
+        Judged on the true position, not the noisy one a receiver reports - otherwise GPS
+        noise alone would look like movement and a parked cab would publish every sample.
+        """
+        now = self.engine.env.now
+        last = self._last_published
+        self._last_published = (self.position, now) if last is None else last
+        if last is not None:
+            moved_m = haversine_km(last[0], self.position) * 1000.0
+            if moved_m < DISTANCE_FILTER_M and now - last[1] < HEARTBEAT_SECONDS:
+                return False
+        self._last_published = (self.position, now)
+        return True
 
     def _noisy_lat(self) -> float:
         return self.position.lat + self._gps_offset_degrees()

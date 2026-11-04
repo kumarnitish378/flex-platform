@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from app.core import metrics
 from app.core.logging import get_logger
 from app.domain.geo import LatLng
 from app.modules.routing.rate_limit import RateLimiter
@@ -117,11 +118,16 @@ class OsrmRoutingProvider:
 
     async def _get(self, path: str, params: dict[str, str]) -> dict[str, Any] | None:
         """One request, or None when the answer must come from the fallback."""
+        operation = path.strip("/").split("/", 1)[0] or "route"
         if not await self._limiter.try_acquire(SERVICE):
+            # Counted here and not in the wrapper, because this is the one event the
+            # answer itself cannot show: a call that was never made.
+            metrics.routing_rate_limited.labels(service=SERVICE).inc()
             logger.info("osrm_rate_limited", path=path)
             return None
         try:
-            response = await self._client.get(f"{self._base_url}{path}", params=params)
+            with metrics.timed(metrics.routing_upstream_duration, operation=operation):
+                response = await self._client.get(f"{self._base_url}{path}", params=params)
             response.raise_for_status()
             payload: dict[str, Any] = response.json()
         except (httpx.HTTPError, ValueError) as exc:

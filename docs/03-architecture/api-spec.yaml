@@ -8,6 +8,16 @@ info:
     Phase 1 endpoints are complete. Phase 2+ endpoints are marked `x-phase` and may be refined before implementation.
     All times are ISO 8601 UTC. All requests except /auth/* need `Authorization: Bearer <access token>` and `X-Active-Role`.
     Errors use the `Error` schema. Pagination: `limit` (max 100) + `cursor`.
+    The realtime surface (`/ws`) cannot be described in OpenAPI; its contract is
+    `websocket-protocol.md`, referenced below under `x-websocket`, and the same
+    change-the-contract-first rule applies to it.
+x-websocket:
+  path: /api/v1/ws
+  contract: websocket-protocol.md
+  description: >
+    Access-token authenticated WebSocket. Clients subscribe to `operator.{id}.vehicles`,
+    `operator.{id}.requests`, `operator.{id}.alerts`, `trip.{id}` and `user.{id}`;
+    the server checks permission per channel and fans out from Redis pub/sub.
 servers:
   - url: http://localhost:8000/api/v1
     description: local dev
@@ -28,15 +38,21 @@ paths:
     post:
       tags: [auth]
       security: []
-      summary: Request OTP for a registered phone
+      summary: Request OTP
+      description: |
+        Always returns 202 for a well-formed phone number, whether or not it belongs to a
+        user. A 404 here would turn this endpoint into a directory of an operator's staff
+        and riders, which conflicts with the data-minimisation rules in non-functional.md
+        (Privacy). A code is only ever sent to a registered, active user.
+        See decision-log 2026-09-24 and OQ-24.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/OtpRequest'}
       responses:
-        '202': {description: OTP sent}
-        '404': {$ref: '#/components/responses/Error'}
+        '202': {description: Accepted. A code is sent only if the phone belongs to an active user.}
+        '422': {$ref: '#/components/responses/Error'}
         '429': {$ref: '#/components/responses/Error'}
   /auth/otp/verify:
     post:
@@ -55,6 +71,32 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/TokenPair'}
         '401': {$ref: '#/components/responses/Error'}
+  /auth/test-login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Testing-only login by phone, no OTP
+      description: |
+        **Not a production endpoint.** Lets the app skip the OTP while it is being tested.
+        It exists only when the server runs with `AUTH_TEST_LOGIN=true` **and** `APP_ENV` is
+        `dev`, `test` or `sim`; otherwise it answers 404 exactly as an unknown path would. The
+        server refuses to start with `AUTH_TEST_LOGIN=true` in `staging` or `prod`. It logs in an
+        **existing, active** user by phone and returns the tokens the OTP flow would have
+        returned, with that user's real roles. It never creates a user. Every use is logged as
+        `test_login_used`. The app must not show a way to reach it in a release build.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TestLoginRequest'}
+      responses:
+        '200':
+          description: Tokens
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenPair'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /auth/refresh:
     post:
       tags: [auth]
@@ -198,7 +240,7 @@ paths:
           description: Clients
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Client'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Client'}}}}
     post:
       tags: [admin]
       requestBody:
@@ -221,7 +263,7 @@ paths:
           description: Offices
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Office'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Office'}}}}
     post:
       tags: [admin]
       requestBody:
@@ -235,6 +277,43 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Office'}
+  /admin/clients/{client_id}/policy:
+    parameters: [{$ref: '#/components/parameters/ClientId'}]
+    get:
+      tags: [admin]
+      summary: What this client's own rules are, and what they resolve to
+      description: >
+        `allocation-rules.md` section 1: a client may override a handful of the
+        operator's numbers, and for the "stricter only" ones their value is used **only
+        when it is the stricter of the two**. The response carries both - what the
+        client set, and what the platform will actually apply - because an admin who
+        types a laxer number and sees it accepted but not applied has been misled.
+      responses:
+        '200':
+          description: Policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClientPolicy'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [admin]
+      summary: Set this client's policy
+      description: >
+        Creates the policy if the client has none. Every field is optional; a `null`
+        clears an override and returns that number to the operator's value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClientPolicyInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClientPolicy'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /admin/clients/{client_id}/employees:
     parameters: [{$ref: '#/components/parameters/ClientId'}]
     get:
@@ -321,6 +400,70 @@ paths:
                 client_id: {type: [string, 'null'], format: uuid}
       responses:
         '201': {description: Invited}
+  /admin/zones:
+    get:
+      tags: [admin]
+      summary: Operational zones, with how many employees each covers
+      parameters:
+        - {name: include_inactive, in: query, required: false, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: Zones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Zone'}}
+    post:
+      tags: [admin]
+      summary: Draw a zone
+      description: >
+        Creating a zone re-derives `employee.zone_id` for every employee of the
+        operator, so the answer to "who is in this zone" is correct the moment the zone
+        exists rather than from the next import onwards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ZoneInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Zone'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /admin/zones/{zone_id}:
+    parameters: [{name: zone_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    patch:
+      tags: [admin]
+      summary: Rename, redraw or deactivate a zone
+      description: Re-derives every affected employee, the same way creating one does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ZoneUpdate'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Zone'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [admin]
+      summary: Remove a zone
+      description: >
+        Refused with 409 while a mode setting is scoped to it - deleting would silently
+        widen that rule to every zone, which is the opposite of what it says. Deactivate
+        it instead, or delete the setting first.
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /admin/config:
     get:
       tags: [admin]
@@ -439,6 +582,21 @@ paths:
         '201': {description: Alert raised}
 
   /driver/duty:
+    get:
+      tags: [driver]
+      summary: Whether this driver is on duty, and in which cab
+      description: >
+        What the driver app shows when it reopens. Without it the app cannot tell an
+        off-duty driver from one whose session it has forgotten, and `POST /driver/duty`
+        with `on_duty: true` on an open session is a 409 - so the app would have to
+        provoke an error to find out where it stands. Returns the MQTT credentials when
+        on duty, so a reconnecting app can resume publishing without a new duty session.
+      responses:
+        '200':
+          description: Current duty state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DutyState'}
     post:
       tags: [driver]
       summary: Go on or off duty
@@ -452,6 +610,7 @@ paths:
               properties:
                 on_duty: {type: boolean}
                 vehicle_id: {type: [string, 'null'], format: uuid, description: defaults to driver's default vehicle}
+                odometer_km: {type: [number, 'null'], minimum: 0, description: 'The dashboard reading in km - the opening one when going on duty, the closing one when going off. Optional. A closing reading below the opening one is a 422. Per-cab-per-day billing cross-checks GPS km against it.'}
       responses:
         '200':
           description: Duty state with MQTT credentials when on duty
@@ -469,7 +628,7 @@ paths:
           description: Own trips
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Trip'}}}}
   /driver/trips/{trip_id}/start:
     parameters: [{$ref: '#/components/parameters/TripId'}]
     post:
@@ -541,7 +700,7 @@ paths:
           description: Requests
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/RideRequest'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/RideRequest'}}}}
   /dispatch/requests/{request_id}/candidates:
     parameters: [{$ref: '#/components/parameters/RequestId'}]
     get:
@@ -552,7 +711,117 @@ paths:
           description: Candidates, best first
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Candidate'}}}}
+  /admin/mode-settings:
+    get:
+      tags: [admin]
+      summary: Mode settings for this operator (Phase 2)
+      description: >
+        Which mode governs which requests (`control-model.md` §1–2). Every scoping
+        field is optional and `null` means "any"; a setting that scopes nothing is the
+        operator default. Overlaps are legal - §2 resolves them by update time - and
+        reported in `overlapping` so the screen can warn.
+      responses:
+        '200':
+          description: Settings, oldest first, with any overlapping pairs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ModeSetting'}}
+                  overlapping:
+                    type: array
+                    description: pairs of setting ids at equal specificity that could both match
+                    items:
+                      type: array
+                      items: {type: string, format: uuid}
+    post:
+      tags: [admin]
+      summary: Create a mode setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModeSettingInput'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeSetting'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /admin/mode-settings/{setting_id}:
+    parameters:
+      - name: setting_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    put:
+      tags: [admin]
+      summary: Replace a mode setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModeSettingInput'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeSetting'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [admin]
+      summary: Delete a mode setting
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /dispatch/requests/{request_id}/mode:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    get:
+      tags: [dispatch]
+      summary: Which mode governs this request, and why (Phase 2)
+      description: >
+        `control-model.md` §2's eight levels, resolved. `reason` names the level that
+        decided it - a supervisor asking "why is this on manual?" deserves better than
+        the answer "it is".
+      responses:
+        '200':
+          description: The resolved mode
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeResolution'}
+  /dispatch/requests/{request_id}/suggestions:
+    parameters: [{$ref: '#/components/parameters/RequestId'}]
+    get:
+      tags: [dispatch]
+      summary: The system's top recommendations for this request (Phase 2)
+      description: >
+        The best-scored candidates that break **no** hard rule, best first
+        (`allocation-rules.md` §2 and §4). Not the first three of `/candidates`: that
+        list deliberately includes vehicles with violations so a supervisor can see the
+        only cab within reach is over the limit, while a suggestion is the system
+        recommending something and there the rules are filters, never traded off
+        against cost.
+
+
+        An empty array therefore means the opposite of "no cabs": it means none of them
+        is permitted. `/candidates` carries the reasons, each naming the config key that
+        excluded it.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 10, default: 3}
+          description: How many to return. `control-model.md` §1 specifies three.
+      responses:
+        '200':
+          description: Suggestions, best first
+          content:
+            application/json:
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Candidate'}}}}
   /dispatch/assign:
     post:
       tags: [dispatch]
@@ -583,10 +852,18 @@ paths:
           description: Vehicles
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/VehicleLive'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/VehicleLive'}}}}
   /dispatch/trips:
     get:
       tags: [dispatch]
+      summary: Every trip for the operator, with stops - one read for a whole board
+      description: >
+        The supervisor's view of what every cab is doing. Requires `request_queue_view`
+        and a non-client-scoped caller, exactly like `/dispatch/requests`: this is the
+        whole operator's work, so a client admin must not see it.
+        Defaults to the live statuses (`planned`, `dispatched`, `in_progress`) because a
+        board asking "what is happening now" should not have to enumerate them, and a
+        day's completed trips would dwarf the answer.
       parameters:
         - {name: status, in: query, schema: {type: array, items: {$ref: '#/components/schemas/TripStatus'}}, style: form, explode: true}
       responses:
@@ -594,7 +871,10 @@ paths:
           description: Trips
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Trip'}}
   /dispatch/automation:
     get:
       tags: [dispatch]
@@ -622,11 +902,55 @@ paths:
                 note: {type: string}
       responses:
         '200': {description: Updated}
+  /dispatch/trips/{trip_id}/escort-confirmation:
+    post:
+      tags: [dispatch]
+      summary: Confirm the night escort for a flagged trip so it can start
+      description: |
+        Night escort rule (OQ-10, owner decisions 2026-11-01 and 2026-11-02). After 20:00 (the
+        client's night window) a trip is flagged (`Trip.escort.required`, an `escort_required`
+        alert) in two cases, both worked out when the trip is **planned**: `escort.reason =
+        lone_rider` - a **woman would be the only rider in the cab**; and `last_out` - on a
+        **shared trip home** (`from_office`) a **woman is the last rider left in the cab**, whoever
+        shared the earlier part. **The driver cannot start a flagged trip** (409, `details.reason =
+        escort_confirmation_required`, `details.escort_reason`) until a supervisor confirms here.
+        `lone_rider` is cleared by `escort_arranged` or `male_co_rider_present`; `last_out` only by
+        `escort_arranged` (a man who shared the trip is gone by then - `male_co_rider_present` is a
+        422). A man sharing a lone woman's cab clears that flag by itself. Nothing is assigned automatically; who confirmed, when and
+        on what basis is recorded on the trip and in its event history.
+        409 `escort_not_required` if the trip is not flagged, 409 if it has already started.
+      parameters:
+        - {name: trip_id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EscortConfirmation'}
+      responses:
+        '200':
+          description: The trip, with `escort` filled in
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
   /dispatch/overrides:
-    x-phase: 2
     post:
       tags: [dispatch]
       summary: Apply an override action
+      description: >
+        `control-model.md` section 3. Every override carries a reason code, gets an
+        `expires_at`, and writes an `override_log` row holding who, what, before,
+        after, reason and time.
+
+
+        Refused with 422 when the action does not name what it would change (`reassign`
+        without `target_vehicle_id`), when `reason_code` is `other` without a note, or
+        when the override waives a hard rule without `safety`, `client_request` or
+        `other` **and** a note - rule 4, and those are the overrides reports flag.
+        Refused with 409 when it would waive a rule nobody may waive: a cab with no
+        driver, or another supervisor's lock.
       requestBody:
         required: true
         content:
@@ -638,11 +962,25 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OverrideResult'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /dispatch/overrides/preview:
-    x-phase: 2
     post:
       tags: [dispatch]
       summary: Impact preview without applying
+      description: >
+        Section 3 rule 2's confirm screen: added minutes for riders already aboard, the
+        ETA change for the rider being moved, the riders a cancellation would put back
+        in the queue, and any zone whose only available cab this would take off the
+        road.
+
+
+        A dry run - nothing is written. It is the same computation the apply path runs,
+        so the screen a supervisor confirms is not a different answer from the one they
+        get. An empty impact is a real answer: `lock`, `unlock`, `force_priority`,
+        `block_pooling` and `hold` change what the platform may do next, not where any
+        cab is going now.
       requestBody:
         required: true
         content:
@@ -654,11 +992,81 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Impact'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /dispatch/suggestions:
+    get:
+      tags: [dispatch]
+      summary: Offers the system is waiting for an answer to
+      description: >
+        The stored offers a `semi_auto` scope has made (`control-model.md` §1 and §4),
+        newest first. `GET /dispatch/requests/{id}/suggestions` answers a different
+        question - it **recomputes** the best cabs for one request, which is what a
+        supervisor wants when they are choosing - whereas this returns what was already
+        offered, with the `id` the decision endpoint takes and the moment the failsafe
+        fires.
+
+
+        Without it the offer record is unreachable: the decision endpoint needs a
+        `suggestion_id` that nothing else returns, and the countdown a supervisor sees
+        needs `failsafe_due_at`.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {type: string, enum: [offered, accepted, rejected, superseded, expired, failsafe_assigned], default: offered}
+        - name: request_id
+          in: query
+          required: false
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Suggestion'}}
+  /dispatch/hints:
+    get:
+      tags: [dispatch]
+      summary: The optimizer's hints for requests in `manual` scopes (Phase 3)
+      description: >
+        One hint per queued request the latest batch could place, newest batch only. A
+        hint disappears when its request is assigned, cancelled or re-planned, and an
+        empty list means the optimizer has nothing to say, not that it is off. Requires
+        `request_queue_view` and a non-client-scoped caller, like `/dispatch/requests`.
+      responses:
+        '200':
+          description: Hints
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/RequestHint'}}
   /dispatch/suggestions/{suggestion_id}/decision:
-    x-phase: 2
     parameters: [{name: suggestion_id, in: path, required: true, schema: {type: string, format: uuid}}]
     post:
       tags: [dispatch]
+      summary: Answer one of the system's suggestions (Phase 2)
+      description: >
+        `control-model.md` §1: in `semi_auto` the supervisor gets "one-tap approve or
+        override". The three decisions are that sentence.
+
+
+        **approve** assigns the vehicle this suggestion named. **choose_other** assigns
+        a different one - still an answer, and recorded as a rejection of what was
+        offered, because that is what it is and the Phase 2 acceptance metric must not
+        flatter itself. **reject** leaves the request queued; the other suggestions for
+        it stay open, since turning down the first choice is not turning down all three.
+
+
+        The hard rules are re-checked before anything is assigned: a supervisor reading
+        a screen two minutes old is looking at the same stale offer the failsafe would
+        have refused.
       requestBody:
         required: true
         content:
@@ -668,30 +1076,21 @@ paths:
               required: [decision]
               properties:
                 decision: {type: string, enum: [approve, choose_other, reject]}
-                vehicle_id: {type: [string, 'null'], format: uuid}
+                vehicle_id:
+                  type: [string, 'null']
+                  format: uuid
+                  description: required for `choose_other`, ignored otherwise
                 reason_code: {$ref: '#/components/schemas/ReasonCode'}
-      responses:
-        '200': {$ref: '#/components/responses/TripResponse'}
-  /dispatch/modes:
-    x-phase: 2
-    get:
-      tags: [dispatch]
+                note: {type: string, maxLength: 300, description: free text, kept as Phase 3 tuning data}
       responses:
         '200':
-          description: Mode settings
+          description: Assigned (approve, choose_other) or recorded (reject)
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/ModeSetting'}}
-    post:
-      tags: [dispatch]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/ModeSetting'}
-      responses:
-        '201': {description: Created}
-
+              schema: {$ref: '#/components/schemas/SuggestionDecisionResult'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
   /alerts:
     get:
       tags: [alerts]
@@ -702,7 +1101,7 @@ paths:
           description: Alerts
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+              schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Alert'}}}}
   /alerts/{alert_id}/{action}:
     parameters:
       - {name: alert_id, in: path, required: true, schema: {type: string, format: uuid}}
@@ -729,6 +1128,121 @@ paths:
             text/csv:
               schema: {type: string}
 
+  /reports/operations:
+    get:
+      tags: [reports]
+      summary: The full operator report (B39, OPA-05)
+      description: >
+        Waits, pooling, cab-km, overrides and suggestion acceptance for a period, computed
+        from the records the platform keeps. Requires `report.operational.view` (operator
+        admin, supervisor); a client admin has no operational report.
+
+
+        **Days are the operator's calendar days** in their own timezone, both ends
+        inclusive.
+
+
+        **Cab-km and vehicles used come from what the cabs drove**: `trip.actual_distance_m`,
+        measured from the cab's pings when the driver completes the trip - never from what
+        dispatch planned. A trip with no pings has no distance, and is left out of the
+        average rather than counted as zero kilometres.
+
+
+        **`suggestions.acceptance_rate` is OQ-39 stated, not decided.** It counts only the
+        system's first choice that a person or the failsafe settled in the period; a
+        `failsafe_assigned` offer is never an acceptance (nobody agreed to it) and a
+        `superseded` one is never a verdict. Two readings are returned because the open
+        question names two: `acceptance_rate` (approved) and
+        `acceptance_rate_with_alternatives` (approved, or rejected in favour of a cab the
+        system had also offered). Say which one when quoting either.
+      parameters:
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+        - {name: client_id, in: query, schema: {type: string, format: uuid}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200':
+          description: The report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationsReport'}
+            text/csv:
+              schema: {type: string, description: 'section,metric,value - one row per number'}
+  /reports/billing:
+    get:
+      tags: [reports]
+      summary: One client's month, one row per cab per day - running km, odometer check, amount (B38, OPA-06)
+      description: >
+        Requires `billing.view` (operator admin, client admin). A client admin is invoiced
+        for their own company whatever `client_id` they send; an operator admin must name one.
+
+
+        **Basis (owner decision, OQ-03): the employer company pays the operator per cab per
+        day on the total running km between duty start (cab in) and duty end (cab out),
+        dead km between trips included, at `billing_rate_per_km`** (Rs 8 to begin with). Riders
+        never pay and see no charge anywhere. A row is one cab on one local day (operator
+        timezone, by the day its duty began). `gps_km` is measured from the cab's pings
+        between going on and off duty, ignoring jitter and GPS jumps; `odometer_km` is the
+        closing minus the opening reading the driver entered, when both exist. `billed_km` is
+        the GPS figure unless an operator admin marked the odometer figure for that duty
+        session (`PUT /admin/duty-sessions/{id}/billing-basis`). `gap_percent` is the
+        difference as a share of the odometer figure, and `odometer_gap` is in `flags` when
+        it exceeds `billing_odometer_gap_percent` (default 10). `amount` is `null` until a
+        rate is set. Flags: `odometer_gap`, `multiple_clients` / `no_client_trips` (the cab
+        carried several clients' riders that day, or none, so it was billed to the operator's
+        default client - OQ-40), `default_client_unset`, `still_on_duty`, `no_gps`,
+        `odometer_billed`. The CSV is the invoice: one line per cab-day and a TOTAL line.
+      parameters:
+        - {name: month, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}, description: 'YYYY-MM'}
+        - {name: client_id, in: query, schema: {type: string, format: uuid}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200':
+          description: The export
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BillingExport'}
+            text/csv:
+              schema: {type: string, description: 'one line per cab-day, columns as in `rows`, then a TOTAL line'}
+
+  /admin/duty-sessions/{session_id}/billing-basis:
+    put:
+      tags: [reports]
+      summary: Choose whether a duty session is billed on GPS or on the odometer figure
+      description: >
+        Requires `config.manage` (operator admin). The default is GPS. `odometer` needs both
+        readings on the session (409 otherwise). Who chose and when is kept. The platform never
+        decides which figure is right; this is the operator's call, usually after the report
+        flagged `odometer_gap`.
+      parameters:
+        - {name: session_id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [basis]
+              properties:
+                basis: {type: string, enum: [gps, odometer]}
+                note: {type: string, maxLength: 200}
+      responses:
+        '200':
+          description: The session's billing basis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: {type: string, format: uuid}
+                  basis: {type: string, enum: [gps, odometer]}
+                  set_by: {type: [string, 'null'], format: uuid}
+                  set_at: {type: [string, 'null'], format: date-time}
+                  note: {type: [string, 'null']}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+
   /simctl/clock:
     x-env: sim-only
     get:
@@ -747,6 +1261,26 @@ paths:
         content:
           application/json:
             schema: {$ref: '#/components/schemas/SimClock'}
+      responses:
+        '200': {description: Updated}
+  /simctl/optimizer:
+    x-env: sim-only
+    put:
+      tags: [simctl]
+      summary: Kill or restore the optimizer (S12, B36)
+      description: >
+        Makes every optimizer run fail (or stops doing so). A switch on the solver and
+        nothing else - the sweep still runs and records its failures, so the platform
+        notices the outage the way it would a real one, from the run log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [available]
+              properties:
+                available: {type: boolean}
       responses:
         '200': {description: Updated}
   /simctl/reset:
@@ -768,6 +1302,35 @@ paths:
           content:
             application/json:
               schema: {type: object, additionalProperties: true}
+  /simctl/release:
+    x-env: sim-only
+    post:
+      tags: [simctl]
+      summary: Give up this run's claim on the backend so another can start
+      description: >
+        One simulation run at a time per backend, enforced by an atomic claim
+        (ADR-0014). A finished run releases its claim here rather than leaving it to the
+        two-hour TTL, which is the fallback for a crash and not the normal way a claim
+        ends - without this the next run, often the same developer seconds later, is
+        refused by a run that is no longer there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id: {type: string, description: the id that made the claim}
+      responses:
+        '200':
+          description: Whether a claim was released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  released: {type: boolean}
 
 components:
   securitySchemes:
@@ -793,6 +1356,21 @@ components:
               lat: {type: number}
               lng: {type: number}
   responses:
+    NotFound:
+      description: No such resource, or not visible to this operator
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ValidationError:
+      description: The request was understood and refused
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: The resource is not in a state that allows this
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
     Error:
       description: Error
       content:
@@ -829,6 +1407,11 @@ components:
       properties:
         phone: {$ref: '#/components/schemas/Phone'}
         code: {type: string, pattern: '^[0-9]{6}$'}
+    TestLoginRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: {$ref: '#/components/schemas/Phone'}
     TokenPair:
       type: object
       required: [access_token, refresh_token, expires_in]
@@ -863,6 +1446,12 @@ components:
         app_version: {type: string}
     VehicleType: {type: string, enum: [sedan_4, suv_6, vip]}
     VehicleStatus: {type: string, enum: [off_duty, available, on_trip, out_of_service]}
+    # Named rather than inline, like the two above it. As an inline enum on
+    # `VehicleInput` it was inherited by `Vehicle` and `VehicleLive` through `allOf`, and
+    # the generated Dart client referenced a `VehicleInputTrackerTypeEnum` class that it
+    # never emitted in those files - so the client did not compile. An enum used by more
+    # than one schema is a type, and types get names.
+    TrackerType: {type: string, enum: [app, esp32]}
     VehicleInput:
       type: object
       required: [registration_no, vehicle_type, seat_capacity]
@@ -871,7 +1460,7 @@ components:
         model: {type: string}
         vehicle_type: {$ref: '#/components/schemas/VehicleType'}
         seat_capacity: {type: integer, minimum: 1, maximum: 12}
-        tracker_type: {type: string, enum: [app, esp32], default: app}
+        tracker_type: {$ref: '#/components/schemas/TrackerType', default: app}
     Vehicle:
       allOf:
         - $ref: '#/components/schemas/VehicleInput'
@@ -944,6 +1533,10 @@ components:
         priority: {type: integer, minimum: 1, maximum: 10, default: 5}
         is_vip: {type: boolean, default: false}
         night_escort_required: {type: boolean, default: false}
+        gender:
+          type: [string, 'null']
+          enum: [female, male, other, null]
+          description: Read only by the night escort rule (OQ-10). Unknown never triggers it.
         active: {type: boolean, default: true}
     Employee:
       allOf:
@@ -995,6 +1588,16 @@ components:
         direction: {$ref: '#/components/schemas/Direction'}
         office_id: {type: string, format: uuid}
         location: {$ref: '#/components/schemas/LatLng'}
+        pickup_location:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/LatLng'
+          description: >
+            Where the vehicle must collect the rider, when that is not the usual place
+            for their direction (`location` for to_office, the office for from_office).
+            Set only by the platform, today when a breakdown left a rider who was
+            already on board standing at the roadside - see ADR-0016. Clients should
+            show this pin rather than `location` whenever it is present.
         landmark: {type: [string, 'null']}
         requested_time: {type: string, format: date-time}
         urgency: {$ref: '#/components/schemas/Urgency'}
@@ -1017,6 +1620,14 @@ components:
                   default: false
                   description: true when the ETA is approximate (ADR-0010)
         locked: {type: boolean}
+        escalated_at:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            Set when nobody had served this request by `retry_after_minutes` after the
+            cab was due (ADR-0019). The board shows such a request as late. `urgency`
+            stays whatever the rider asked for - it is never rewritten by the platform
+            (ADR-0021), so this is the field that says "we are failing this one".
         cancel_reason: {type: [string, 'null']}
     TripStop:
       type: object
@@ -1052,6 +1663,134 @@ components:
         pooling_blocked: {type: boolean}
         mode_used: {type: string, enum: [manual, semi_auto, full_auto, failsafe]}
         stops: {type: array, items: {$ref: '#/components/schemas/TripStop'}}
+        escort:
+          description: >
+            Night escort gate (OQ-10). Present on supervisor reads. `required` means a woman would be
+            the only rider at night; `confirmed` means a supervisor has cleared it. The dispatch board
+            and trip detail must show a flagged, unconfirmed trip clearly.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TripEscort'
+        riders:
+          type: array
+          description: >
+            Everyone on the trip, in stop order, with what pooling cost them (B32,
+            Phase 3). `added_minutes` is minutes spent in the cab beyond riding alone,
+            as of the last plan that touched this trip; `null` until a plan has
+            measured it (trips assigned before Phase 3).
+          items: {$ref: '#/components/schemas/TripRider'}
+    TripEscort:
+      type: object
+      required: [required, confirmed]
+      properties:
+        required: {type: boolean}
+        reason: {type: [string, 'null'], enum: [lone_rider, last_out, null], description: 'Why it is flagged.'}
+        confirmed: {type: boolean, description: 'A confirmation answers the reason it was given for; a trip that became a different problem must be confirmed again.'}
+        basis: {type: [string, 'null'], enum: [escort_arranged, male_co_rider_present, null]}
+        confirmed_by: {type: [string, 'null'], format: uuid}
+        confirmed_at: {type: [string, 'null'], format: date-time}
+        note: {type: [string, 'null']}
+    EscortConfirmation:
+      type: object
+      required: [basis]
+      properties:
+        basis: {type: string, enum: [escort_arranged, male_co_rider_present]}
+        note: {type: string, maxLength: 200}
+    TripRider:
+      type: object
+      properties:
+        request_id: {type: string, format: uuid}
+        rider_first_name: {type: string}
+        added_minutes: {type: [number, 'null'], description: minutes beyond riding alone}
+    RequestHint:
+      type: object
+      description: >
+        What the optimizer would do with a queued request in a `manual` scope
+        (`allocation-rules.md` §6: in `manual` the proposed trips "are shown as hints
+        only"). Nothing has been assigned and nothing will be: acting on it is the
+        supervisor's call, through `/dispatch/assign`.
+      properties:
+        request_id: {type: string, format: uuid}
+        vehicle_id: {type: string, format: uuid}
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: the trip it would join, or null if it would open a new one
+        rider_order:
+          type: array
+          items: {type: string, format: uuid}
+          description: every request on the resulting trip, in stop order
+        pickup_eta_minutes: {type: number}
+        cost: {type: number, description: the plan's cost for this trip, minutes-equivalent}
+        reasons: {type: array, items: {type: string}}
+        created_at: {type: string, format: date-time}
+    SuggestionDecisionResult:
+      type: object
+      properties:
+        suggestion_id: {type: string, format: uuid}
+        decision: {type: string, enum: [approve, choose_other, reject]}
+        status: {type: string, enum: [accepted, rejected, superseded, expired, offered]}
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: the trip created or joined; null for `reject`
+    ModeSettingInput:
+      type: object
+      required: [mode]
+      description: Every scoping field is optional; null means "any".
+      properties:
+        mode: {type: string, enum: [manual, semi_auto, full_auto]}
+        client_id: {type: [string, 'null'], format: uuid}
+        zone_id: {type: [string, 'null'], format: uuid}
+        direction: {type: [string, 'null'], enum: [to_office, from_office, null]}
+        weekdays:
+          type: [array, 'null']
+          description: >
+            ISO weekdays, Monday = 1 ... Sunday = 7, matching `isoweekday()`. Null or
+            empty means every day.
+
+
+            An array, not the bitmask an earlier draft of this schema specified: `[1,5]`
+            is readable in `psql` and in a log line, renders without decoding, and
+            cannot be confused with the Sunday=0 convention the other half of the world
+            uses. The bitmask saved four bytes a row on a table with tens of rows.
+          items: {type: integer, minimum: 1, maximum: 7}
+        start_time:
+          type: [string, 'null']
+          format: time
+          description: 'local time of day, HH:MM:SS'
+        end_time:
+          type: [string, 'null']
+          format: time
+          description: >
+            Local time of day, HH:MM:SS. A window needs both ends or neither - the API
+            and a CHECK constraint both refuse one end alone, because guessing midnight
+            for the missing end would stop a "from 18:00" rule exactly when an evening
+            shift is still running. May cross midnight (22:00-06:00), in which case the
+            weekday matched is the day the window opened.
+        note: {type: [string, 'null'], description: why this rule exists, in the operator's words}
+    ModeSetting:
+      allOf:
+        - $ref: '#/components/schemas/ModeSettingInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            updated_at: {type: string, format: date-time}
+    ModeResolution:
+      type: object
+      properties:
+        mode: {type: string, enum: [manual, semi_auto, full_auto]}
+        reason:
+          type: string
+          description: >
+            which level of control-model.md section 2 decided it. `optimizer_down` (B36) is
+            not a level: it means the scope is configured for automation but the optimizer
+            is unavailable, so the request is being served as `manual`.
+          enum: [automation_paused, optimizer_down, vip, client_zone_time, client_time, zone_time, client_zone, client, zone, operator_default]
+        setting_id:
+          type: [string, 'null']
+          format: uuid
+          description: null for the pause, the VIP rule and the operator default
     Candidate:
       type: object
       properties:
@@ -1064,6 +1803,14 @@ components:
           default: false
           description: true when this ETA is a straight-line estimate, not road routing (ADR-0010)
         seats_free_after: {type: integer}
+        gps_age_seconds:
+          type: [number, 'null']
+          description: >
+            How old this vehicle's position is, by the server's clock. `null` when it has
+            never reported one. A supervisor choosing between cabs is choosing between
+            claims about where they are, and a claim four minutes old is a different
+            thing from one four seconds old - `gps_stale` in `violations` only says it
+            crossed `stale_gps_seconds`, not by how much.
         added_minutes_existing:
           type: array
           items:
@@ -1085,12 +1832,29 @@ components:
           oneOf:
             - type: 'null'
             - type: object
+              description: >-
+                Where this device should connect, which is not where the backend
+                connects: the server reaches the broker inside its own network, the
+                phone reaches it across the internet. These are the public values.
               properties:
-                host: {type: string}
+                host: {type: string, description: publicly resolvable hostname, not a service name}
                 port: {type: integer}
+                tls: {type: boolean, description: connect over TLS; true everywhere except local development}
                 username: {type: string}
                 password: {type: string}
                 topic_prefix: {type: string}
+        gps:
+          description: >-
+            How the phone should publish location (mqtt-topics.md): after moving
+            `distance_filter_m`, or `heartbeat_seconds` after the last publish when stationary.
+            Present when on duty.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [distance_filter_m, heartbeat_seconds]
+              properties:
+                distance_filter_m: {type: integer}
+                heartbeat_seconds: {type: integer}
     LocationPing:
       type: object
       required: [ts, lat, lng]
@@ -1102,21 +1866,176 @@ components:
         heading_deg: {type: number}
         accuracy_m: {type: number}
         battery_pct: {type: integer}
+    ZoneInput:
+      type: object
+      required: [name, boundary]
+      properties:
+        name: {type: string, maxLength: 200}
+        boundary:
+          type: array
+          minItems: 3
+          items: {$ref: '#/components/schemas/LatLng'}
+          description: >
+            The outer ring, in order. Send it open or closed - the last point is joined
+            to the first either way. A ring that crosses itself is refused with 422
+            rather than being silently repaired, because the repair is a guess about
+            which lobe the operator meant.
+        active: {type: boolean, default: true}
+    ZoneUpdate:
+      type: object
+      description: Every field optional; omitted fields are left alone.
+      properties:
+        name: {type: string, maxLength: 200}
+        boundary:
+          type: array
+          minItems: 3
+          items: {$ref: '#/components/schemas/LatLng'}
+        active: {type: boolean}
+    Zone:
+      allOf:
+        - $ref: '#/components/schemas/ZoneInput'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            employee_count:
+              type: integer
+              description: >
+                Employees whose home falls in this zone. An inactive zone covers nobody
+                and reports zero - which is the point of deactivating one.
+    ClientPolicyInput:
+      type: object
+      description: >
+        Every field optional. `null` clears an override and the operator's value
+        applies. The numeric four are **stricter only** - a client may tighten a limit,
+        never loosen it - and a laxer value is kept as written and simply not applied,
+        which the `effective` block makes visible.
+      properties:
+        pooling_allowed:
+          type: boolean
+          description: >
+            False means this client's riders never share a cab. Equivalent to every one
+            of their requests arriving with `no_sharing`.
+        employee_opt_out_allowed:
+          type: boolean
+          description: >
+            Whether an employee of this client may ask not to share. False makes
+            `no_sharing: true` on their request a 422 rather than a silently ignored
+            field - the rider is told, instead of being quietly pooled.
+        night_safety_enabled: {type: boolean}
+        night_start: {type: [string, 'null'], format: time, description: 'local time, HH:MM:SS'}
+        night_end: {type: [string, 'null'], format: time}
+        max_detour_factor: {type: [number, 'null'], minimum: 1.0, maximum: 3.0}
+        max_detour_minutes: {type: [integer, 'null'], minimum: 0, maximum: 60}
+        pickup_window_minutes: {type: [integer, 'null'], minimum: 0, maximum: 30}
+        no_show_wait_minutes: {type: [integer, 'null'], minimum: 1, maximum: 15}
+    ClientPolicy:
+      allOf:
+        - $ref: '#/components/schemas/ClientPolicyInput'
+        - type: object
+          properties:
+            client_id: {type: string, format: uuid}
+            effective:
+              type: object
+              description: >
+                The numbers the platform will actually apply to this client's rides,
+                after the stricter-value rule. Read-only.
+              properties:
+                max_detour_factor: {type: number}
+                max_detour_minutes: {type: integer}
+                pickup_window_minutes: {type: integer}
+                no_show_wait_minutes: {type: integer}
+                night_safety_enabled: {type: boolean}
+                night_start: {type: string, format: time}
+                night_end: {type: string, format: time}
+    Suggestion:
+      type: object
+      description: One offer the system made, and what became of it.
+      properties:
+        id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        vehicle_id: {type: string, format: uuid}
+        trip_id: {type: [string, 'null'], format: uuid, description: The trip this would join; null opens a new one.}
+        rank: {type: integer, description: 1 is the system's first choice.}
+        cost: {type: number}
+        reasons:
+          type: array
+          items: {type: string}
+          description: >
+            The plain-text phrases exactly as they were offered. Kept verbatim rather
+            than recomputed: "+4 min for Rahul" is the claim the supervisor acted on,
+            and recomputing it later answers against a different world.
+        status:
+          type: string
+          enum: [offered, accepted, rejected, superseded, expired, failsafe_assigned]
+          description: >
+            `accepted` means a supervisor approved it. `failsafe_assigned` means nobody
+            answered and the platform assigned it anyway (§4) - a separate state
+            because counting it as an acceptance would let an unwatched scope score
+            100% on Phase 2's exit criterion.
+        offered_at: {type: string, format: date-time}
+        failsafe_due_at:
+          type: string
+          format: date-time
+          description: When the failsafe acts if nobody answers. The countdown on S-05.
+        escalated_at: {type: [string, 'null'], format: date-time}
+        decided_at: {type: [string, 'null'], format: date-time}
     OverrideInput:
       type: object
       required: [action, reason_code]
+      description: >
+        The override set of `control-model.md` section 3. The ninth row of that table,
+        emergency pause, is `PUT /dispatch/automation` instead: it is operator-wide and
+        names no request, trip or vehicle.
       properties:
         action: {type: string, enum: [reassign, lock, unlock, force_priority, block_pooling, hold, cancel, vehicle_out_of_service]}
-        request_id: {type: [string, 'null'], format: uuid}
-        trip_id: {type: [string, 'null'], format: uuid}
-        vehicle_id: {type: [string, 'null'], format: uuid}
-        target_vehicle_id: {type: [string, 'null'], format: uuid}
-        hold_until: {type: [string, 'null'], format: date-time}
-        expires_at: {type: [string, 'null'], format: date-time}
+        request_id:
+          type: [string, 'null']
+          format: uuid
+          description: Required by every action except block_pooling and vehicle_out_of_service.
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: >
+            The subject of `block_pooling`, and of a `cancel` that cancels a whole trip
+            rather than one rider - send exactly one of `request_id` or `trip_id` with
+            `cancel`. On `reassign` it names the existing trip to join, if any.
+        vehicle_id:
+          type: [string, 'null']
+          format: uuid
+          description: >
+            The subject of `vehicle_out_of_service`, and the cab to pin to on `lock`
+            (defaulting to the one the request is already on).
+        target_vehicle_id:
+          type: [string, 'null']
+          format: uuid
+          description: Required by reassign - the cab to move the rider to.
+        hold_until:
+          type: [string, 'null']
+          format: date-time
+          description: Required by hold. For a hold with no fixed end, send expires_at as null.
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            Section 3 rule 5. **Omit** the field for the default, which is the end of
+            the current shift in the operator's own timezone. Send it explicitly as
+            `null` for "until the trip ends". The two are different requests, so an app
+            that always sends the field - with `null` when the user picked nothing -
+            makes every override open-ended, which is the failure rule 5 exists to
+            prevent.
+
+
+            Ignored by the actions that happen once and are over: reassign, unlock and
+            cancel. Recorded but advisory for vehicle_out_of_service - a cab comes back
+            on the road when somebody says so, never because a timestamp passed.
         reason_code: {$ref: '#/components/schemas/ReasonCode'}
-        note: {type: string}
+        note:
+          type: string
+          maxLength: 500
+          description: Required with `other`, and with any override that waives a hard rule (rule 4).
     Impact:
       type: object
+      description: Section 3 rule 2's confirm screen. Every field may be empty - that is an answer.
       properties:
         affected_requests:
           type: array
@@ -1124,38 +2043,75 @@ components:
             type: object
             properties:
               request_id: {type: string, format: uuid}
-              eta_change_minutes: {type: number}
-        zones_without_available_vehicle: {type: array, items: {type: string}}
-        hard_rule_violations: {type: array, items: {type: string}}
+              employee_name: {type: string}
+              added_minutes:
+                type: [number, 'null']
+                description: >
+                  Extra minutes aboard for a rider already on the vehicle. Null when
+                  this rider is not being detoured.
+              eta_change_minutes:
+                type: [number, 'null']
+                description: >
+                  Later (positive) or sooner (negative) for the rider being moved. Null
+                  when there is no before to compare with.
+              requeued:
+                type: boolean
+                description: >
+                  Back to the queue needing another cab. Their new ETA is unknown until
+                  somebody assigns them, so none is offered here.
+        zones_without_available_vehicle:
+          type: array
+          items: {type: string}
+          description: >
+            Zones whose only available cab this override would take off the road. A
+            zone that was already uncovered is not listed - that is not something this
+            override did, and listing it would bury the one that is.
+        hard_rule_violations:
+          type: array
+          items: {type: string}
+          description: >
+            Each naming the config key that set the limit where there is one, for
+            example `eta_over_candidate_limit (candidate_max_eta_minutes)`. Non-empty
+            means the apply call will require rule 4's narrowed reasons and a note.
     OverrideResult:
       type: object
       properties:
         override_id: {type: string, format: uuid}
         impact: {$ref: '#/components/schemas/Impact'}
-    ModeSetting:
-      type: object
-      required: [mode]
-      properties:
-        id: {type: string, format: uuid}
-        client_id: {type: [string, 'null'], format: uuid}
-        zone_id: {type: [string, 'null'], format: uuid}
-        direction: {oneOf: [{$ref: '#/components/schemas/Direction'}, {type: 'null'}]}
-        weekdays: {type: [integer, 'null'], description: bitmask Mon=1..Sun=64}
-        start_time: {type: [string, 'null'], pattern: '^[0-2][0-9]:[0-5][0-9]$'}
-        end_time: {type: [string, 'null'], pattern: '^[0-2][0-9]:[0-5][0-9]$'}
-        mode: {type: string, enum: [manual, semi_auto, full_auto]}
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: When this override lapses. Null means it stands until the trip ends.
+        trip_id:
+          type: [string, 'null']
+          format: uuid
+          description: The trip the request ended up on, for reassign.
     Alert:
       type: object
       properties:
         id: {type: string, format: uuid}
-        type: {type: string, enum: [sos, driver_issue, request_near_expiry, vip_no_vehicle, failsafe, stale_vehicle, mode_prompt, system]}
-        severity: {type: string, enum: [critical, high, normal]}
+        type: {type: string, enum: [sos, driver_issue, request_unassigned, request_near_expiry, vip_no_vehicle, failsafe, stale_vehicle, mode_prompt, escort_required, system]}
+        severity: {type: string, enum: [critical, warning, info]}
         status: {type: string, enum: [open, acknowledged, resolved]}
         created_at: {type: string, format: date-time}
         request_id: {type: [string, 'null'], format: uuid}
         trip_id: {type: [string, 'null'], format: uuid}
         vehicle_id: {type: [string, 'null'], format: uuid}
-        data: {type: object, additionalProperties: true}
+        data:
+          type: object
+          additionalProperties: true
+          description: >
+            Type-specific detail. For `mode_prompt` (B35, `control-model.md` §5):
+            `setting_id` (the mode setting - the scope - being suggested for), `mode` (what
+            it is on now), `suggest` (always `manual`), `window_minutes`, and `conditions`:
+            `[{condition, observed, threshold, samples}]` with `condition` one of
+            `suggestions_rejected`, `eta_error`, `pending_surge`, `fleet_degraded`.
+
+
+            **A prompt is a suggestion and nothing more.** The platform never changes a mode
+            by itself; the app offers a button that calls the ordinary
+            `PUT /admin/mode-settings/{setting_id}`. The alert resolves itself, with no
+            acknowledgement, once the conditions clear.
     TripReport:
       type: object
       properties:
@@ -1165,9 +2121,153 @@ components:
         p90_wait_minutes: {type: number}
         no_shows: {type: integer}
         cancellations: {type: integer}
+        assignments_by_actor:
+          type: object
+          additionalProperties: {type: integer}
+          description: >
+            How many requests each kind of actor assigned (`supervisor`, `system_failsafe`,
+            `optimizer`), from each request's own event log (B34). Whether `full_auto` is
+            doing the work is a number here, not an inference. Each row also carries
+            `assigned_by`.
         rows: {type: array, items: {type: object, additionalProperties: true}}
+    OperationsReport:
+      type: object
+      required: [period, requests, wait, pooling, distance, overrides, suggestions, assignments_by_actor, optimizer]
+      properties:
+        period:
+          type: object
+          properties: {from: {type: string, format: date}, to: {type: string, format: date}}
+        requests:
+          type: object
+          description: counts of the requests asked for in the period, by where they ended up
+          properties:
+            total: {type: integer}
+            completed: {type: integer}
+            no_shows: {type: integer}
+            cancelled: {type: integer}
+            expired: {type: integer}
+            still_open: {type: integer}
+        wait:
+          type: object
+          description: asking to getting in, in minutes (the product's one definition of wait)
+          properties:
+            measured: {type: integer}
+            median_minutes: {type: [number, 'null']}
+            p90_minutes: {type: [number, 'null']}
+            distribution:
+              type: object
+              description: 'riders per bucket: 0-5, 5-10, 10-15, 15-20, 20-30, 30-45, 45-60, 60+'
+              additionalProperties: {type: integer}
+        pooling:
+          type: object
+          description: trips completed in the period that carried at least one rider
+          properties:
+            trips: {type: integer}
+            riders_carried: {type: integer}
+            riders_per_trip: {type: [number, 'null']}
+            pooled_trips: {type: integer}
+            pooling_rate: {type: [number, 'null']}
+            vehicles_used: {type: integer}
+        distance:
+          type: object
+          description: from the cabs' pings; trips with no measurement are left out, not zeroed
+          properties:
+            trips_measured: {type: integer}
+            cab_km_total: {type: [number, 'null']}
+            cab_km_per_trip: {type: [number, 'null']}
+            cab_km_per_rider: {type: [number, 'null']}
+        overrides:
+          type: object
+          properties:
+            total: {type: integer}
+            hard_rule_overrides: {type: integer}
+            by_reason: {type: object, additionalProperties: {type: integer}}
+            by_action: {type: object, additionalProperties: {type: integer}}
+        suggestions:
+          type: object
+          description: rank-1 suggestions settled in the period (OQ-39 - see the endpoint)
+          properties:
+            answered_by_a_person: {type: integer}
+            accepted: {type: integer}
+            rejected: {type: integer}
+            failsafe_assigned: {type: integer}
+            rejected_for_an_offered_alternative: {type: integer}
+            acceptance_rate: {type: [number, 'null']}
+            acceptance_rate_with_alternatives: {type: [number, 'null']}
+        assignments_by_actor: {type: object, additionalProperties: {type: integer}}
+        optimizer:
+          type: object
+          properties:
+            runs: {type: integer}
+            failed: {type: integer}
+            applied: {type: integer}
+            suggested: {type: integer}
+            hinted: {type: integer}
+    BillingExport:
+      type: object
+      required: [client_id, client_name, month, treatment, summary, rows]
+      properties:
+        client_id: {type: string, format: uuid}
+        client_name: {type: string}
+        month: {type: string}
+        treatment:
+          type: object
+          properties:
+            basis: {type: string, enum: [per_cab_per_day_km]}
+            rate_per_km: {type: [number, 'null'], description: 'Operator config billing_rate_per_km; null when no rate is set.'}
+            odometer_gap_threshold_percent: {type: number}
+            default_client_id: {type: string, format: uuid, description: 'Where a shared or empty cab-day is billed.'}
+        summary:
+          type: object
+          properties:
+            cab_days: {type: integer}
+            cabs: {type: integer}
+            gps_km: {type: [number, 'null']}
+            odometer_km: {type: [number, 'null']}
+            billed_km: {type: number}
+            amount: {type: [number, 'null'], description: 'null when no rate is set. Never shown to riders.'}
+            flagged_days: {type: integer}
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              date: {type: string, format: date}
+              cab: {type: string, description: registration number}
+              drivers: {type: array, items: {type: string}}
+              duty_in: {type: string, format: date-time}
+              duty_out: {type: [string, 'null'], format: date-time}
+              gps_km: {type: [number, 'null']}
+              odometer_km: {type: [number, 'null']}
+              gap_percent: {type: [number, 'null']}
+              billed_km: {type: number}
+              rate_per_km: {type: [number, 'null']}
+              amount: {type: [number, 'null']}
+              flags:
+                type: array
+                items: {type: string, enum: [odometer_gap, multiple_clients, no_client_trips, default_client_unset, still_on_duty, no_gps, odometer_billed]}
+              sessions:
+                type: array
+                description: The duty sessions behind the row, so an operator can mark one as billed on its odometer.
+                items:
+                  type: object
+                  properties:
+                    id: {type: string, format: uuid}
+                    driver: {type: string}
+                    duty_in: {type: string, format: date-time}
+                    duty_out: {type: [string, 'null'], format: date-time}
+                    gps_km: {type: [number, 'null']}
+                    odometer_start_km: {type: [number, 'null']}
+                    odometer_end_km: {type: [number, 'null']}
+                    odometer_km: {type: [number, 'null']}
+                    basis: {type: string, enum: [gps, odometer]}
     SimClock:
       type: object
       properties:
         now: {type: string, format: date-time}
         advance_seconds: {type: integer, description: PUT only, alternative to now}
+        optimizer_runs: {type: integer, description: batch runs the jump caused}
+        optimizer_applied: {type: integer}
+        optimizer_suggested: {type: integer}
+        optimizer_hinted: {type: integer}
+        optimizer_failed: {type: integer}

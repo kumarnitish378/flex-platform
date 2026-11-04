@@ -1,71 +1,370 @@
-# Overnight run - PROGRESS
+# Smart Cab - PROGRESS
 
-## Morning summary
+## Round 2026-11-03 - read this first
 
-**Branch `dev/overnight-1`, 15 commits, all pushed. Working tree clean. No secrets committed.**
-Nothing was merged to `main`, no history rewritten, no force pushes.
+Pushed on `dev/overnight-1`; **pull request #2 into `main` is open for your review, not merged**
+(https://github.com/kumarnitish378/flex-platform/pull/2). Nothing in `app/` was touched.
 
-### Done (8 tasks)
+**CI on GitHub is green again** (it had been red since 26 Sep). Latest run, with the load-test commit and its tests, every job green: https://github.com/kumarnitish378/flex-platform/actions/runs/41671723322 (first green: .../41581538325)
+One commit per cause: shell scripts were not executable (sim-quick exit 126); `live_stack.sh down` left port 8000 held; `backend-test`
+had no Redis service (7 simctl tests errored); a partition test only passed on databases migrated in September; the actions were on
+Node 20 (now v7). `gh` can read the logs here. **Known, not fixed:** `sim-quick`'s `smoke_tiny` is flaky on CI (one rider left
+unresolved in one of three runs with identical code; the scenario's rider patience is close to its ETAs at the approx speed). It passed on the latest
+run; if it fails again it needs a scenario change (longer rider patience), not a retry.
+
+| # | Item | Result |
+|---|---|---|
+| 1 | `.gradle/` ignore | already in; nothing else untracked needed ignoring |
+| 2 | Pull request | #2 open, not merged |
+| 3 | Pilot onboarding kit (R03) | templates, `make onboard-dry-run FILE=...`, `make create-operator`, `docs/runbook-pilot-onboarding.md`; R03 stays `[~]` |
+| 4 | Load test | `make loadtest-seed` / `make loadtest` (`docs/runbook-load-test.md`); **it found seven backend defects, all fixed** (below). **Full-size numbers were not collected** (see below) |
+| 5 | Production-readiness checklist | "Before a real pilot" section below this block: 10 rows, each with your action and a time |
+| 6 | Phase 4 plan | `docs/06-phases/phase-4-tasks.md` (plan only) |
+
+### The load test: what ran and what did not
+
+You asked not to run tests here, so the full 35-cab / 300-rider / 120-minute run is **not done**, and I am not quoting numbers for it.
+What did run (5 cabs, 12 riders, 3 minutes at 150 km/h, all targets met): API p95 about 100-300 ms (largest: `POST /dispatch/assign`
+p95 about 270 ms with the local OSRM), ingestor lag p95 about 6 ms, supervisor and rider WebSocket fan-out p95 about 20 ms,
+assignment-to-rider-told p95 about 300 ms, 675 of 675 pings persisted, no errors. A bigger partial run showed the harness (not the
+product) breaking at Windows' 512-socket `select()` limit and the laptop suspending for hours mid-run, which is why the timed numbers
+of the long runs are discarded. The script now uses paho threads for MQTT and keeps the machine awake; run it on the VM
+(checklist row 1), not on a laptop.
+
+### Seven defects the load test found (all fixed, each with a test that failed first)
+
+1. **The Celery worker's sweeps failed after their first run** (request expiry, stale-GPS alerts, the escort alert, the semi_auto failsafe,
+   ETA refresh, the optimizer) and leaked a connection each time until Postgres refused clients: a pooled asyncpg connection cannot
+   outlive the event loop of one `asyncio.run`. The worker engine is now unpooled. **This affected every Celery deployment, not only phone-dev.**
+2. A rider cancelling the **last** seat of a trip that had not started left the cab `on_trip` for ever (the driver could not even go off duty).
+3. Realtime events (`request.assigned`...) left **before** the commit, so a refetch on the event could read the old state.
+4. The ingestor's timer flush and its message handler could use one session at once and lose a batch of pings.
+5. `vehicle.location` was never sent on `trip.{id}`, so a rider's live-tracking map could not move.
+6. `make phone-dev` ignored the local OSRM (every assign waited about a second on the public server's 1 req/s).
+7. (Found, **not fixed - your call**) OQ-41: the driver app asks for the default trip list, which cannot contain a just-assigned
+   (`planned`) trip. Gemini has the details in COORDINATION.md. OQ-42: a started trip whose last rider cancels.
+
+### What I need from you
+
+* Decide OQ-41 (who fixes the driver's trip list: the app, or the backend marking a trip `dispatched` when the driver is notified) and OQ-40.
+* Pick the server and domain (checklist row 1) so staging, `make smoke` and `make loadtest` can run on something that does not sleep.
+* Review PR #2.
+
+---
+
+## Before a real pilot: exactly what is still needed (2026-11-03)
+
+Nothing below is code I can write for you: each needs a decision, an account or a payment that is yours.
+"Elapsed" is how long it takes **you** (including waiting on others); "then" is what I or Gemini do once you have
+done it. Items are ordered by what blocks the others.
+
+| # | What | Why it blocks | Your action | Elapsed | Then (engineering) |
+|---|---|---|---|---|---|
+| 1 | **A server with HTTPS (R01, staging)** | No VM exists; the phones need HTTPS (a release build refuses plain `http://`), the broker needs TLS, and ACME needs a real DNS name. Everything else is staged for it: `docs/05-engineering/deployment.md`, `make staging-up`, Caddy, Prometheus, Grafana, Loki, backups | Rent one Linux VM (4 vCPU / 8 GB to start; 8 vCPU / 16 GB once the maps are self-hosted), buy or pick a domain, point an A record (and `grafana.` / `mqtt.` if separate) at it, open ports 80, 443, 8883 | 1-2 days (DNS can take hours) | Half a day to bring it up and run `make smoke` and `make loadtest` against it. The laptop numbers below are an upper bound; the VM's are the ones that count |
+| 2 | **SMS for the login OTP (OQ-16)** | `OTP_PROVIDER=console` prints the code in a log; no rider or driver can log in on a real phone. The test login that phones use now is blocked outside development on purpose | Choose a provider; in India register the company on **DLT** with the telecom operator, then a sender ID and the OTP message template (company PAN/GST and an authorisation letter are typical), and give me the API key | DLT approval: about 1-2 weeks; the provider account: 1-3 days | About a day: the adapter, a sandbox test, switching `OTP_PROVIDER`, a runbook entry. Cost per SMS is the provider's; budget it before the choice |
+| 3 | **Push notifications (OQ-20)** | `PUSH_PROVIDER=log`: nobody is told their cab is assigned unless the app is open (the WebSocket carries it only while connected) | Decide FCM (the default in the docs) or self-hosted ntfy. For FCM: a Firebase project, the Android app registered with the release package name, the service-account JSON for the server and `google-services.json` for Gemini | 1-2 hours for FCM | Gemini: the `firebase_messaging` wiring, token registration (the `POST /devices` endpoint exists); me: the FCM v1 sender and a test. About 2-3 days together |
+| 4 | **Play Console (R02)** | A release build exists (`app-release.apk`) but cannot reach testers without a Play listing; Google must also approve the **background-location** declaration, which a driver app cannot run without | Create the Play developer account (a one-time fee; an organisation account needs a D-U-N-S number and takes longer than a personal one), make the app, host the privacy-policy URL, fill in the background-location and data-safety forms, and keep the **upload keystore** safe and backed up (`key.properties` is deliberately not in the repo) | Account verification 2-7 days; the location review 1-2 weeks | Gemini attaches the signed bundle to the internal track. Until approved, drivers can side-load the APK |
+| 5 | **CI (F02)** | The pipeline is written and parked in `.github/workflows-pending/` because no credential here has GitHub's `workflow` scope; nothing runs on a pull request | `gh auth refresh -s workflow` (once, as the repository owner) | 10 minutes | I move the file, push, and fix whatever the first real run shows (an hour or two) |
+| 6 | **Self-hosted maps on the server** | The public OSM tile and routing servers may be used for a demo, not for a 35-cab fleet; the policy asks for self-hosting beyond that (ADR-0010) | Give the VM enough disk and RAM for the NCR extract (8 vCPU / 16 GB is the documented size) | Same day as item 1 | Half a day: `make maps` on the VM, then `OSRM_URL` / `TILES_URL` in the environment (config only) |
+| 7 | **Alerts that reach a person** | Prometheus rules evaluate and show in Grafana; **nothing pages anyone**, and there is no off-site backup copy | Say where alerts should go (WhatsApp is out of scope by decision; email, Telegram or SMS) and where a backup copy should live | A decision | A day: Alertmanager and the off-site copy |
+| 8 | **The operator's real data** | R03 stays open until it is loaded | Fill the seven CSVs and run `make onboard-dry-run` (`docs/runbook-pilot-onboarding.md`) | About a day of the operator's time | Half a day to load; training half a day |
+| 9 | **Two product decisions** | OQ-40 (a cab that serves several clients in a day) changes the billing report; OQ-41 (the driver's trip list) decides who fixes a bug that currently hides a newly assigned trip from the driver app | Decide both | A conversation | OQ-41 is a few lines either way |
+| 10 | **What the app tells drivers and riders about location** | Drivers' location is tracked while on duty, riders' homes are stored; the Play form and the operator's own staff will ask | Get the wording reviewed by whoever advises the company on data protection; I do not give legal advice | A few days | Gemini puts the agreed text in the app and the privacy page |
+
+**Not blocking, but worth saying out loud:** the optimizer's performance (vehicles used, median wait) is parked at your
+instruction; manual and `semi_auto` run the pilot's first weeks without it. The simulator suites and `make smoke` have not
+yet been run against a real phone's GPS - `docs/runbook-phone-testing.md` is the first step toward that.
+
+Also found and not fixed: the partition migration's comment points at helpers (`app/modules/tracking/partitions.py`) that do not exist, so nothing creates next month's `location_ping` partition. Pings fall into `location_ping_default`, so nothing is lost, but a monthly job is needed before the pilot has months of data.
+
+
+---
+
+## Overnight run 2026-11-02 - read this first
+
+Everything below is committed and pushed on `dev/overnight-1` (one commit per item). Nothing in `app/` was touched.
+**Tests:** backend **1914 passed / 7 skipped**, simulator **347 passed / 6 skipped**; `ruff`, `ruff format` and `mypy` clean.
+**Smoke script:** `make smoke` against the running stack - **22 of 22 steps PASS** (about four minutes).
+
+| # | What | Commit | Result |
+|---|---|---|---|
+| 1 | `make phone-dev` + `docs/runbook-phone-testing.md` | `d9164f0` | API on 0.0.0.0, broker/tiles reachable, `/driver/duty` returns the laptop's LAN IP, test login on, URLs and `--dart-define`s printed. Verified: `/health/live` and `/auth/test-login` answer on the LAN address |
+| 2 | `make seed-demo` (idempotent) | `88221e3` | Rs 8/km operator, client with night safety on, office, 3 zones, 5 cabs + drivers, 20 riders (odd = women), a login per role. Second run creates nothing (tested) |
+| 3 | Per-cab-per-day billing | `b7cdb3b` | One row per cab per day: GPS km from pings (jumps ignored), optional odometer on duty on/off, gap flag (10%), billed on GPS unless an operator marks the odometer; CSV with a TOTAL line; multi-client day billed to the default client + flagged (**OQ-40**) |
+| 4 | Escort: last woman out | `3863d47` | Flagged **at planning time**; only `escort_arranged` clears it; a confirmation answers the reason it was given for |
+| 5 | The 12 refused offers | `7a91bd2` | All 12 explained below; the simulator no longer calls a correct 409 an error |
+| 6 | `make smoke` | `6bbc577` | 22/22. **It found a real defect** (below) |
+| 7 | Gemini's message | `544d3b8` | Every api-spec change + the exact phone-build values |
+| 8 | This section | | |
+
+### Item 5: the 12 remaining refused offers, from the run artefacts (S10 semi_auto, `approve_all`)
+
+Every one was checked against the `suggestion` rows (`offered_at`, `failsafe_due_at`, `decided_at`) and the request's
+own history. **None is a defect.**
+* **10 x "already failsafe_assigned"** - the single simulated supervisor takes the *oldest* offer, which is the one nearest
+  its 180 s timer, then spends 20-120 s reacting. The failsafe fired first, every time (e.g. due 03:45:20, answered
+  03:45:39). The 409 is the correct answer; in the app it should read "already assigned automatically".
+* **1 x "already superseded", request later dropped** - the offered cab (rank 1, 03:44:20) stopped being usable before its
+  timer (03:47:20): another request had taken it. Withdrawn correctly, re-offered at 03:48:20 to a different cab, which
+  the failsafe assigned. The supervisor answered the first offer at 03:47:58, after it had been withdrawn.
+* **1 x "already superseded", request cancelled** - the rider gave up ("Waited too long", 04:29:00 backend time); the offer
+  was withdrawn with the request. The supervisor's answer arrived about 15 s earlier in simulated time only because the
+  backend clock runs 20 s ahead of the simulator's (documented lead).
+Also: the two driver 409s ("Mark the stop arrived first", `stop_status: skipped`) are a rider cancelling on the way;
+the simulator already counted that as a "stale stop" for the other message shape and now for this one too.
+`sim run` now reports `late_answers` separately from `refused`.
+
+### The defect the smoke test found (and the fix)
+
+A supervisor confirmed a night escort and got a **200**; the driver's `start`, sent straight after, was still refused.
+FastAPI runs a yield-dependency's exit code **after the response is sent** unless the dependency has
+`scope="function"`, and our session was committed there - so the next request could read the old state. Fixed in
+`SessionDep` (commit before the response), with a regression test that fails on the old behaviour. This affected
+**every** endpoint, not just this one; a phone tapping quickly could have hit it.
+
+### Exactly how to test on your phone
+
+1. Start **Docker Desktop** (it does not start by itself) and make sure the laptop and phone are on the **same Wi-Fi**.
+2. Once only, open the firewall (PowerShell as administrator) - the three `New-NetFirewallRule` lines in
+   `docs/runbook-phone-testing.md` section 1.
+3. `make phone-dev` (or `python scripts/phone_dev.py up`), then `make seed-demo`.
+4. On the phone's browser open the **API docs URL** it prints (`http://<LAN IP>:8000/docs`). If it loads, the network is fine.
+5. Build the app with the `flutter run --dart-define=...` line it prints (includes `APP_TESTING=true`).
+6. Log in by typing a phone number: supervisor `+919100000002`, driver `+919100000101`, rider `+919100000201` (woman) /
+   `+919100000202` (man), operator admin `+919100000001`, client admin `+919100000003`. Walk-through: runbook section 6.
+7. `make smoke` any time to prove the backend half still works; `make phone-dev-stop` when finished.
+If the laptop changes network its IP changes: re-run `make phone-dev` and rebuild the app.
+
+### Decisions applied from your list (all logged in `decision-log.md`, `open-questions.md` updated)
+
+Billing per cab per day at Rs 8/km (OQ-03 refined); last-woman-out escort (OQ-10 refined); `stale_gps_seconds` 150 approved.
+Removed because they no longer mean anything: `billing_no_show_billable`, `billing_late_cancel_billable`,
+`billing_distance_basis`.
+
+### Open questions and things only you can decide
+
+* **OQ-40 (new): a cab serving several clients in one day.** Provisional rule shipped: the whole day goes to the operator's
+  default client (`billing_default_client_id`, else the only/oldest client) and the row is flagged. Split by trips, by km, or
+  forbid sharing across clients?
+* **Which client is "default" for the pilot** - set `billing_default_client_id` in `/admin/config` once there is more than one.
+* **Day boundary for billing**: a night duty that crosses midnight is billed on the day it *started*. Say if the employer
+  invoices otherwise.
+* **Odometer**: nothing stops a driver typing a wrong but increasing reading; the 10% flag catches it, an operator decides.
+* Still open from before: OQ-22 (needs real pilot GPS), OQ-39 (acceptance definition), OQ-01.
+* Not done on purpose (your instruction): optimizer performance (vehicles used, median wait, S10 redesign); the
+  Supervisor's items 2-3 of the earlier message (identical medians, vehicles 9 -> 11) wait for you.
+
+### Things I want you to know
+
+* The demo database now holds committed demo data (operator "Demo Cabs"). The tests scope by operator and are green with it
+  present, but a developer who wants a clean database can truncate it.
+* My billing commit swept in one of Gemini's staged files and I ran `git reset` once (index only); both are disclosed to
+  Gemini in COORDINATION.md. I used explicit-path `git add` for every later commit.
+
+---
+
+## Previous run summary (2026-11-01)
+
+## Owner decisions applied (2026-11-01, second session)
+
+One commit per item, in the order you gave. Backend suite **1861 passed / 7 skipped** (before the last commit's
+final run it was 1856 / 1833 at earlier points); simulator 346 passed; ruff, ruff format and mypy clean.
+
+| # | Decision | What now exists | Commit |
+|---|---|---|---|
+| 4 | App test login | `POST /auth/test-login {phone}` - existing active users only, their real roles, 404 unless `AUTH_TEST_LOGIN=true` **and** `APP_ENV` is dev/test/sim; the server **refuses to start** with the flag in staging/prod. Added `AppEnv.test`. Tests: works, unknown/suspended refused, 404 when off, startup refusal. Endpoint posted to Gemini in COORDINATION.md | `fe3dbeb` |
+| 1 | Phone GPS, OQ-22 | `gps_distance_filter_m` (5) and `gps_heartbeat_seconds` (60) are config and returned to the app in `/driver/duty` (`gps`); mqtt-topics.md rewritten (replaces the 5 s / 30 s timer); the simulator's vehicles publish by the same rule. **`stale_gps_seconds` default 60 -> 150** and the config service refuses anything under 1.5 x the heartbeat (60 s would have marked every parked cab stale). The ingestor never enforced an interval, so its drop rules are unchanged. B37 ticked `[x]` | `6565c57` |
+| 3 | Night escort, OQ-10 | A trip whose only rider is a woman after the client's night window opens is **flagged** (board, trip detail `escort`, critical `escort_required` alert); the driver's start is refused (409 `escort_confirmation_required`) until a supervisor `POST /dispatch/trips/{id}/escort-confirmation` with `escort_arranged` or `male_co_rider_present`; who/when/note on the trip and in `trip_event`. A man sharing the cab clears it; two women are not alone; unknown gender never triggers it; nothing is assigned automatically. **A gender field was missing** - I added `employee.gender` (female/male/other, nullable; in create/update/CSV import). It rides on B28's `night_safety_enabled` and window, so it is **off until a client switches night safety on** | `af893e1` |
+| 2 | Billing, OQ-03 | Clients are billed **per km**; `billing_rate_per_km` (operator config, 0 = unset) gives `summary.amount`, otherwise km only - no default price. Trip count is information, not a basis. A test proves no rider-facing payload or role has a charge. B38 ticked `[x]`. No-show / late-cancel treatment stays provisional config | `c11cf86` |
+| 5 | semi_auto + approve_all bug | Root cause: the failsafe withdrew every optimizer offer at its timer - it required the cab to be in the single-rider top three, and then the single-insertion evaluator vetoed pooled plans the optimizer had passed. Fix: rank 1 stores its plan and accept / failsafe apply it as a plan (vehicle and rider rules still re-read). Live S10 semi_auto: refused offers **36 -> 12**, withdrawn-at-timer **150 -> 4**; the 10 that remain are a late supervisor meeting a correct "already failsafe_assigned". Regression test fails on the old logic. No optimizer-performance work done | (this commit) |
+
+**Needs you:** (a) turn `night_safety_enabled` on for the pilot client or the escort gate never fires; give riders a
+`gender` (CSV column `gender`); (b) `billing_rate_per_km` for the pilot operator; (c) confirm the 150 s stale
+default; (d) OQ-10 residue: should a woman *last out* of a pooled from-office trip also need an escort? (e) OQ-22 and
+OQ-03 are re-stated in open-questions.md rather than closed - they close with real pilot data and a rate.
+Known and left alone: the single-insertion and optimizer evaluators still measure rule 7 differently (manual
+`assign` vs plans); this was the inconsistency behind item 5.
+
+## Phase 3 summary (2026-11-01)
+
+**Done:** B29-B36 (hold window, optimizer, DARP, apply by mode, route-aware reuse, full_auto + VIPs,
+mode prompts, optimizer-down), B39 (reports), M11-M13 (pooling metrics, S10-S12, policy comparison).
+**Built, not closed (`[~]`):** B37 (needs real pilot GPS - OQ-22), B38 (quantities only; money needs OQ-01/OQ-03).
+**Skipped as instructed:** R04. A17-A19 are Gemini's.
+
+**Tests:** backend 1821 passed / 7 skipped; simulator 345 passed / 6 skipped; ruff, ruff format, mypy clean.
+Live: S10 `pooling_efficiency`, S11 `night_safety` (4 flagged riders carried, 0 breaches), S12
+`optimizer_down` (alert raised and cleared, 0 applied or offered while down) all pass against the real stack.
+
+**Measured improvement - read this honestly.** Same scenario and seed (`sim policies`, S10, 14 cabs, 51 requests):
+
+| | manual | semi_auto | full_auto |
+|---|---|---|---|
+| Cab-km per trip | 20.92 | 15.71 | 16.90 (-19%) |
+| Cab-km per rider | 15.69 | 13.96 | 13.28 (-15%) |
+| Vehicles used | 9 | 8 | 11 (**+22%, worse**) |
+| Riders per trip / pooling rate | 1.33 / 0.22 | 1.12 / 0.13 | 1.27 / 0.18 (**worse**) |
+| Median wait | 43 min | 43 | 43 (no change) |
+| Completed of 51 | 12 | 9 | 14 |
+| Rides over detour limit | 5 | 0 | 0 |
+
+**Phase 3's exit criterion (fewer vehicles, fewer cab-km per trip, lower median wait) is NOT demonstrated.**
+Cab-km per trip and per rider fall, detours stop breaking rule 7 (5 -> 0), and the optimizer does the
+assigning - but vehicles used rise and pooling does not, and 70-80% of riders give up in every mode. The
+cause is the scenario, not only the optimizer: the seeded fixture alternates two offices and three zones,
+so only ~1/6 of riders can share a cab, and 51 requests for one 04:30Z arrival swamp 14 cabs. Treat these
+as relative numbers (OQ-22, OQ-32). A scenario with one office and denser zones, and real pilot data, is
+what would actually test pooling. `semi_auto` with the `approve_all` policy also shows 36 refused offers
+and 38 driver errors in the sim - not investigated; probably the offer/approve path under a stale clock lead.
+
+**Decisions I need from you:**
+1. OQ-22 (real speeds / pilot GPS) - closes B37. 2. OQ-03 / OQ-01 (what the operator bills on, and whether a
+no-show / late cancel is billable) - closes B38; my defaults (`billing_*` keys) are provisional. 3. OQ-39
+(which acceptance reading the 70% uses) - the report gives both. 4. OQ-10 (escort half of night policy).
+5. Confirm provisional defaults: `stop_dwell_seconds`=60, `mode_prompt_min_samples`=5 / `baseline_days`=14,
+`optimizer_failure_threshold`=3 (15 min memory, 180 s stall), `speed_profile_min_samples`=20.
+6. Known inconsistency: manual `assign` rule 7 uses straight-line direct time; the optimizer uses the routing matrix.
+7. Whether S10 should be redesigned (one office, denser zones) so the pooling claim can be tested.
+
+Incident: Gemini's `git stash -u` removed my uncommitted work at 04:58; it was restored from the stash with no loss.
+
+## Summary (2026-09-26)
+
+**Branch `dev/overnight-1`, 54 commits, all pushed. Working tree clean. Nothing merged to
+`main`, no history rewritten, no force pushes, no secrets committed.**
+
+**Every backend task is done (B01-B19), plus all foundation and infra tasks, plus the
+simulator through M06.** 29 of 48 tasks complete; the 19 that remain are the Flutter app
+(blocked on the SDK), M07-M08, optional self-hosting, and release.
+
+The headline: **a whole ride runs end to end through the real stack.** A simulated rider
+asks for a cab, a simulated supervisor picks the nearest one and presses assign, a
+simulated driver drives there over MQTT-published GPS, picks them up, drives to the office,
+drops them off and completes the trip - all through the same HTTP and MQTT the phones will
+use. Nothing in the simulator reaches into the database.
+
+That loop has now found **nine real defects** that no unit test had: see the task log
+below, and the list under "Real defects" for the ones from the first sitting.
+
+### Done this run
 | Task | What you have now |
 |---|---|
-| Section 1 docs | ADR-0010 sweep finished (`control-model.md` was the only file still missing it) |
-| **F01** | Monorepo skeleton, Makefile, `.env.example`, PR template, PowerShell mirror of every make target |
-| **I01** | `infra/docker-compose.yml` (postgres+PostGIS, redis, mosquitto) - written, *not* verified |
-| **B01** | FastAPI skeleton: app factory, settings, Clock, JSON logging, error handler, Alembic, health endpoints |
-| **I02** | Routing provider interface (`osrm` / `approx` / `cached`), Redis rate limiter, `GeocodingProvider=none` |
-| **B08** | Domain state machines, 100% statement *and* branch coverage, enforced by a make target and CI |
-| **B10** | ETA service, time-of-day factor, degradation ladder, `eta_approximate` added to the API contract |
-| **M01-M03** | Simulator: scenario loader, engine, seeded RNG, vehicle movement, GPS pings, recorder, compare |
+| **B11** | Driver duty, `duty_session`, per-vehicle MQTT credentials, generated Mosquitto password/ACL files |
+| **B12** | GPS ingestor: pure drop rules, partitioned `location_ping`, Redis latest position, aiomqtt consumer, HTTPS fallback |
+| **B13** | `/ws` realtime hub: token auth, per-channel permission checks, Redis pub/sub fan-out |
+| **B14** | Dispatch board, candidate vehicles with ETA and added minutes, manual assignment, automation pause |
+| **B15** | Driver trips and stop actions, offline idempotency, the 30-second stop-ETA refresh job |
+| **B16** | Notifications: provider interface (log / ntfy / fcm), records, every row of `trip-lifecycle.md` section 6 |
+| **B17** | Alerts: SOS, driver issues, list/acknowledge/resolve, stale-vehicle sweep, VIP-no-vehicle |
+| **B18** | Trip ratings and the operator report (JSON + CSV), median/p90 wait |
+| **B19** | `/simctl/clock` and `/simctl/reset`, sim-only |
+| **M04** | The closed loop: platform client, MQTT publishing, shared clock, fleet spawning |
 
-Backend + simulator: **345 backend tests, 114 simulator tests, all passing**; ruff, ruff format and mypy
-clean on both packages.
+**1177 backend tests, 143 simulator tests, all passing.** ruff, ruff format and mypy clean
+on both packages. 100% branch coverage of the state machines, enforced.
+
+### Real defects this run found (not test bugs)
+
+The ones worth knowing about, because each was invisible until something exercised it:
+
+1. **Tokens were validated against the real system clock.** PyJWT checks `iat` and `nbf`
+   itself even with `verify_exp` off, so any clock ahead of wall time - exactly what the
+   simulator does - had every token rejected as "not yet valid".
+2. **One shared `Geography` instance leaked NOT NULL between columns.** GeoAlchemy2 stamps
+   a column's `nullable` onto the type object, so `employee.home_location` was NOT NULL in
+   the database while the model said optional. There is now a test comparing every
+   geography column against `information_schema`.
+3. **The GPS ingestor could not start on Windows at all** (aiomqtt needs `add_writer`), and
+   **died on its first flush** because it imported only the tracking model, so
+   `location_ping`'s foreign key to `vehicle` could not resolve.
+4. **The dev Mosquitto ACL silently dropped every authenticated publish.** Rules before the
+   first `user`/`pattern` line apply to anonymous clients only - the trap the ACL file's own
+   comment warns about.
+5. **A no-show left the rider's drop stop pending forever**, so the driver could never
+   complete the trip.
+6. **`client_admin` could have subscribed to the whole operator's request feed** over the
+   WebSocket: they hold `request_queue_view` for their own client, so the permission alone
+   was not enough.
 
 ### You must install or decide
 
 | # | Action | Unblocks | Why |
 |---|---|---|---|
-| 1 | **`gh auth refresh -s workflow`**, then `git mv .github/workflows-pending/ci.yml .github/workflows/ci.yml`, commit, push | F02 | No credential here has the GitHub `workflow` scope, so *any* push touching `.github/workflows/` is rejected. The pipeline is written and validated; it just cannot be uploaded. Steps are in `.github/workflows-pending/README.md` |
-| 2 | **Install Docker Desktop**, then `make up && make check-infra` | I01, and the whole B02-B19 chain | `make check-infra` runs I01's exact acceptance criteria (PostGIS extension, redis PING, mosquitto subscribe) |
-| 3 | **Install Flutter + Android SDK** | A01-A12 | Nothing app-side could be started |
-| 4 | Decide **OQ-22** (`approx` base speed, provisional 24 km/h) and **OQ-23** (ETA time-of-day factors) | Tuning only | Both are config values with provisional defaults and a documented source; neither blocks code |
-| 5 | Review the **api-spec change** in B10 (`eta_approximate` fields) | - | Contract change, made spec-first per hard rule 1 |
+| 1 | **Install the Flutter SDK** | A01-A12, and R02 | Twelve app tasks, the only large blocked group. The Android SDK is already on this machine |
+| 2 | Decide **OQ-20**: FCM or self-hosted ntfy | Real push | `PUSH_PROVIDER=log` today. `ntfy` is fully implemented and works now; `fcm` raises with the reason, because silently dropping every push is the failure nobody notices until a rider is standing outside at 7am |
+| 3 | Confirm **OQ-25**: which permission guards alerts | Nothing | `/alerts` and the alerts channel ride on `request_queue_view`. Fine unless SOS should reach only a safety lead |
+| 4 | Confirm **OQ-24** (202-always on OTP) and **OQ-22/OQ-23** (approx speed, ETA factors) | Tuning only | All three have provisional, documented defaults |
+| 5 | Decide **OQ-21**: when to self-host OSRM and tiles | Before the paid pilot | The public OSM services have no SLA and may be withdrawn for commercial use (ADR-0010 A3) |
+| 6 | Review **`AGENTS.md`** | Nothing | It appeared in the tree as a byte-identical copy of `CLAUDE.md` and got picked up by a commit. I did not write it. Two copies of the agent rules will drift - keep one, or make one a pointer |
 
-### How to run what was built
+### Decisions I made that you can overrule
+
+Each is recorded in `docs/07-decisions/decision-log.md` with its reasoning:
+
+- **ADR-0011:** manual assignment *reports* hard-rule violations and applies anyway; only
+  seat capacity refuses. Overriding the optimizer is the point of manual mode.
+- The **WebSocket contract** lives in `docs/03-architecture/websocket-protocol.md`, pointed
+  at from `api-spec.yaml` under `x-websocket`. OpenAPI cannot describe a socket.
+- **No access token in a WebSocket query string** - header, or a first `auth` frame.
+- `Alert.severity` in the spec changed from `critical/high/normal` to
+  `critical/warning/info`: the original had no informational level and B17 needs one.
+
+### How to run it
 
 ```powershell
-# one-time
-python scripts\venv_setup.py --install     # creates .venv, installs backend + simulator
+make up                      # postgres + postgis, redis, mosquitto
+make check-infra             # verifies all three
+make backend-dev             # the API on :8000
+make test                    # 1177 backend tests
+make lint                    # ruff + format + mypy, both packages
+make sim-quick               # simulator smoke scenario
+```
 
-# checks (both routes work; use whichever you prefer)
-make lint            # or  .\scripts\dev.ps1 lint      - ruff + format + mypy, both packages
-make test            # or  .\scripts\dev.ps1 test      - 345 backend tests
-make test-domain-coverage                                # B08: fails under 100% branch coverage
+To watch the closed loop for yourself:
 
-# the API (health endpoints work; there are no business endpoints yet)
-make backend-dev
-curl http://localhost:8000/health/live      # 200 {"status":"ok"}
-curl http://localhost:8000/health/ready     # 503 until Postgres runs - the detail says why
+```powershell
+# terminal 1
+$env:APP_ENV="sim"; $env:SIMCTL_ENABLED="true"; make backend-dev
+# terminal 2  (from backend/)
+$env:APP_ENV="sim"; python -m app.ingestor
+# terminal 3  (from simulator/)
+python -m sim run scenarios/smoke_tiny.yaml --platform http://localhost:8000/api/v1
+```
 
-# the simulator
-cd simulator
-python -m sim validate scenarios/smoke_tiny.yaml
-python -m sim run scenarios/smoke_tiny.yaml     # writes runs/<timestamp>_smoke_tiny/
-python -m sim compare runs/<run-a> runs/<run-b>
-make sim-quick
+It prints `mqtt published=420 unpublished=0`, and `GET /api/v1/dispatch/vehicles` then
+shows the cabs with live positions. The five opt-in tests that assert this:
+
+```powershell
+$env:SIM_PLATFORM_URL="http://localhost:8000/api/v1"
+python -m pytest tests/test_closed_loop_live.py
 ```
 
 ### Suggested next tasks, in order
-1. **Activate CI** (action 1 above) - two commands, and every later PR gets checked.
-2. **Docker, then B02** (core schema: tenancy, users, roles). It gates B03-B07 and everything after.
-3. **B05** (config service) soon after B02: the provisional constants in `EtaConfig` and `ApproxConfig`
-   are waiting for a real home in `operator_config`, which is where OQ-22/OQ-23 get resolved.
-4. **A01** once Flutter is installed - it has no backend dependency and can run in parallel.
 
-### Two things worth knowing
-- `runs/` is git-ignored, so simulator output never lands in a commit.
-- One commit message (`b460187`, I01) has mangled text: backticks in the message were expanded by the
-  shell before git saw them. The content is intact and the code is unaffected; I did not amend it because
-  the commit was already pushed and rewriting pushed history was out of bounds.
+1. **M07** (event injector + traffic factors) - unblocked. Rain, breakdowns and road
+   closures, which is what S04-S06 need.
+2. **M08** (scenario suite in CI). Needs a backend service in the CI job; `make sim-quick`
+   runs offline today and says "assertions not checked" rather than pretending.
+3. **A01 onwards** the moment Flutter is installed. A11 (supervisor live map) is the one
+   that finally shows the simulated cabs moving on a real screen.
+4. **I02b** (self-hosted OSRM) before any paid pilot.
+
+### What S02 is telling you already
+
+`normal_weekday` (300 riders, 35 cabs, 16 simulated hours) runs, and the manual loop does
+not cope: **one supervisor assigning one request at a time cannot serve a morning peak.**
+The first full run had most riders give up waiting and p90 wait far past the 30-minute
+target in `scenarios.md`. Those exact numbers are **not** trustworthy - that run was
+polluted when the database was re-seeded underneath it - but the shape is the point, and
+it is the measurement that justifies Phase 2's automation.
+
+Getting clean figures needs **OQ-26** fixed first: at 300 riders the run manages about 6x
+real time rather than the 60x it asks for, so a 16-hour scenario takes hours. The command,
+once it is fast enough:
+
+```powershell
+python -m sim run scenarios/normal_weekday.yaml --platform http://localhost:8000/api/v1
+```
 
 ---
 
@@ -118,3 +417,275 @@ Append-only log below; newest entries at the bottom of each section.
 | 09:45 | A01-A12 | **blocked** | Not started. All app tasks need the Flutter SDK | **Install Flutter SDK + Android SDK** if you want app work next |
 | 09:45 | M04-M08 | **blocked** | Depend on B12/B19 (GPS ingestor, sim control endpoints), which need the database | Unblocked by Docker, then the B-chain |
 | 09:45 | R01-R03 | **blocked** | Need a staging VM, Play Console access and pilot data | Out of scope for an overnight run |
+| 10:05 | OQ-02 | done | Status set to "resolved by owner (2026-09-24); details to be added by owner". No details invented | Write the actual resolution into OQ-02 when you can |
+| 10:20 | I01 | done (was blocked) | Docker Desktop is installed now, so I01's acceptance criteria finally ran. Postgres and redis passed first time; **mosquitto was unhealthy** - the healthcheck subscribed to `$SYS/broker/uptime` but the dev ACL grants `sc/v1/#` only, so the subscription was silently denied and the check hung. Both the compose healthcheck and `check_infra.py` now use `mosquitto_sub -E` on `sc/v1/#`. All three containers healthy; PostGIS 3.4 confirmed | Nothing. `make up` then `make check-infra` reproduces it |
+| 11:40 | B02 | done | 12 tables (operator, client, office, client_policy, zone, app_user, user_role, refresh_token, otp_challenge, device, employee, saved_place), Alembic migration, tenant-scoped repositories, 40 integration tests on real PostGIS. Found and fixed two real defects: the `user_role` unique constraint did nothing for NULL `client_id` (now NULLS NOT DISTINCT), and autogenerate wanted to drop PostGIS's `spatial_ref_sys`. CI gained a PostGIS service and a guard that fails if the integration suite skips | Review the schema against `data-model.md` when you get a chance |
+| 13:10 | B03 | done | Six auth endpoints, 36 integration tests on real Postgres with a FakeClock. **Amended api-spec.yaml first** (hard rule 1): `/auth/otp/request` now always answers 202, because the specified 404 would have made it a directory of staff and riders - recorded in the decision log with OQ-24 so you can overrule. Verify failures are byte-identical whatever went wrong. OTP codes and refresh tokens stored hashed (tests assert they never appear in clear). PyJWT flagged our HMAC key as under RFC 7518's 32-byte minimum, so staging/prod now refuse a short `JWT_SECRET` | Decide OQ-24 (202-always vs 404); pick an SMS provider (OQ-16) before real logins |
+| 14:05 | B04 | done | `require(Permission.X)` dependency + the harness that walks every route and fails if one declares no permission / `public_route()` / `self_service_route()`. Found that this FastAPI version nests included routers, so my first walker found **zero** routes and passed vacuously - there is now a test that fails if the harness ever sees nothing again. Denied cells of the matrix tested explicitly | Nothing |
+| 15:20 | B05 | done | Config registry with every key/default/range from allocation-rules.md section 1, `operator_config` + history tables, GET/PATCH `/admin/config`. Out-of-range rejected with 422; history row per change; no history row when the value is unchanged. Patches validate in full before writing, so a bad third key cannot leave the first two applied | Nothing |
+| 16:30 | B06 | done | Eight `/admin/*` endpoints (clients, offices, vehicles, drivers, invites) + vehicle/driver tables, 43 tests. Tenancy checked on **cross-references** too: creating an office under another operator's client, or pointing a driver at a foreign vehicle, is a 404 - the FK alone would have allowed both. The supervisor "status only" matrix row needed a field-level check, not just a route-level one | Nothing |
+| 17:40 | B07 | done | Employee CRUD scoped for `client_admin` + CSV import with dry-run report. 66 tests. The parser is pure (no DB, no HTTP) and reports **every** bad row rather than stopping at the first - a 500-row file with 50 bad phones returns exactly 50 errors with spreadsheet-accurate row numbers. Dry run is the default and writes nothing at all, not even the valid rows. Re-importing updates by phone instead of duplicating. `zone_id` stays null, as the task specifies | Nothing |
+| 19:10 | B09 | done | Ride requests: create (self and on behalf), EMP-02 validation (7-day range, 60-minute same-direction duplicate window), list mine, get, cancel, and a **Clock-driven expiry sweep** with the 15-minute near-expiry alert. 42 tests. Expiry is proven by advancing a FakeClock, never by sleeping. Every status change goes through the B08 state machine and writes a `ride_request_event`; `_apply` is the only writer of `status`. Also added the `alert` table (B17 adds its endpoints) since the near-expiry warning needs somewhere to land | Nothing |
+| 20:05 | B19 | done | `/simctl/clock` (GET/PUT) and `/simctl/reset`, mounted **only** when `APP_ENV=sim` - the router is never registered elsewhere, so dev/staging/prod 404 because the paths genuinely do not exist rather than because a flag says so. PUT runs due work synchronously before returning, so the simulator can never race a worker. Reset seeds the fixture testing-strategy.md section 4 specifies (2 offices, 3 zones, 20 employees, 6 vehicles) with deterministic ids and one ready-to-use token per role. `scenario_yaml` is refused loudly rather than half-honoured. 24 tests | Nothing |
+| 22:30 | B11 | done | `/driver/duty` (on/off), `duty_session`, vehicle status through the state machine, per-vehicle MQTT credentials and generated Mosquitto password/ACL files. 48 tests. The `$7$` password format was reverse-engineered from the real broker (`mosquitto_passwd` in the container) and is reproduced byte for byte - pinned by a test, because a wrong format would silently lock out every driver. **The ACL denial is verified against the live broker**: run `MQTT_ACL_TEST=1 pytest tests/integration/test_mqtt_acl_live.py` after `make up` (opt-in, since it reconfigures the shared dev broker and restores it afterwards). Found and fixed a real bug: a driver going on duty could silently clear a supervisor's out-of-service flag | Optional: run the live ACL test yourself to see it |
+| 01:15 | B12 | done | GPS ingest, transport-agnostic: the same validation serves MQTT and the `/driver/location` HTTPS fallback, so a driver on a bad connection cannot get laxer rules than one on a good one. Pure drop rules in `app/domain/gps.py` (accuracy, age, future, implied speed, batch cap), an aiomqtt consumer process (`python -m app.ingestor`), Redis latest-position + pub/sub for B13, and batched inserts into a **RANGE-partitioned** `location_ping` (monthly partitions + a default, created by the migration). Out-of-order pings are stored but never move the map marker backwards. The vehicle on the HTTPS route is resolved from the open duty session, **never** from the request body, so a driver cannot post as another cab. 70 tests. Acceptance measured: 200 vehicles x 3 cycles persisted in 0.23 s total, about 0.06 s per 200-ping cycle against a budget of 2 s | Nothing |
+| 03:05 | B14 | done | Dispatch board, candidates and manual assignment. Five endpoints, trip/trip_stop/trip_event tables, 80 tests. Took B14 **before** B13 on purpose: B13's acceptance is "employee receives only own trip channel", and trips did not exist yet. Sequencing and the eleven hard rules are pure (`app/domain/dispatch.py`), driven by one pre-fetched ETA matrix rather than a routing call per insertion position. **ADR-0011** records the one judgement call the task forced: manual assign *reports* hard-rule violations and applies anyway - overriding the optimizer is the point of manual mode - with capacity the single refusal, because five people do not fit in a four-seat car. Accepted violations are written to `trip_event` so an override stays visible. Found and fixed two real bugs on the way (see the next two rows) | Nothing |
+| 03:05 | bug | fixed | **Tokens were validated against the real system clock.** PyJWT checks `iat`/`nbf` itself even with `verify_exp` off, so any clock running ahead of wall-clock time - exactly what the simulator does - had every token rejected as "not yet valid". All three checks now use the injected Clock (CLAUDE.md hard rule 2). Two regression tests, including one that proves expiry is still enforced | Nothing |
+| 03:05 | bug | fixed | **One shared `Geography` instance was leaking NOT NULL between columns.** `Point = Geography(...)` was shared by seven columns; GeoAlchemy2 stamps a column's `nullable` onto the type object, so the first `nullable=False` silently made the rest NOT NULL - `employee.home_location` was NOT NULL in the database while the model said optional. `Point`/`Polygon` are factories now, and a test compares every geography column's nullability against `information_schema` so it cannot drift again | Nothing. `home_location` was set NOT NULL deliberately, matching data-model.md |
+| 03:05 | bug | fixed | Alembic autogenerate wanted to **drop the `location_ping` partitions** (same class of bug as `spatial_ref_sys` in B02): partitions are real tables no model declares. `env.py` now filters them and their inherited indexes | Nothing |
+| 04:30 | B13 | done | `/ws`: token auth, channel subscription with per-channel permission checks, Redis pub/sub fan-out. 56 tests. **`docs/03-architecture/websocket-protocol.md` is new and is the contract** - OpenAPI cannot describe a WebSocket, so `api-spec.yaml` points at it under `x-websocket` and the change-the-contract-first rule applies there too. The token is accepted in the `Authorization` header or a first `auth` frame, **never** in the query string (URLs end up in proxy logs and browser history). Found a real authorisation hole while writing it: `client_admin` holds `request_queue_view`, so permission alone would have let them subscribe to the whole operator's request feed - operator channels now also require the caller not to be client-scoped. The hub keeps one Redis subscription per channel however many sockets want it, and one dead or hanging socket cannot stall the others | Confirm OQ-25 (which permission guards the alerts channel) when B17 lands |
+| 05:50 | B15 | done | Driver trips and stop actions: `/driver/trips`, start, arrived / done / no_show, complete, plus the 30-second stop-ETA refresh job. 53 tests. **Two clocks throughout**: `occurred_at` is when the driver tapped and is the business time; `Clock.now()` is when we heard and is the audit time - otherwise a trip that finished at 18:04 gets recorded as finishing at 19:30 when the phone found signal. Idempotency is the database's job: `client_event_id` is a unique index on `trip_event`, so a retried offline event cannot pick the same rider up twice. The ETA job walks the remaining stops in order so a rider three stops down sees the queue ahead of them rather than a direct time, and it refuses to invent an ETA for a cab that has not pinged; `/simctl/clock` runs it, so simulated time refreshes ETAs too. Three real bugs found while writing it: the same idempotency key was written to two rows when start had to pass through `dispatched`; only the first stop of a trip was ever `en_route`, so no later stop could legally reach `arrived`; and a no-show left the rider's drop stop pending forever, so the driver could never complete the trip | Nothing |
+| 06:55 | B16 | done | Notifications: push provider interface, `notification` records, and every row of `trip-lifecycle.md` section 6 wired to the transition that causes it. 50 tests. The section 6 table is **data, not scattered `if`s** - `app/domain/notifications.py` maps event to (recipient role, title, body), so a test can walk every row and a message sent to the wrong role fails the build. `log` is the default provider and what the tests run against; `ntfy` is fully implemented (plain HTTP, no credentials); **`fcm` raises with the reason** rather than pretending, because silently dropping every push is the failure nobody notices until a rider is standing outside at 7am. The "cab 5 minutes away" trigger fires once per stop from the ETA job - an ETA wobbling either side of five minutes would otherwise buzz a phone every thirty seconds, which is how people turn notifications off | **Decide OQ-20** (FCM vs self-hosted ntfy) before the pilot. `PUSH_PROVIDER=log` until then; `ntfy` works today if you stand up a server |
+| 08:10 | B17 | done | Alerts: `/sos`, `/driver/issues`, `/alerts` list, acknowledge and resolve, plus the stale-vehicle sweep and the VIP-no-vehicle prompt. 31 tests. **SOS is the most forgiving path in the codebase on purpose** - a wrong trip id does not refuse it, because someone pressing that button is not in a position to have got the payload right; acceptance measured at well under the 2-second budget, and a second test has a supervisor on a real socket receive the frame. A breakdown or accident takes the vehicle `out_of_service` immediately (DRV-06) - waiting for supervisor confirmation would keep assigning riders to a cab on the hard shoulder - and the vehicle comes from the driver's duty session, never the request body. Stale-vehicle alerts deduplicate on the open alert, so ten minutes of silence is one alert, not twenty, but a resolved one can be raised again. **api-spec.yaml amended first** (hard rule 1): `Alert.severity` was `critical/high/normal`, which has no informational level, and B17 needs one for VIP-no-vehicle; it is now `critical/warning/info`, matching the code | Confirm OQ-25 - alerts still ride on `request_queue_view` |
+| 09:20 | B18 | done | Trip ratings and the operator report. 43 tests. **Wait is defined once** - from the rider asking to the rider getting in - because that is the number this product exists to reduce, and a request that never got a cab has `null` rather than zero, since counting cancellations as instant service would flatter every average the pilot is judged on. Median and p90 use linear interpolation between closest ranks (numpy/R type 7), stated explicitly in `app/domain/stats.py`: percentile definitions differ by minutes on small samples, and a report that disagrees with the operator's own spreadsheet is a credibility problem. The CSV is generated from the same rows as the JSON, and a test asserts the two agree. A client admin sees their own client whatever `client_id` they ask for. Added `require_any()` to the B04 framework for the one endpoint two roles reach through different permissions | Nothing |
+| 09:35 | M04 | done | **The loop closes.** A `smoke_tiny` run now seeds the real backend, shares its clock, signs a driver into each cab, publishes 420 GPS pings to the real Mosquitto as six authenticated vehicles, and all 420 land in `location_ping` with none dropped - then the cabs show up with live positions on `GET /dispatch/vehicles`, the endpoint the supervisor map reads. 28 unit tests plus 5 opt-in live ones. Verified by hand against the running stack, not just asserted. The last bug was the interesting one: a compressed run publishes an hour of pings in under a second while the backend's clock walks that hour through 60 HTTP calls, so the pings outran the clock and the ingestor correctly rejected them all as `too_far_future`. The sink now **paces** publication to the shared clock - a real cab cannot outrun time, and now neither can a simulated one | Nothing. To see it: `make up`, `APP_ENV=sim make backend-dev`, `python -m app.ingestor`, then `python -m sim run scenarios/smoke_tiny.yaml --platform http://localhost:8000/api/v1` |
+| 09:35 | bug | fixed | **The GPS ingestor could not start on Windows at all.** aiomqtt needs `add_writer`, which the default proactor event loop does not implement, so `python -m app.ingestor` died on connect with a traceback that never mentions MQTT. The dev machine is Windows; production is Linux, where the fix is a no-op | Nothing |
+| 09:35 | bug | fixed | **The ingestor died on its first flush**, unable to resolve `location_ping`'s foreign key to `vehicle`: it imported only the tracking model, so `Base.metadata` was incomplete. It imports `app.models` now, as Alembic does - the same class of bug the `backend-packaging` CI job exists to catch, in the one process that job does not cover | Nothing |
+| 09:35 | bug | fixed | **The dev Mosquitto ACL silently dropped every authenticated publish.** Rules before the first `user`/`pattern` line apply to anonymous clients only, so a client that sends a username - the driver app and the simulator both do - was denied at QoS 0 with no error anywhere. The ACL file's own comment warns about exactly this. Added the authenticated dev rule; production still uses the generated per-vehicle file | Nothing |
+| 09:35 | bug | fixed | **The ingestor judged simulated pings against wall-clock time.** `/simctl/clock` now publishes simulated time to Redis and the ingestor reads it (`SharedSimClock`), so the two processes agree on what time it is (CLAUDE.md hard rule 2, across a process boundary) | Nothing |
+| 11:10 | M05 | done | Rider and driver agents. 37 new tests. Riders follow the section 5.2 demand model - request at shift start minus Normal(45,10), participation, readiness, and **patience**: they give up after about forty minutes and cancel, which is the number the pilot will be judged on. Drivers go on duty (sometimes late), poll for work, accept after Uniform(5,60) s, drive the stops in order, wait out boarding, and call a no-show only after the configured wait. **Neither agent decides anything the backend decides** - they ask the API and believe the answer, so a bug in expiry or assignment shows up as a stuck request instead of being papered over. Scenario assertions are evaluated now and a broken promise fails the run; an offline run says "not checked" rather than claiming a pass it cannot justify. Verified live: 10 riders, 3 drivers, 6 requests, **all terminal**, 0 agent errors | Nothing. `python -m sim run scenarios/smoke_tiny.yaml --platform http://localhost:8000/api/v1` shows it |
+| 11:10 | note | - | S01 `smoke_tiny` was retuned: the shift moved to 07:05 IST so the demand lands inside the one-hour window, and `request_expiry_minutes` is overridden to 30 so an unassigned request can reach a terminal state within it. Both are scenario data, not code | Nothing |
+| 11:10 | gap | open | With no supervisor agent, every request expires rather than being served. That is M06, whose deps (M05, B14) are now met | **M06 is the next unblocked task** |
+| 13:40 | M06 | done | Supervisor agent. `manual_nearest` takes the soonest cab with a free seat after a Uniform(20,120) s reaction delay, **one request at a time**; `absent` never responds. Phase 2's `approve_all`/`mixed` raise rather than quietly behaving like `manual_nearest` and making a Phase 2 scenario measure the wrong thing. 19 unit tests. **A whole ride now runs end to end through the real stack**: rider asks, supervisor assigns, driver drives, picks up, drops off, completes - `completed=1 trips=1/1 stops=2`. `scenarios/normal_weekday.yaml` (S02) added and run at full scale: 300 riders, 35 cabs, 16 simulated hours, 83k GPS pings | Nothing |
+| 13:40 | bug | fixed | **Cancelling an assigned ride stranded the cab.** The request was cancelled but its trip stops stayed pending, so the driver drove to a pickup nobody was waiting at, `done` was refused (a cancelled request cannot become `picked_up`) and the trip could never complete. B09's cancel predates trips entirely. Found by S02, where it stranded every assigned cab | Nothing |
+| 13:40 | bug | fixed | **Adding a rider to a trip changed the other stops' ids.** `_write_stops` deleted and recreated pending rows, so a driver holding a stop id got 404 on their next tap - a real driver app would hit this too. Stops keep their identity across a re-sequence now | Nothing |
+| 13:40 | bug | fixed | **`/simctl/reset` could not run twice.** Its truncation list predates the trip tables and `duty_session`, so the second reset died on a foreign key - and a left-behind duty session made seeded drivers look already on duty. There is now a test that walks the metadata instead of trusting the list to stay current | Nothing |
+| 13:40 | bug | fixed | **One failed insert killed GPS ingestion for good.** The ingestor never rolled back, so an aborted transaction made every later flush fail with "current transaction is aborted" - silently, for the life of the process | Nothing |
+| 13:40 | note | - | `/simctl/reset` takes `employees` and `vehicles` now. A fixed 20/6 fixture capped every scenario at the smallest one, and a run quietly working with twenty riders when the scenario asked for three hundred measures the wrong thing | Nothing |
+| 14:30 | finding | open | **S02 cannot finish in reasonable wall-clock time** (OQ-26). It asks for 60x real time and manages about 6x with 300 riders and 35 drivers, because every agent API call is synchronous inside a single-threaded SimPy loop, so each one blocks the whole simulation. smoke_tiny and anything of that size are unaffected. Fix is either concurrent agent HTTP or much less polling - riders poll every simulated minute and drivers every 30 seconds, far more often than either needs | Needed before M08's nightly suite; does not block M07 |
+| 15:30 | OQ-26 | mostly fixed | **A sim clock jump took ten seconds; it now takes twenty milliseconds.** Two N+1 queries were the entire cost, and both are real product problems, not simulator ones: the stale-vehicle sweep queried `location_ping` once per vehicle, and the ETA refresher re-read every vehicle's position once *per trip*. An operator's ETA worker runs both every 30 seconds in production. Riders also read one shared status board now instead of 300 individual polls - they still create and cancel through their own accounts, since those are the calls the product is being tested on; only the observation is shared. S02 went from about 6x real time to 15x, so 16 simulated hours take roughly an hour instead of eight | The remaining cost is 35 drivers polling `/driver/trips` individually. `GET /dispatch/trips` is already in api-spec.yaml and unimplemented; that would let drivers share a read too |
+| 16:10 | bug | fixed | **Every agent's credentials expired four hours before S02 ended.** Seeded sim tokens had a 12-hour TTL and S02 runs 16 simulated hours, so the back third of the run was 9,120 silent 401s - visible in the metrics only as a large unexplained error count. The TTL now covers the longest scenario the format allows (14 days), and a test asserts it | Nothing |
+| 18:05 | M07 | done | Event injector and traffic conditions. Conditions multiply and end independently (lifting a closure must not cancel the rain). Seven event types implemented; `vip_burst` and `optimizer_down` are refused **with the reason** rather than approximated - a burst of ordinary riders would make S07 report a VIP result it never tested. S04 `rain_day`, S05 `breakdown_with_riders` and S06 `gps_loss` added; S05 and S06 run green against the live stack | Nothing |
+| 18:05 | bug | fixed | **A breakdown parked the cab but left the trip running**, so a driver could go on marking stops and complete a ride in a vehicle on the hard shoulder. `trip-lifecycle.md` has had the `in_progress --> aborted: breakdown` edge all along and nothing ever called it. A breakdown now ends the trip - **aborted** mid-way, **cancelled** before it started, per section 2's own wording - skips its unfinished stops, and returns riders who were not yet collected to the queue. The S05 run shows the supervisor reassigning them | Nothing |
+| 18:05 | bug | fixed | **GPS loss and going offline were the same thing, and both were modelled as going off duty.** They are three different states: off duty means no GPS is collected at all (a privacy rule, not a fault); no satellite fix means nothing is recorded, so those positions are gone; no network means positions are recorded and uploaded in order on reconnect. S06 exists to tell them apart and could not | Nothing |
+| 18:05 | bug | fixed | **A rider cancelling en route counted as a driver fault.** The backend correctly refused the stale stop action; the driver agent logged it as an API error, so every cancellation looked like a bug and polluted the integrity metric S04-S06 assert on | Nothing |
+| 18:05 | finding | open | **OQ-27: a rider already inside a broken-down cab has nowhere to go.** `picked_up` leads only to `dropped`, and marking them dropped would record a journey that did not happen. `trip-lifecycle.md` says such riders "get new handling by supervisor" without saying what that is | A product decision: a `picked_up -> queued` re-ride edge, a `stranded` terminal status, or manual supervisor resolution |
+| 20:15 | M08 | done | Scenario suite in CI. `sim-quick` (S01) runs on every PR **against a live backend** - an offline run evaluates no assertions, so it cannot be a pass. `sim-nightly.yml` runs the full suite on a cron with artifacts. `scripts/live_stack.sh` is the single way to bring up broker, migrations, API and ingestor, shared by CI and by anyone reproducing a CI failure. S03 `evening_surge` added - 150 people leaving at once, of whom 138 gave up | **S07 `vip_burst` is still missing** - see below |
+| 20:15 | bug | fixed | **Two runs against one backend silently destroyed each other.** Seeding truncates every table, so a second run wiped the first one's world and the first then failed much later with an error that named nothing relevant. I lost three long runs to this before fixing it - including S04 twice. `/simctl/reset` now takes a `run_id`, holds a claim in Redis renewed by each clock push, and refuses a second run with a 409 naming the owner; `force` clears a claim left by a crash | Nothing |
+| 20:15 | gap | open | **S07 `vip_burst` cannot be written honestly yet.** The seeded world does not say which employees are VIP, so a burst would use ordinary riders, and the simulator has no way to assert "VIP never pooled" or "never on a non-VIP car". It would run green while testing none of that. Needs `/simctl/reset` to seed and return VIP employees, plus a trip-composition assertion | Roughly half a day: a reset parameter, a field on the seeded world, a `vip_burst` handler, the scenario, and one new assertion type |
+| 22:00 | S07 | done | `vip_burst` written and running: 5 VIP riders, 2 VIP cars, **5 VIP requests and 0 pooled**. The assertion reads the trips the drivers actually drove, so it cannot pass vacuously - a trip that gained a second rider after the VIP boarded breaks the rule as surely as one planned that way. All seven scenarios are now in `sim-full` | Nothing |
+| 22:00 | bug | fixed | **Every scenario's fleet composition was fiction.** `/simctl/reset` honoured the vehicle *count* and took the mix from the fixture, so S07's "2 VIP cars" seeded 1, and S02's 25/8/2 split was never what ran. Seat counts follow the type now, so pooling capacity follows the scenario too | Nothing |
+| 22:00 | bug | fixed | **The simulator never actually claimed the backend.** A formatter collapsed the reset body onto one line and a later edit rewrote the collapsed version, silently dropping `run_id`, `force` and `vip_employees`. The guard worked when called by hand and did nothing for real runs - which is the worst kind of guard | Nothing |
+| 22:00 | note | - | A finished run now releases its claim (`POST /simctl/release`). The two-hour TTL is the fallback for a crash, not how a claim normally ends - without this the next run, often the same person seconds later, is refused by a run that is no longer there | Nothing |
+| 23:30 | suite | measured | **First trustworthy full-suite run: 4/7 passed.** Passing: `vip_burst`, `breakdown_with_riders`, `gps_loss`, `rain_day`. Failing: `smoke_tiny` and `evening_surge` on `all_requests_terminal` (1 and 2 riders mid-ride when the clock stopped - see OQ-28), and `normal_weekday` on its two service targets | OQ-28 needs a decision before `sim-quick` is a trustworthy gate |
+| 23:30 | finding | **headline** | **S02 `normal_weekday`, measured against the correct fleet at last: 240 riders asked, 240 gave up, 0 were carried.** p90 wait 54 min against a 30-minute target. Every request reached a terminal state, so the platform is correct - it just served nobody. 67 assignments were made and **zero stops completed**: by the time a cab arrived the rider had already gone. The chain is supervisor reaction (~70 s) + driver poll (up to 60 s) + accept delay + a 20-30 min drive from the depot, against ~40 minutes of rider patience. `rain_day` is the same picture with 252 riders | This is the number that justifies Phase 2. It is a latency problem, not a fleet-size one - `no_cab=0` throughout, so cabs were always available |
+| 23:30 | bug | fixed | **Every run of a scenario overwrote the previous one's output.** Directories were keyed on the *simulated* start time, identical across runs, so a run that failed before writing left the last run's metrics looking like its result. I was misled by exactly this while reading the suite output, and CI would have uploaded stale numbers as a failed scenario's artifact | Nothing |
+
+## Second sitting (2026-10-02)
+
+Two open questions settled, both of which turned out to be hiding a real defect.
+
+| Time | Task | Status | What changed | Morning action for you |
+|---|---|---|---|---|
+| 00:10 | OQ-27 | **decided + done** | **A rider stranded by a breakdown now gets a re-ride** (ADR-0016). `picked_up -> queued` exists and the state machine refuses it unless the trip is `aborted`, so nobody can un-collect a rider after the fact. The re-ride starts where the cab stopped, carried by a new nullable `ride_request.pickup_location` | Nothing - but read the "deleted destination" note below |
+| 00:10 | bug | fixed | **The half-written version of that change would have corrupted every evening trip.** It wrote the breakdown point into `request.location`, which is the rider's *drop* on a `from_office` request: it deleted where the rider was going and still sent the next cab to the office. The pickup is its own field now, honoured wherever a pickup place is computed - candidate ETAs, detour arithmetic, the pickup stop | Nothing |
+| 00:10 | bug | fixed | The same draft read `vehicle.last_location`, which is not a column - every breakdown with a rider aboard and no reported position would have raised `AttributeError`. The cab's position comes from its last `location_ping` within 15 minutes now, read from the table rather than Redis for the reason dispatch reads pings: a cold cache is not a position | Nothing |
+| 00:40 | OQ-28 | **decided + done** | **`duration_hours` is the demand window, not the length of the run** (ADR-0017). A run then drains rides already under way for up to `drain_minutes_max` (default 60) and stops the moment the last cab empties. The run - not the rider agent - records anyone still aboard, which removes the older dependence on whether a poll happened to land past the end | Nothing |
+| 01:10 | bug | fixed | **The honest gate immediately found a real defect.** `smoke_tiny` was failing not because of where the clock stopped but because **the simulated driver never collected a rider added to a trip already under way.** It worked the stop list it had polled before starting, so dispatch's "second rider joins the existing trip" (SUP-03) left that rider on the kerb and the driver then tried to complete a trip with two unfinished stops - a 409. A driver app polls; the agent does now too, between every stop | Nothing |
+| 01:35 | gate | **green** | **`sim-quick` passes against the live stack** - 4 requests, 4 completed, 0 unresolved, 3/3 trips, 0 driver errors, and the drain used 48 of its 60 minutes. The run before the driver fix: 3 completed, 1 unresolved, 1/2 trips, 1 error, `no_cab=3` (the stuck trip held its cab out of the candidate list). So both halves mattered, and the gate now fails only when something is really wrong | Nothing |
+| 01:50 | S05 | **verified live** | `breakdown_with_riders` against the live stack exercised the new path end to end: the trip aborted with `requeued=2, stranded_aboard=1`, the stranded rider's request came back as `urgency=high` with `pickup_location` at the roadside **and their home address intact** in `location`, and the `riders_stranded_by_breakdown` alert carried `riders=1, pickup_known=true`. Both riders were reassigned (4 assignments for 2 requests) and both then gave up - with one of two cabs off the road there was nothing else to send, which is the scenario being honest rather than a defect | Nothing |
+| 01:10 | OQ-29 | raised | A rider still **waiting** when the window closes writes no outcome at all and was counted as if they had stayed home, so `all_requests_terminal` could pass while riders were abandoned. Now measured as `still_waiting` in `metrics.json`. Not changed, because making them `unresolved` would newly fail scenarios on a judgement nobody has made | **Decide OQ-29** once you have seen `still_waiting` from a full suite |
+| 02:10 | OQ-29 | **decided + done** | **A rider nobody came for is now a failed run** (ADR-0018). They were recorded as `not_travelling` - "stayed at home" - so the headline assertion passed on runs that left people on the street. `unresolved` is reported in halves: `still_waiting` (nobody came) and `still_riding` (carried when the clock stopped), so a red run names its own cause | **Expect scenarios to go red** - truthfully; they do leave riders unserved |
+| 02:40 | retry | **built** | **A request nobody has served is escalated** (ADR-0019), on your instruction: after `retry_after_minutes` (10), and once the cab is actually due, it gets forced priority, a candidate ETA ceiling that widens 10 minutes per interval up to 45, and one `request_unassigned` alert. Deliberately **not** a re-created request - that resets the waiting clock and would report a 50-minute wait as 10 | Nothing |
+| 02:40 | bug | fixed | **Every wait the platform reported during a simulated run was nonsense.** `waiting_since` and the operator report's `wait_minutes` measured from `created_at`, a database `now()` default - the system clock, which hard rule 2 exists to keep out of domain logic. Under a simulated clock that is real wall time against simulated events, so the figures were hours out. Nobody noticed because the simulator measures waits from its own agents, and those are the numbers we have been quoting. There is a Clock-set `queued_at` now | Nothing |
+| 02:40 | bug | fixed | **`enroute_reuse_max_eta_minutes` was a config key nothing read.** `allocation-rules.md` section 3 gives en-route cabs their own, much tighter ceiling (5 min) precisely because a diversion with riders aboard is not the same as an empty approach - but every candidate was judged on the idle limit, so a cab 25 minutes off its route was offered like one passing the door. This is your "allocate a cab that is already on the way" ask: the pooling itself was already there and working | Nothing |
+| 03:20 | bug | fixed | **A regression I introduced an hour earlier, caught by running it.** The stuck-stop guard from the driver re-read fix abandoned the whole trip when one stop would not move - a no-show the backend refuses yet, or a rider cancelling at the kerb - which **stranded everyone already in the cab**. A live `evening_surge` run showed it exactly: 2 trips abandoned, 5 riders still aboard after the full hour of drain. The driver leaves the one stop behind and drives the rest now; the trip still fails to complete, which is the truth | Nothing |
+| 03:50 | bug | fixed | **Three riders sitting in a moving cab were reported as platform errors.** A rider whose patience ran out at the exact moment the cab arrived tried to cancel; the backend correctly refused (`trip-lifecycle.md` section 1: an employee may cancel only until `picked_up`), and the agent recorded the refusal as a failed API call - which counts as `unresolved` and failed the run. The status board is a minute stale, so this race is real. The rider now re-reads their status and rides on | Nothing |
+| 04:10 | bug | fixed | **The first version of that fix read the stale board.** It checked the rider's status on the shared board - which is a minute behind, and that staleness is exactly *why* the cancellation was refused - so it missed the case it was written for and `evening_surge` failed again with the same three. It asks the platform directly now, one call on the rare refusal path. There is a regression test with a realistically lagging board: red with the board read, green with the platform read | Nothing |
+| 04:30 | S03 | **green** | **`evening_surge` passes live, honestly**: 150 requests, 0 unresolved, 0 `still_waiting`, 0 `still_riding`, drain not needed. Both scenarios OQ-28 flagged as flaky now pass against the real stack. The service picture is unchanged and still grim - 22 served, 127 gave up, p90 wait 95 min against a 30-minute target, 30 cabs - which is the same latency story S02 told and the argument for Phase 2 | Nothing |
+| 03:20 | OQ-31 | raised | **One alert per abandoned rider does not survive a surge.** The escalation raised **142 alerts in one `evening_surge` run** (142 of 150 requests escalated). The count is honest, but a board with 142 open alerts is a board nobody reads. One rolling per-operator alert is my recommendation | **Decide OQ-31** |
+| 07:40 | OQ-30 | **decided + done** | **The rider is told when their cab stops** (ADR-0020). Section 6 of `trip-lifecycle.md` named nobody on the rider's side, so since ADR-0016 their request silently reappeared in the queue *after* they had been collected. New high-priority `ride_interrupted`, two wordings: stranded riders are told to stay put (a rider who wanders off cannot be found by the cab heading to their `pickup_location`), riders never collected are told not to book again (otherwise they do, and the supervisor serves them twice). Found doing it: `trip_aborted` had a template since B16 that **nothing ever sent** - ADR-0012 decided a breakdown needed no push, contradicting section 6's own table | Nothing |
+| 07:40 | decision | **ADR-0021** | **`urgency` is the rider's answer and the platform never rewrites it.** Both ADR-0016 and ADR-0019 set it to `high` to make the board notice. The surge run showed the cost: 142 of 150 escalated, so 142 of 150 would have claimed an urgency the rider never declared - and the field would have stopped distinguishing anything. Lateness lives in `escalated_at` (now on the API), priority in `forced_priority` | Supervisor board must render lateness from `escalated_at` (app task A11) |
+| 07:40 | OQ-31 | **decided + done** | **One rolling `request_unassigned` alert per operator** (ADR-0022), carrying the count and the longest wait, updated in place, and **auto-resolved** when nobody is unserved. 142 alerts is an honest count and a board nobody reads - and the next SOS would be buried in it. The count accumulates rather than being recounted, deliberately: a live count falls as riders give up, so the alert would get quieter as the morning got worse | Nothing |
+| 08:05 | OQ-26 | **resolved** | `GET /dispatch/trips` implemented (the spec had it, nothing did) - one query for the trips plus **one** for all their stops, because building it per-trip would put the N+1 back into the endpoint that exists to remove N calls. Drivers now share a `TripBoard` like riders share the status board; a driver's mid-trip stop read stays per-driver because the board is a minute stale | Nothing |
+| 08:30 | audit | **ADR-0023** | **Swept all 26 config keys: 14 were read by nothing.** Twelve are honestly Phase 2 and now say so. `alert_wait_minutes` was not - **all seven scenarios set it** and the platform ignored it, so S03's "own bar" was aspirational. It is now the single "too long" threshold (board red line *and* first escalation); `retry_after_minutes` keeps only the widening cadence. **Escalation now starts at 20 min, not 10** - the operator's own number | Nothing |
+| 08:30 | guard | added | The audit is a test now. Its first version matched the key anywhere in the file and passed when the only mention left was a docstring sentence - a guard that cannot fail gets believed. Matching quoted lookups only, it found a **14th** dead key the loose version missed: `night_safety_enabled` was matching the `client_policy` column of the same name | Nothing |
+| 08:30 | bug | fixed | `test_no_public_osm.py` ran the CLI with no `--runs-dir`, so **every pytest run wrote a stray scenario directory into the real `runs/`** - the exact mistake 5ab583d was about, and CI uploads that directory wholesale. Three strays removed | Nothing |
+| 10:30 | finding | **important correction** | **S02's "240 asked, 0 carried" is substantially a modelling artefact, not a dispatch failure.** Computing the `approx` provider's own numbers against S02's geometry: a cab leaving the single depot reaches a home 3 km away in 17.5 min, 5 km in 29 min, 7 km in 41 min, and the office itself in **45 min**. `candidate_max_eta_minutes` is 20, so every rider beyond ~3.5 km of the depot is a hard-rule violation before anyone does anything wrong - precisely the 68-of-68 (S02) and 46-of-46 (S03) the suite reports. With patience averaging 40 min, a 29-41 min approach arrives after the rider has gone: 0 stops completed. Two unsourced inputs are doing the work - the 24 km/h base speed (OQ-22) and the single depot (OQ-32, raised) | **The earlier "this is the number that justifies Phase 2 - a latency problem" claim needs this caveat.** Neither input is measured, and both are more pessimistic than reality |
+| 11:10 | suite | measured | **Full suite 3/7** on the pre-fix stack. `breakdown_with_riders`, `gps_loss` and `rain_day` green. The four failures were all honest: S02 and S03 on their service targets, `vip_burst` on VIP pooling, `smoke_tiny` on one unresolved rider. Crucially **five of seven now report `unresolved: 0`** - ADR-0018's assertion passing on its merits rather than by blindness | Nothing |
+| 11:40 | bug | fixed | **`vip_never_pooled` failed with 5 VIPs pooled - three of them had shared nothing.** This session's driver fix had changed `riders_per_trip` to "every request ever listed on the trip", which counts riders whose pickup was later skipped when they cancelled. A completed **pickup** is now the moment someone is recorded aboard - which is what the rule actually asks | Nothing |
+| 11:40 | decision | made | The other two VIPs genuinely shared, and the agent did it **by design**: it took any violating candidate when nothing clean was offered. Right for rules that encode an average, wrong for `no_sharing` and `pooling_blocked`, which are promises already made to a rider (rules 4 and 9). The supervisor now leaves those alone, so a VIP waits for a VIP car and the wait shows in the metrics. `vip_never_pooled` passes | Nothing |
+| 12:30 | bug | **fixed, significant** | **Half of every simulated run's GPS was being thrown away, and every candidate was flagged `gps_stale`.** Two causes, both in the ingestor, both invisible because Phase 1 only *reports* hard rules so the flag read as noise. (1) It refreshed its view of simulated time only on the flush loop - every 5 real seconds, which at 60x is **five simulated minutes** frozen - so pings were dropped as `too_far_future`. (2) `flush()` INSERTs inside an open transaction and only that same timer committed, so positions stayed invisible to the API for as long again. Measured, broken -> fixed: drops **2251 -> 0**, stored **1255/2661 -> 1768/1769**, chosen-cab position age median **340 s -> 35 s** against a 60 s threshold. `gps_stale` and the stale-vehicle alerts on driving cabs are both gone | **Every scenario number before this was computed from minutes-stale positions.** A fresh full suite is running |
+| 01:55 | OQ-30 | raised | **Nobody tells the rider their cab broke down.** `trip-lifecycle.md` section 6 has a row for the supervisor and operator admin and none for the rider, so since ADR-0016 their app just shows them queued again with no explanation. Not invented here - it is a product call about what the rider is promised | **Decide OQ-30** (one notification row) |
+
+---
+
+## 2026-10-15 — R01 (staging deployment) and I02b (self-hosted maps)
+
+Backend, infra, simulator lane. The app (A05–A12, R02) is a second agent's lane; see
+`COORDINATION.md`, which is the file the two agents talk through.
+
+### The thing worth knowing first
+
+**`non-functional.md` has required Prometheus metrics since Phase 0, and there were
+none.** Not an endpoint, not a dependency, not a counter. R01 asks for "Grafana
+dashboards", and a dashboard over nothing is a screen of blank panels — which in an
+incident reads as *zero*, not as *not measured*. So R01 started by building the metrics
+it was supposed to display, and each one is tested against the code path that produces
+it rather than for merely existing.
+
+Three processes expose them, not one. The GPS counters live in the ingestor and the sweep
+counters in the Celery worker, so scraping only the API would have reported **zero GPS
+pings on a platform ingesting forty a second** — the same class of invisibility as B20,
+where three sweeps had one caller between them and none of it ran in production.
+
+### What is now true
+
+| | |
+|---|---|
+| `GET /metrics` | every metric the Operability section names; business gauges read at scrape time and cleared each pass |
+| `/health/ready` | all four dependencies — database, Redis, MQTT, OSRM — where before it was two |
+| `backend/Dockerfile` | one image, four entrypoints (api, ingestor, worker, beat), non-root, single uvicorn process |
+| `infra/docker-compose.staging.yml` | the full stack behind Caddy TLS; only Caddy (80/443) and Mosquitto (8883, TLS only) publish ports |
+| `infra/prometheus/` | three scrape targets and nine alert rules, each one something a human must act on tonight |
+| `infra/grafana/` | provisioned data sources and a 21-panel operations dashboard, read-only and in the repository |
+| `infra/loki/`, `infra/promtail/` | the JSON logs searchable next to the metrics, `request_id` a clickable link |
+| `infra/scripts/backup.sh` | daily `pg_dump`, 14-day retention, every dump verified at write time |
+| `infra/scripts/verify_restore.sh` | `make backup-verify` — the monthly restore test as one command |
+| `infra/scripts/prepare_maps.sh` | self-hosted NCR routing and tiles, every tool in a container |
+| `docs/05-engineering/deployment.md` | the runbook, including what to do when each dependency fails |
+
+### Verified, not asserted
+
+- **The restore works.** `make backup-verify` against the development stack brought back
+  35 tables, 76,473 location pings and PostGIS intact — including the partitioned
+  `location_ping`, which is the part that would have failed quietly.
+- **The image runs.** Built and started against the real Postgres, Redis and Mosquitto
+  containers: `/health/ready` reported all four checks green, and `/metrics` served
+  `smartcab_vehicles_on_duty{operator_id=...} 35` read live from the database.
+- **The self-hosted OSRM routes.** The acceptance curl returns 13.02 km / 14.3 min,
+  snapping 24.6 m and 58.9 m from the query points. The public demo server answers
+  13.01 km and snaps to the same metres — so the local graph *agrees* with it rather
+  than merely answering. `tests/integration/test_routing_live_osrm.py`, skipped since
+  B10, runs green for the first time.
+- **The tiles render.** PNG at `/styles/basic/{z}/{x}/{y}.png` over Connaught Place,
+  Sector 18, Gurgaon and Ghaziabad — 36–61 KB each, with the river, roads drawn by class
+  and **street labels**, which is what proves the glyph fonts are mounted. Without them a
+  tileserver returns tiles that are correct and silent, and nobody notices until a
+  supervisor tries to read a street name.
+- **The simulator runs unthrottled against it**: 32 routes/second, against the 1/second
+  the whole platform shares on the public server. That mode had never been exercised —
+  `sim.routing.OsrmRouting` refuses public hosts by construction, so until there was a
+  self-hosted instance it was unreachable code.
+- **1,327 backend tests and 286 simulator tests pass** (7 skipped: the opt-in live-MQTT
+  and self-hosted-OSRM checks); ruff, ruff format and mypy are clean on both packages.
+
+### Four real defects this found
+
+1. **The map extract did not cover half the service area.** `dev-environment.md`
+   suggested Geofabrik's *northern-zone* India extract. It produced an OSRM that started
+   cleanly, passed every structural check, routed Delhi correctly — and returned
+   `NoRoute` for anything touching Noida, because **Delhi NCR spans two Geofabrik
+   zones**: Noida and Ghaziabad are Uttar Pradesh, filed under *central*. Half the
+   pilot's offices are on that side. The default is the whole-India extract now, and
+   `crop` ends with a coverage check across Delhi, Noida, Gurgaon and Ghaziabad that
+   fails outright if any of them has no roads.
+2. **The HTTP metric's route label was missing `/api/v1`.** This project includes its
+   routers nested, so `route.path` is `/auth/me`, not `/api/v1/auth/me` — which hides the
+   prefix and would let two routers with the same relative path share one label. The
+   label is built from the request path with parameters put back as placeholders now.
+3. **An unreachable broker reported "unreachable: " and nothing else.**
+   `str(TimeoutError())` is empty, so the one piece of information the operator needed
+   was the one thing the detail did not carry.
+4. **Neither map container's healthcheck could pass, for the same reason.**
+   `osrm/osrm-backend` has no HTTP client at all — no curl, wget, nc or python — and
+   `tileserver-gl` has no curl either, so both sat permanently `unhealthy` with
+   "curl: not found" buried in the healthcheck log. OSRM speaks HTTP over bash's
+   `/dev/tcp` now and tileserver through node, its own runtime.
+   Both also ask a question worth asking. OSRM is given a **real cross-state route**,
+   because `osrm-routed` accepts the socket long before the graph is loaded. The tile
+   server is given a **real tile over Noida** and the answer is rejected if it is under
+   5 KB — it answers `/health` perfectly happily when the MBTiles failed to open, and
+   then serves blank tiles that are valid PNGs. That is not hypothetical: four tiles
+   over four different cities came back 200 `image/png` and byte-identical at 1831 bytes
+   while this was being built.
+
+### Decisions you can overrule
+
+- **ADR-0025: `/metrics` is unauthenticated and kept off the public edge.** A scrape
+  token is a long-lived plaintext credential with no rotation story; authorising the
+  scrape against the database would blind monitoring exactly when the database is the
+  problem. The safety argument is therefore a deployment property, so
+  `tests/unit/test_edge_exposes_only_the_api.py` parses the Caddyfile on every PR and
+  fails if the edge ever serves it — or stops serving `/api` and `/ws`.
+- **A public OSRM is never probed by `/health/ready`.** The shared 1 req/s budget belongs
+  to real ETAs; a probe every ten seconds from every process would spend a standing share
+  of donated capacity on a question nobody acts on. The check says it did not probe, and
+  names the metric to watch instead.
+- **The whole-India extract, not a zone extract.** See defect 1.
+
+### Then it was actually run, and found four more
+
+Everything above was verified piece by piece. **The whole stack had never been started
+together**, and the runbook said so. Bringing it up with Caddy's *internal* CA and
+`SITE_ADDRESS=localhost` runs the entire TLS path without a public DNS name — and found
+four defects, three of them in what R01 itself had just built.
+
+1. **The first `make staging-up` on a clean box always failed.** `mqtt-certs` copies
+   Caddy's certificate to the broker, and on a fresh deployment there is no certificate
+   yet — Caddy has not finished its challenge. A one-shot copy exits 1, and because
+   Mosquitto waits on that service completing, it took the whole stack down. It waits for
+   the certificate now, with a timeout that names the usual cause (DNS).
+2. **The broker could not start at all, and never could have.** B11 renders Mosquitto's
+   `passwd` and `acl` and deliberately leaves the filesystem to deployment —
+   `DutyService.broker_files` had **no caller anywhere in the system**. So
+   `password_file` never existed, Mosquitto refused to start, and the ingestor's own
+   credential was configured on both sides and written to neither. The same shape as B20:
+   a method that renders due work nobody runs. `app/broker_sync.py` is that caller now,
+   seeded before the broker starts and then rewriting the files on duty changes and
+   reloading the broker with SIGHUP.
+3. **`/driver/duty` told every driver to connect to `mosquitto:1883`** — a Docker service
+   name, on a port that is not published, without TLS. The backend was answering "where
+   do *I* reach the broker" to a question that means "where does a *phone* reach it".
+   There are separate public settings now, and `api-spec.yaml` gained a `tls` flag so the
+   app is told rather than left to infer it from a port number.
+4. **Neither map container's healthcheck could pass**, both for want of an HTTP client —
+   see below.
+
+Two more things the run taught, now in the runbook: the generated credentials are written
+by the backend as uid 10001 and read by Mosquitto as 1883, so the directory is setgid;
+and the broker's certificate SAN is `SITE_ADDRESS`, so drivers must reach the broker at
+that same hostname or validation fails on every phone.
+
+And two that only surfaced by watching it idle: `broker-sync` rewrote both files and
+SIGHUPped the broker **every fifteen seconds forever**, because `hash_password` salts
+randomly so re-deriving the ingestor's line from unchanged inputs produced different
+bytes; and the SIGHUP was being refused anyway with EPERM, because sharing a PID
+namespace does not let uid 10001 signal a process owned by 1883.
+
+### What R01 does not do, said plainly
+
+No Alertmanager (rules evaluate and show in Grafana; nothing pages anyone). No off-site
+backup copy — the dumps sit on the VM's disk, and where they should go needs an owner. No
+blue/green deploy. `OTP_PROVIDER=console` and `PUSH_PROVIDER=log`. And **there is no VM**:
+the stack was brought up and exercised locally against real containers with Caddy's
+internal CA standing in, and the one thing that cannot be proved without a public DNS
+name is the ACME challenge itself. Section 8 of the runbook lists exactly what was
+checked.
+
+### Still open, and why
+
+- **R02 (Android release build)** is the app agent's lane and depends on A05–A12.
+- **R03 (pilot onboarding kit)** needs R02, and needs the pilot operator's real fleet,
+  clients and employees — which is **OQ-01**, still unanswered. It cannot be built from
+  invented data without becoming a demo pretending to be an onboarding.
+- **I02c (self-hosted Nominatim)** is deliberately not done. Phase 1 ships no geocoding
+  by design; building it would be inventing a requirement (hard rule 8).
+
+---
+
+## Phase 3 log (2026-11-01 onward)
+
+| Task | Status | What changed | Tests |
+|---|---|---|---|
+| **B29** | done | `domain/hold_window.py` (pure): the four exemptions, `forced_priority` short-circuit, window from `max(queued_at, requested_time)`. `DispatchService.is_held/hold_release`; semi-auto skips held requests, `suggestions()` returns nothing for them, and `assign` refuses `system_failsafe` / `optimizer` inside the window. New `Actor.optimizer`. **Found and fixed:** rule 8 (pickup window) was applied to `from_office` too, which would have rejected every evening rider the moment their hold ended. Added `tests/integration/worlds.py` (composable builders for the pooling tests) | 1604 backend, 295 simulator |
+| **B30** | done | `OptimizerService.run_due_batches`: ready requests (past a supervisor hold and the evening window) are collected for `batch_window_seconds` and handed to one solver call; every run is recorded in the new `optimizer_run` table (migration `a1c3e5b7d901`), including `no_solution` and `failed`. Pure optimizer core in `domain/optimizer/` (problem model, one route evaluator reusing `check_hard_rules`, exact batch cost, greedy solver). Wired into `/simctl/clock` and the Celery beat (`smart_cab.run_optimizer`, 10 s); the B20 guard covers it. New `optimizer_time_limit_seconds` key. `build_bulk_eta_service` implements "bulk callers use approx on the public OSRM" | 1635 backend, 295 simulator |
+| **B31** | done | OR-Tools DARP (`domain/optimizer/darp.py`) with the hard rules as constraints; `solve()` returns the better of DARP and greedy under exact §4 and falls back (`greedy_fallback`) when the DARP raises, times out or finds nothing. Result of every vehicle re-judged by the shared evaluator. Known-optimum test is a brute force over every assignment and order; 40 random instances check validity and never-worse-than-greedy; shuffled inputs give the same plan; a guard fails if the package touches the DB or the clock. ADR-0027 | 1691 backend, 295 simulator |
+| **B32** | done | `OptimizerService.run_batch` partitions by resolved mode: `full_auto` is **applied** through `DispatchService.assign(plan=...)` (actor `optimizer`, one state-machine transition per rider, each in a savepoint), `semi_auto` becomes rank-1 `Suggestion` rows via `SemiAutoService.offer_planned` (ranks 2-3 are the Phase 2 alternatives), `manual` is an `optimizer_hint` row. Migration `b2d4f6a8c012` (`optimizer_hint`, `optimizer_run.mode`, `ride_request.pooling_added_minutes`). **api-spec.yaml:** `GET /dispatch/hints`, `Trip.riders[]`, and the eight list endpoints now declare their `{items}` envelope. Semi-auto offering moved from the per-request sweep to the batch (see decision log) | 1704 backend, 295 simulator |
+| **B33** | done | En-route reuse is route-aware: `Insertion.slot_detour_seconds` (extra driving to collect the rider at the slot the insertion uses) replaces the straight ETA for the en-route ceiling, and `Insertion.pickup_arrival_seconds` is what rule 8 judges. One routing matrix call as before (the cab's position joins the table `_insertion_for` already fetched). The optimizer's evaluator uses the slot its order really gives the rider; the DARP uses the best-case slot as a prefilter. Tests: a cab 25 min out about to pass the rider is a candidate; one 4 min away pointed the other way is not; the idle ceiling is unchanged | 1716 backend, 295 simulator |
+| **B34** | done | `full_auto` end to end: a ready request in a `full_auto` scope is assigned by the optimizer with no supervisor action and the rider is notified; `automation_paused` still beats it (and resuming serves the queue); a **VIP** triggers the batch at once, goes only to a VIP vehicle, and with none raises one `vip_no_vehicle` alert carrying the excluding rules, which resolves itself when they are assigned (closes OQ-38). The trip report gains `assigned_by` per row and `assignments_by_actor` (spec updated). Every automatic assignment is attributable: `ride_request_event` and `trip_event` actor `optimizer` | 1722 backend, 295 simulator |
+| **B35** | done | `ModePromptService` evaluates `control-model.md` §5's four conditions per scope over the last 15 minutes and raises/updates/resolves one `mode_prompt` alert per scope (`data.setting_id`, `suggest: manual`, the observed numbers). Pure decision logic in `domain/mode_prompts.py`; thresholds are config keys (spec numbers as defaults; `mode_prompt_min_samples`=5 and `mode_prompt_baseline_days`=14 are **mine, provisional** - see the decision list). Wired into `/simctl/clock` and the beat (`smart_cab.run_mode_prompts`, 60 s). A source guard fails if anything but the admin mode service can write `mode_setting` | 1722+ backend (full-suite run in progress at commit), 295+13 simulator |
+| **B36** | `[x]` done, S12 passes live | `OptimizerService.health()` / `sync_health_alert()` and `effective_mode()`: three failed runs, or a worker that stopped running, make every automatic scope behave as manual - nothing applied or offered, one `system` alert (`data.kind = optimizer_down`), `/dispatch/requests/{id}/mode` says `manual` / `optimizer_down` - and the first successful probe run restores it with no operator action. A paused operator is never "down"; supervisors can always assign by hand; an open offer still reaches its failsafe. Sim-only `PUT /simctl/optimizer` kills the solver for S12, and `PUT /simctl/clock` now reports `optimizer_*` counts. The box ticks when S12 passes live (M12) | 1769+1 backend, 345 simulator |
+| **B37** | `[~]` mechanism done, OQ-22 not closed | `road_speed_profile` (migration `c3e5a7b9d123`) learned nightly from completed trips' stop-to-stop legs in `approx`'s own frame, per hour of the week; `ApproxRoutingProvider` uses a slot's learned speed once it has `speed_profile_min_samples` legs, else the constant (so a fresh deployment behaves exactly as before). `/simctl/reset` wipes it. **Needs you:** real pilot GPS/trips to learn from - the repository has none, and learning from the simulator's trips would restate the constant | backend 1821 passed, 7 skipped; simulator 345 passed |
+| **B38** | `[~]` quantities done, money needs OQ-01/OQ-03 | `GET /reports/billing?month=&client_id=&format=` - one row per ride with `billable_reason`, per-trip kilometres shared across riders so clients' invoices add up to the cab-km, and three provisional treatments (no-show, late cancel, distance basis) as config keys. Reconciles with `trip` and `ride_request` rows under every treatment (tests). **Needs you:** how the pilot operator bills (OQ-03) and whether they bill a no-show / a late cancel / per km or per trip | backend 1821 passed, 7 skipped; simulator 345 passed |
+| **B39** | done | `GET /reports/operations?from=&to=&client_id=&format=`: wait distribution, pooling rate, cab-km per trip, vehicles used, overrides by reason, suggestion acceptance (both OQ-39 readings, failsafe excluded), assignments by actor, optimizer runs. Each number is reproduced against a hand-worked fixture. `trip.actual_distance_m` is now measured from pings at trip completion (it was never written). `TripReportOut` was silently dropping B34's `assignments_by_actor` - fixed | backend 1821 passed, 7 skipped; simulator 345 passed |

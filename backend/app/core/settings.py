@@ -16,9 +16,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppEnv(StrEnum):
     dev = "dev"
+    test = "test"
     sim = "sim"
     staging = "staging"
     prod = "prod"
+
+
+#: The only environments in which the OTP-free test login may exist.
+TEST_LOGIN_ENVS = frozenset({AppEnv.dev, AppEnv.test, AppEnv.sim})
 
 
 class OtpProvider(StrEnum):
@@ -49,6 +54,9 @@ class GeocodingProviderName(StrEnum):
 
 # Hosts that are donated OSM infrastructure. Nominatim's usage policy forbids
 # vehicle-tracking applications outright, so it is rejected rather than rate-limited.
+# RFC 7518 §3.2: HS256 keys should be at least as long as the hash output.
+MIN_JWT_SECRET_BYTES = 32
+
 PUBLIC_NOMINATIM_HOSTS = frozenset({"nominatim.openstreetmap.org", "nominatim.osm.org"})
 PUBLIC_OSM_HOSTS = frozenset(
     {
@@ -72,11 +80,41 @@ class Settings(BaseSettings):
 
     app_env: AppEnv = AppEnv.dev
 
+    #: `POST /auth/test-login`: log an existing user in by phone with no OTP, so the app can be
+    #: exercised before SMS exists. Off unless set, and the app refuses to start with it on
+    #: anywhere but dev, test or sim (`_guard_production`).
+    auth_test_login: bool = False
+    #: Lets `python -m app.demo_seed` run with APP_ENV=staging (never prod): a staging box with
+    #: no real riders yet can be given the demo operator so `make smoke` has something to drive.
+    #: Safe by itself - the demo logins still need an OTP there, because the test login stays
+    #: refused outside dev, test and sim. Leave unset once a real operator's data is loaded.
+    demo_data_allowed: bool = False
+
     # --- storage / transport ------------------------------------------------
     database_url: str = "postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab"
     redis_url: str = "redis://localhost:6379/0"
+    #: Where **this process** reaches the broker. Inside a deployment that is a service
+    #: name on the private network.
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883
+    #: Where a **driver's phone** reaches the broker, which is a different question and
+    #: was being answered with the internal address: `/driver/duty` handed every driver
+    #: `mosquitto:1883`, a Docker service name on an unpublished plaintext port. Empty
+    #: falls back to the internal values, which is correct for local development and
+    #: wrong everywhere else - so the staging compose sets all three.
+    #:
+    #: The host must match the broker certificate's SAN, which is `SITE_ADDRESS`: a
+    #: separate `mqtt.` hostname would fail certificate validation on every phone.
+    mqtt_public_host: str = ""
+    mqtt_public_port: int = 0
+    mqtt_public_tls: bool = False
+    mqtt_ingestor_user: str = ""
+    mqtt_ingestor_password: str = ""
+    #: Where `python -m app.broker_sync` writes the generated Mosquitto `passwd` and
+    #: `acl` files. B11 renders their contents and deliberately leaves the filesystem to
+    #: deployment; this is the one place that says where. Empty means the container
+    #: default, `/mosquitto/generated`.
+    mqtt_generated_dir: str = ""
 
     # --- auth ---------------------------------------------------------------
     jwt_secret: SecretStr = SecretStr("change-me-random-64-bytes")
@@ -99,8 +137,20 @@ class Settings(BaseSettings):
     routing_cache_ttl_seconds: int = Field(default=900, ge=0)
     osm_request_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
-    # --- notifications ------------------------------------------------------
+    # --- learned speeds (B37, OQ-22) -------------------------------------------
+    #: Let the `approx` provider use speeds learned from completed trips where it has
+    #: them. Off is Phase 1/2 behaviour exactly.
+    speed_profile_enabled: bool = True
+    #: Legs a slot needs before its learned speed is trusted over the constant.
+    speed_profile_min_samples: int = Field(default=20, ge=1, le=10_000)
+    #: How often a running process re-reads the profile.
+    speed_profile_refresh_seconds: int = Field(default=3600, ge=1)
+
+    # --- notifications (B16) -------------------------------------------------
+    #: `log` in dev and tests, `ntfy` self-hosted, `fcm` not implemented (OQ-20).
     push_provider: PushProvider = PushProvider.log
+    #: Base URL of a self-hosted ntfy server. Required when push_provider is `ntfy`.
+    ntfy_url: str = ""
 
     # --- simulator ----------------------------------------------------------
     simctl_enabled: bool = False
@@ -108,6 +158,11 @@ class Settings(BaseSettings):
     # --- observability ------------------------------------------------------
     log_level: str = "INFO"
     log_json: bool = True
+    #: Port on which a non-HTTP process (the GPS ingestor, a Celery worker) exposes its
+    #: Prometheus metrics. The API serves `/metrics` on its own port and ignores this.
+    #: Each process needs a distinct value; the staging compose sets them per container.
+    #: 0 disables the metrics server, which is what tests and `make ingestor` want.
+    metrics_port: int = Field(default=0, ge=0, le=65535)
 
     @field_validator("osrm_url", "tiles_url")
     @classmethod
@@ -146,11 +201,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _guard_production(self) -> Settings:
-        if self.app_env is AppEnv.prod:
-            if self.jwt_secret.get_secret_value() == "change-me-random-64-bytes":
-                raise ValueError("JWT_SECRET must be set to a real secret in prod")
+        if self.app_env in (AppEnv.staging, AppEnv.prod):
+            secret = self.jwt_secret.get_secret_value()
+            if secret == "change-me-random-64-bytes":
+                raise ValueError("JWT_SECRET must be set to a real secret outside dev")
+            # RFC 7518 §3.2: an HMAC key shorter than the hash output (32 bytes for
+            # SHA-256) weakens the signature. PyJWT warns; we refuse.
+            if len(secret.encode()) < MIN_JWT_SECRET_BYTES:
+                raise ValueError(
+                    f"JWT_SECRET must be at least {MIN_JWT_SECRET_BYTES} bytes "
+                    "(RFC 7518 §3.2 for HS256)"
+                )
             if self.simctl_enabled:
                 raise ValueError("SIMCTL_ENABLED must be false outside APP_ENV=sim")
+        if self.auth_test_login and self.app_env not in TEST_LOGIN_ENVS:
+            raise ValueError(
+                "AUTH_TEST_LOGIN skips the OTP: only allowed with APP_ENV=dev, test or sim"
+            )
         # /simctl/* exists only in sim (ADR-0008); enforce it here rather than trusting config.
         if self.simctl_enabled and self.app_env is not AppEnv.sim:
             raise ValueError("SIMCTL_ENABLED requires APP_ENV=sim")
@@ -168,17 +235,44 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def broker_host_for_devices(self) -> str:
+        """The hostname a phone should use, falling back to the internal one."""
+        return self.mqtt_public_host or self.mqtt_host
+
+    @property
+    def broker_port_for_devices(self) -> int:
+        return self.mqtt_public_port or self.mqtt_port
+
+    @property
     def is_sim(self) -> bool:
         return self.app_env is AppEnv.sim
 
     @property
     def uses_public_osm(self) -> bool:
-        """True when any configured map URL is donated OSM infrastructure."""
+        """True when **any** configured map URL is donated OSM infrastructure.
+
+        The right question for "do we owe anyone an identifying contact address", which
+        is what it guards. It is the **wrong** question for anything about OSRM alone -
+        see `uses_public_osrm`.
+        """
         return any(
             host_of(url) in PUBLIC_OSM_HOSTS
             for url in (self.osrm_url, self.tiles_url, self.nominatim_url or "")
             if url
         )
+
+    @property
+    def uses_public_osrm(self) -> bool:
+        """True when the **routing** server is donated infrastructure.
+
+        Distinct from `uses_public_osm`, and the distinction is not academic: the
+        ordinary mid-migration state is a self-hosted OSRM with tiles still coming from
+        the public server (task I02b lands routing and tiles together, but either can be
+        repointed alone). `uses_public_osm` is true throughout that, so using it to
+        decide whether to probe OSRM skipped the probe on exactly the server we are
+        allowed - and want - to probe.
+        """
+        return host_of(self.osrm_url) in PUBLIC_OSM_HOSTS
 
     @property
     def user_agent(self) -> str:

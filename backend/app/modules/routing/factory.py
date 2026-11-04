@@ -7,6 +7,10 @@ public OSM servers and a self-hosted stack really is a configuration change
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from app.core.clock import Clock
 from app.core.logging import get_logger
 from app.core.redis import RedisLike
@@ -20,12 +24,15 @@ from app.core.settings import (
 from app.modules.routing.approx import ApproxConfig, ApproxRoutingProvider
 from app.modules.routing.cache import CachedRoutingProvider
 from app.modules.routing.geocoding import NoGeocodingProvider
+from app.modules.routing.metered import MeteredRoutingProvider
 from app.modules.routing.osrm import OsrmRoutingProvider
 from app.modules.routing.rate_limit import (
     RateLimiter,
     RedisRateLimiter,
     UnlimitedRateLimiter,
 )
+from app.modules.routing.service import EtaService
+from app.modules.routing.speed_profile import LearnedSpeeds, database_loader
 from app.modules.routing.types import GeocodingProvider, RoutingProvider
 
 logger = get_logger(__name__)
@@ -47,11 +54,12 @@ def build_routing_provider(
     settings: Settings,
     clock: Clock,
     redis: RedisLike | None = None,
+    learned: LearnedSpeeds | None = None,
 ) -> RoutingProvider:
-    approx = ApproxRoutingProvider(clock, ApproxConfig())
+    approx = ApproxRoutingProvider(clock, ApproxConfig(), learned)
 
     if settings.routing_provider is RoutingProviderName.approx:
-        return approx
+        return MeteredRoutingProvider(approx)
 
     osrm = OsrmRoutingProvider(
         settings.osrm_url,
@@ -62,12 +70,51 @@ def build_routing_provider(
     )
 
     if settings.routing_provider is RoutingProviderName.osrm:
-        return osrm
+        return MeteredRoutingProvider(osrm)
 
     if redis is None:
         logger.warning("routing_cache_disabled", detail="no redis; using osrm without cache")
-        return osrm
-    return CachedRoutingProvider(osrm, redis, ttl_seconds=settings.routing_cache_ttl_seconds)
+        return MeteredRoutingProvider(osrm)
+    # Metering wraps the cache, not the other way round: a cache hit is an answer the
+    # system served, and counting only the misses would report a 0% hit rate.
+    return MeteredRoutingProvider(
+        CachedRoutingProvider(osrm, redis, ttl_seconds=settings.routing_cache_ttl_seconds)
+    )
+
+
+def build_bulk_eta_service(
+    settings: Settings,
+    clock: Clock,
+    redis: RedisLike | None = None,
+    learned: LearnedSpeeds | None = None,
+) -> EtaService:
+    """An ETA service for callers that ask for **matrices** - the optimizer.
+
+    CLAUDE.md hard rule 7: "Bulk callers (simulator, optimizer) always use `approx`" against
+    the public OSRM, whose shared budget is one request a second and which is not for
+    batch traffic. Against our own OSRM there is no such limit, so the configured provider
+    is used and the optimizer gets real road times.
+    """
+    if (
+        settings.routing_provider is not RoutingProviderName.approx
+        and host_of(settings.osrm_url) in PUBLIC_OSM_HOSTS
+    ):
+        approx = ApproxRoutingProvider(clock, ApproxConfig(), learned)
+        return EtaService(MeteredRoutingProvider(approx), clock)
+    return EtaService(build_routing_provider(settings, clock, redis, learned), clock)
+
+
+def build_learned_speeds(
+    settings: Settings, clock: Clock, sessions: async_sessionmaker[AsyncSession]
+) -> LearnedSpeeds | None:
+    """The learned-speed view for this process, or `None` when the feature is off (B37)."""
+    if not settings.speed_profile_enabled:
+        return None
+    return LearnedSpeeds(
+        clock,
+        database_loader(sessions, settings.speed_profile_min_samples),
+        timedelta(seconds=settings.speed_profile_refresh_seconds),
+    )
 
 
 def build_geocoding_provider(settings: Settings) -> GeocodingProvider:

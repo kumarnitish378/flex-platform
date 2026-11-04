@@ -83,11 +83,13 @@ def main() -> int:
         check("redis: PING", "PONG" in redis.stdout.upper(), redis.stdout.strip())
     )
 
+    # -E exits on SUBACK. The topic must be inside the tree the dev ACL grants
+    # (sc/v1/#): a $SYS subscription is denied and would just time out.
     mqtt = run(
         [
             *COMPOSE, "exec", "-T", "mosquitto",
             "mosquitto_sub", "-h", "127.0.0.1", "-p", "1883",
-            "-t", "$SYS/broker/uptime", "-C", "1", "-W", "5", "-i", "check-infra",
+            "-t", "sc/v1/#", "-E", "-i", "check-infra",
         ]
     )
     results.append(

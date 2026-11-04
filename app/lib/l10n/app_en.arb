@@ -1,0 +1,319 @@
+{
+  "@@locale": "en",
+
+  "appTitle": "Smart Cab",
+  "@appTitle": {
+    "description": "Shown on the splash screen and as the Android task name. The product name is not final (OQ-18), which is one reason every string lives here from day one."
+  },
+
+  "splashTagline": "Your cab, tracked",
+  "@splashTagline": {
+    "description": "One line under the app name while the session is being restored."
+  },
+
+  "signIn": "Sign in",
+  "@signIn": {
+    "description": "Button on the login screen."
+  },
+
+
+  "phoneNumber": "Phone number",
+  "@phoneNumber": {
+    "description": "Label for the phone input field."
+  },
+
+  "enterPhoneNumber": "Enter your phone number to sign in",
+  "@enterPhoneNumber": {
+    "description": "Instruction text on the phone step of login."
+  },
+
+  "sendCode": "Send code",
+  "@sendCode": {
+    "description": "Button to request OTP code."
+  },
+
+  "enterCode": "Enter verification code",
+  "@enterCode": {
+    "description": "Heading for the OTP code entry step."
+  },
+
+  "codeSentTo": "Code sent to {phone}",
+  "@codeSentTo": {
+    "description": "Subtitle showing which phone number received the OTP.",
+    "placeholders": {
+      "phone": {
+        "type": "String",
+        "example": "+91 9876543210"
+      }
+    }
+  },
+
+  "verifyCode": "Verify code",
+  "@verifyCode": {
+    "description": "Button to submit the OTP verification code."
+  },
+
+  "resendCode": "Resend code",
+  "@resendCode": {
+    "description": "Button to resend the OTP code."
+  },
+
+  "resendCodeIn": "Resend code in {seconds}s",
+  "@resendCodeIn": {
+    "description": "Disabled button text during OTP resend countdown.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "30"
+      }
+    }
+  },
+
+  "changePhone": "Change phone number",
+  "@changePhone": {
+    "description": "Action to go back and edit the phone number."
+  },
+
+  "otpRejected": "Invalid or expired code. Please try again.",
+  "@otpRejected": {
+    "description": "Single error message shown when OTP verification fails for any reason (B03, OQ-24)."
+  },
+
+  "authUnavailable": "Could not reach the server. Please check your connection.",
+  "@authUnavailable": {
+    "description": "Error message when backend network request fails."
+  },
+
+  "tooManyRequests": "Too many requests. Please wait a moment.",
+  "@tooManyRequests": {
+    "description": "Error message when rate limit (429) is hit."
+  },
+
+  "noRolesAssigned": "Your account has no assigned roles. Please contact support.",
+  "@noRolesAssigned": {
+    "description": "Error message when authenticated user has no roles."
+  },
+
+  "selectRole": "Select active role",
+  "@selectRole": {
+    "description": "Title for the role switcher bottom sheet or screen (C-03)."
+  },
+
+  "roleNameEmployee": "Employee",
+  "@roleNameEmployee": {
+    "description": "Display name for Employee role."
+  },
+
+  "roleNameDriver": "Driver",
+  "@roleNameDriver": {
+    "description": "Display name for Driver role."
+  },
+
+  "roleNameSupervisor": "Supervisor",
+  "@roleNameSupervisor": {
+    "description": "Display name for Supervisor role."
+  },
+
+  "roleNameOperatorAdmin": "Operator Admin",
+  "@roleNameOperatorAdmin": {
+    "description": "Display name for Operator Admin role."
+  },
+
+  "roleNameClientAdmin": "Client Admin",
+  "@roleNameClientAdmin": {
+    "description": "Display name for Client Admin role."
+  },
+
+  "roleNamePlatformAdmin": "Platform Admin",
+  "@roleNamePlatformAdmin": {
+    "description": "Display name for Platform Admin role."
+  },
+
+
+  "switchRole": "Switch role",
+  "@switchRole": {
+    "description": "Opens the role switcher. Only shown when the person holds more than one role."
+  },
+
+  "signOut": "Sign out",
+  "@signOut": {
+    "description": "Ends the session. Also stops the driver's location service (coding-standards.md section 3 rule 6)."
+  },
+
+  "more": "More",
+  "@more": {
+    "description": "The fifth navigation destination, opening the screens that do not have a tab of their own (A04)."
+  },
+
+  "screenNotBuiltYet": "{screen} arrives with task {task}.",
+  "@screenNotBuiltYet": {
+    "description": "Shown on a screen the navigation reaches but whose task has not been built yet. Deliberately names the task rather than apologising vaguely: a missing thing stays visibly missing (AGENTS.md rule 10).",
+    "placeholders": {
+      "screen": {
+        "type": "String",
+        "example": "Pending queue"
+      },
+      "task": {
+        "type": "String",
+        "example": "A11"
+      }
+    }
+  },
+
+  "navHome": "Home",
+  "@navHome": {
+    "description": "Employee home, E-01."
+  },
+
+  "navHistory": "History",
+  "@navHistory": {
+    "description": "Employee ride history, E-06."
+  },
+
+  "navSavedPlaces": "Places",
+  "@navSavedPlaces": {
+    "description": "Employee saved places, E-07."
+  },
+
+  "navRequestCab": "Request a cab",
+  "@navRequestCab": {
+    "description": "Employee request form, E-02."
+  },
+
+  "navRequestStatus": "Request",
+  "@navRequestStatus": {
+    "description": "Employee request confirmation, E-03."
+  },
+
+  "navLiveTracking": "Live tracking",
+  "@navLiveTracking": {
+    "description": "Employee live tracking, E-04."
+  },
+
+  "navRateTrip": "Rate your trip",
+  "@navRateTrip": {
+    "description": "Employee trip completed, E-05."
+  },
+
+  "navProfile": "Profile",
+  "@navProfile": {
+    "description": "Profile screen, C-04."
+  },
+
+  "navNotifications": "Notifications",
+  "@navNotifications": {
+    "description": "Notifications list, C-05."
+  },
+
+  "navDuty": "Duty",
+  "@navDuty": {
+    "description": "Driver duty home, D-01."
+  },
+
+  "navLocationPermission": "Location permission",
+  "@navLocationPermission": {
+    "description": "Driver background location explainer, D-02."
+  },
+
+  "navTrips": "Trips",
+  "@navTrips": {
+    "description": "Driver trip list, D-03."
+  },
+
+  "navTripDetail": "Trip",
+  "@navTripDetail": {
+    "description": "Driver trip detail, D-04."
+  },
+
+  "navNavigate": "Navigate",
+  "@navNavigate": {
+    "description": "Driver navigation map, D-05."
+  },
+
+  "navReportIssue": "Report an issue",
+  "@navReportIssue": {
+    "description": "Driver report issue, D-06."
+  },
+
+  "navDispatchMap": "Map",
+  "@navDispatchMap": {
+    "description": "Supervisor live dispatch map, S-01."
+  },
+
+  "navPendingQueue": "Queue",
+  "@navPendingQueue": {
+    "description": "Supervisor pending queue, S-02."
+  },
+
+  "navAssign": "Assign",
+  "@navAssign": {
+    "description": "Supervisor assign panel, S-03."
+  },
+
+  "navTripsBoard": "Board",
+  "@navTripsBoard": {
+    "description": "Supervisor trips board, S-04."
+  },
+
+  "navAlerts": "Alerts",
+  "@navAlerts": {
+    "description": "Supervisor alerts, S-07."
+  },
+
+  "navRequestOnBehalf": "Request on behalf",
+  "@navRequestOnBehalf": {
+    "description": "Supervisor creates a request for an employee, S-08."
+  },
+
+  "navDashboard": "Dashboard",
+  "@navDashboard": {
+    "description": "Operator admin dashboard, A-01."
+  },
+
+  "navVehicles": "Vehicles",
+  "@navVehicles": {
+    "description": "Operator admin vehicles, A-02."
+  },
+
+  "navDrivers": "Drivers",
+  "@navDrivers": {
+    "description": "Operator admin drivers, A-03."
+  },
+
+  "navClients": "Clients",
+  "@navClients": {
+    "description": "Operator admin clients and offices, A-04."
+  },
+
+  "navUsers": "Users",
+  "@navUsers": {
+    "description": "Operator admin users, A-05."
+  },
+
+  "navReports": "Reports",
+  "@navReports": {
+    "description": "Reports, A-07 for the operator admin and L-04 for the client admin."
+  },
+
+  "navSettings": "Settings",
+  "@navSettings": {
+    "description": "Operator config values, A-08."
+  },
+
+  "navEmployees": "Employees",
+  "@navEmployees": {
+    "description": "Client admin employee list, L-01."
+  },
+
+  "navEmployeeForm": "Employee",
+  "@navEmployeeForm": {
+    "description": "Client admin employee form, L-02."
+  },
+
+  "grantLocationPermission": "Grant Location Permission",
+  "@grantLocationPermission": {
+    "description": "Button to grant location permission"
+  },
+
+  "permissionDeniedNotice": "Permission was denied or revoked. You can grant permissions in phone Settings or tap Continue."
+}

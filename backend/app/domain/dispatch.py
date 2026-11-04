@@ -1,0 +1,513 @@
+"""Stop sequencing and the hard-rule checks (`allocation-rules.md` sections 2-3, B14).
+
+Pure. Takes riders, an office and a `duration` callable; returns an ordering and a list of
+violations. No database, no routing client, no clock of its own - the caller supplies a
+pre-fetched duration matrix, which is what keeps a candidate list to **one** routing call
+instead of one per insertion position (ADR-0010: the shared public server has a 1 req/s
+budget).
+
+Trip shape (`data-model.md`, `trip-lifecycle.md`): a trip has one direction and one office,
+and every rider contributes two stops.
+
+    to_office    pickup(r1) -> pickup(r2) -> ... -> drop(r1) drop(r2) ... at the office
+    from_office  pickup(r1) pickup(r2) ... at the office -> drop(r1) -> drop(r2) -> ...
+
+So adding a rider means choosing **one** insertion position in the rider order, not two.
+A rider may carry a `pickup` of their own, which replaces the usual collection point for
+their direction - see `Rider`. The shape is unchanged; only that one stop moves.
+The drops of a `to_office` trip are separate rows at the same location because each one
+completes a different request (a pickup stop going `done` sets `picked_up`, a drop sets
+`dropped`), and `trip_stop` is unique on `(trip_id, sequence)`.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta
+from enum import StrEnum
+
+from app.domain.enums import Direction
+from app.domain.night_safety import breaches_night_safety
+from app.domain.state_machines import StopKind
+
+#: Travel time in seconds between two points, from a pre-fetched matrix.
+Duration = Callable[["Place", "Place"], float]
+
+
+class Violation(StrEnum):
+    """A hard rule this assignment breaks (`allocation-rules.md` section 2).
+
+    Reported, not enforced, for manual assignment in Phase 1 - see ADR-0011. Phase 2's
+    optimizer treats the same list as a filter.
+    """
+
+    vehicle_unavailable = "vehicle_unavailable"
+    gps_stale = "gps_stale"
+    locked_to_other_vehicle = "locked_to_other_vehicle"
+    pooling_blocked = "pooling_blocked"
+    no_sharing = "no_sharing"
+    vip_needs_vip_vehicle = "vip_needs_vip_vehicle"
+    direction_mismatch = "direction_mismatch"
+    office_mismatch = "office_mismatch"
+    detour_factor_exceeded = "detour_factor_exceeded"
+    detour_minutes_exceeded = "detour_minutes_exceeded"
+    pickup_window_missed = "pickup_window_missed"
+    eta_over_candidate_limit = "eta_over_candidate_limit"
+    enroute_reuse_eta_exceeded = "enroute_reuse_eta_exceeded"
+    #: Rule 11. Waivable with a reason, like the other hard rules - `control-model.md`
+    #: section 3 rule 4 names night safety among the overrides a supervisor may make
+    #: with `safety` / `client_request` / `other` and a note (B26, B28).
+    night_safety_breach = "night_safety_breach"
+
+
+@dataclass(frozen=True, slots=True)
+class Place:
+    """A point the vehicle must reach. Hashable, so it can key a duration matrix."""
+
+    lat: float
+    lng: float
+
+
+@dataclass(frozen=True, slots=True)
+class Rider:
+    """One request's contribution to a trip: the rider's own end of the journey.
+
+    `pickup` overrides where this rider is collected. It is `None` for every ordinary
+    request - collection follows the trip's direction - and set only when the rider is
+    somewhere other than the usual place, which today means a breakdown left them at the
+    roadside (ADR-0016). It cannot be folded into `place`, which is the rider's *drop* on
+    a `from_office` trip.
+    """
+
+    request_id: uuid.UUID
+    place: Place
+    pickup: Place | None = None
+
+    def pickup_place(self, direction: Direction, office: Place) -> Place:
+        if self.pickup is not None:
+            return self.pickup
+        return self.place if direction is Direction.to_office else office
+
+    def drop_place(self, direction: Direction, office: Place) -> Place:
+        return office if direction is Direction.to_office else self.place
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedStop:
+    sequence: int
+    kind: StopKind
+    request_id: uuid.UUID
+    place: Place
+
+
+@dataclass(frozen=True, slots=True)
+class Plan:
+    """A rider order and what it costs."""
+
+    order: tuple[Rider, ...]
+    stops: tuple[PlannedStop, ...]
+    #: Seconds each rider spends between their pickup and their drop.
+    ride_seconds: dict[uuid.UUID, float]
+    #: Whole-route driving time, from the first stop to the last.
+    total_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class Insertion:
+    """The chosen position for a new rider, and its effect on the others."""
+
+    plan: Plan
+    position: int
+    #: Extra minutes each *existing* rider now spends in the cab. Never negative.
+    added_minutes: dict[uuid.UUID, float]
+    #: Extra driving, in seconds, the cab does to collect the newcomer **where this
+    #: insertion puts them** (B33): how far off its route the rider really is. `None` when
+    #: the caller did not say where the cab is, in which case the en-route ceiling falls back
+    #: to the straight ETA from its position, which is Phase 1's behaviour.
+    slot_detour_seconds: float | None = None
+    #: Seconds from now until the cab reaches the newcomer **along this insertion's route**
+    #: (B33), so rule 8's window is judged against when they would really be collected and
+    #: not against the straight ETA from where the cab happens to be. `None` without an
+    #: origin.
+    pickup_arrival_seconds: float | None = None
+
+    @property
+    def worst_added_minutes(self) -> float:
+        return max(self.added_minutes.values(), default=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class DetourLimits:
+    """Per-client limits (`allocation-rules.md` section 1). The stricter value wins."""
+
+    max_detour_factor: float
+    max_detour_minutes: float
+
+
+def build_plan(
+    direction: Direction, office: Place, riders: Sequence[Rider], duration: Duration
+) -> Plan:
+    """Lay out the stops for a rider order and measure what each rider rides.
+
+    Sequence numbers start at 1 and are contiguous, which is what `trip_stop` stores.
+    """
+    if not riders:
+        return Plan((), (), {}, 0.0)
+
+    stops: list[PlannedStop] = []
+    sequence = 1
+    # Pickups first, then drops, in rider order - that is the trip shape above. A rider
+    # with a `pickup` override simply contributes a pickup somewhere other than the usual
+    # place; the arithmetic below, and so every detour figure, follows it.
+    for rider in riders:
+        stops.append(
+            PlannedStop(
+                sequence, StopKind.pickup, rider.request_id, rider.pickup_place(direction, office)
+            )
+        )
+        sequence += 1
+    for rider in riders:
+        stops.append(
+            PlannedStop(
+                sequence, StopKind.drop, rider.request_id, rider.drop_place(direction, office)
+            )
+        )
+        sequence += 1
+
+    # Cumulative driving time to each stop. Stops at the same place cost nothing extra,
+    # which is exactly right for the block of drops at one office.
+    elapsed = 0.0
+    arrival: list[float] = []
+    for index, stop in enumerate(stops):
+        if index > 0:
+            elapsed += duration(stops[index - 1].place, stop.place)
+        arrival.append(elapsed)
+
+    first_at: dict[uuid.UUID, float] = {}
+    last_at: dict[uuid.UUID, float] = {}
+    for index, stop in enumerate(stops):
+        if stop.kind is StopKind.pickup:
+            first_at[stop.request_id] = arrival[index]
+        else:
+            last_at[stop.request_id] = arrival[index]
+
+    ride = {request_id: last_at[request_id] - first_at[request_id] for request_id in first_at}
+    return Plan(tuple(riders), tuple(stops), ride, elapsed)
+
+
+def slot_detour_seconds(duration: Duration, before: Place, pickup: Place, after: Place) -> float:
+    """Extra driving to call at `pickup` between `before` and `after` (B33).
+
+    `dur(before, pickup) + dur(pickup, after) - dur(before, after)`: zero for a rider
+    exactly on the way, about twice the distance for one the cab must double back for.
+    This, not the straight ETA from where the cab is now, is what "the cab's route passes
+    within `enroute_reuse_max_eta_minutes` of the rider" means (`allocation-rules.md` §3):
+    a cab five minutes from a rider but pointed the other way has a large detour, and one
+    twenty minutes away that is about to drive past their door has none.
+    """
+    return max(duration(before, pickup) + duration(pickup, after) - duration(before, after), 0.0)
+
+
+def best_insertion(
+    direction: Direction,
+    office: Place,
+    existing: Sequence[Rider],
+    newcomer: Rider,
+    duration: Duration,
+    origin: Place | None = None,
+) -> Insertion:
+    """Insert `newcomer` where it adds the least time for the riders already on board.
+
+    "Least added time" is measured on the **existing** riders, because they are the ones
+    who did not ask for a detour; whole-route duration only breaks ties. A trip holds at
+    most `seat_capacity` riders (12 in the widest vehicle), so trying every position is a
+    handful of arithmetic, not a search problem.
+    """
+    before = build_plan(direction, office, existing, duration)
+
+    best: Insertion | None = None
+    for position in range(len(existing) + 1):
+        order = [*existing[:position], newcomer, *existing[position:]]
+        plan = build_plan(direction, office, order, duration)
+        added = {
+            rider.request_id: max(
+                0.0,
+                (plan.ride_seconds[rider.request_id] - before.ride_seconds[rider.request_id])
+                / 60.0,
+            )
+            for rider in existing
+        }
+        detour = arrival = None
+        if origin is not None:
+            detour = _slot_detour(direction, office, existing, newcomer, position, duration, origin)
+            arrival = _slot_arrival(
+                direction, office, existing, newcomer, position, duration, origin
+            )
+        candidate = Insertion(plan, position, added, detour, arrival)
+        if best is None or _insertion_key(candidate) < _insertion_key(best):
+            best = candidate
+
+    # range(len+1) always yields position 0, so a best always exists.
+    assert best is not None
+    return best
+
+
+def _slot_detour(
+    direction: Direction,
+    office: Place,
+    existing: Sequence[Rider],
+    newcomer: Rider,
+    position: int,
+    duration: Duration,
+    origin: Place,
+) -> float:
+    """The detour for the newcomer's pickup at this position in the rider order."""
+    if direction is Direction.from_office:
+        # Every pickup is the office, which the cab is already going to.
+        return 0.0
+    stops = [origin, *[rider.pickup_place(direction, office) for rider in existing], office]
+    pickup = newcomer.pickup_place(direction, office)
+    return slot_detour_seconds(duration, stops[position], pickup, stops[position + 1])
+
+
+def _slot_arrival(
+    direction: Direction,
+    office: Place,
+    existing: Sequence[Rider],
+    newcomer: Rider,
+    position: int,
+    duration: Duration,
+    origin: Place,
+) -> float:
+    """Seconds until the cab reaches the newcomer's pickup if they take this position."""
+    if direction is Direction.from_office:
+        return duration(origin, office)
+    stops = [origin, *[rider.pickup_place(direction, office) for rider in existing]]
+    elapsed = sum(duration(stops[i], stops[i + 1]) for i in range(position))
+    return elapsed + duration(stops[position], newcomer.pickup_place(direction, office))
+
+
+def _insertion_key(insertion: Insertion) -> tuple[float, float]:
+    return (sum(insertion.added_minutes.values()), insertion.plan.total_seconds)
+
+
+@dataclass(frozen=True, slots=True)
+class AssignmentFacts:
+    """Everything the hard-rule checks need, already loaded by the caller.
+
+    A dataclass rather than ORM objects, so the rules stay pure and a test can state a
+    situation in four lines instead of building a database.
+    """
+
+    vehicle_id: uuid.UUID
+    vehicle_status: str
+    vehicle_type: str
+    gps_age_seconds: float | None
+    stale_gps_seconds: int
+    eta_to_pickup_seconds: float
+    #: `allocation-rules.md` section 3, idle candidates. The dispatch service passes the
+    #: *effective* ceiling, which widens for a request nobody has served (ADR-0019).
+    candidate_max_eta_minutes: int
+    pickup_window_minutes: int
+    requested_time: datetime
+    pickup_at: datetime
+    direction: Direction
+    office_id: uuid.UUID
+    employee_is_vip: bool
+    request_no_sharing: bool
+    lock_vehicle_id: uuid.UUID | None
+    #: Section 3, en-route candidates: a cab that already has a trip may pick someone up
+    #: on the way, but only if it is practically passing them. Its own ceiling, because a
+    #: 20-minute diversion with riders aboard is a different proposition from a
+    #: 20-minute approach by an empty cab.
+    enroute_reuse_max_eta_minutes: int = 5
+    #: None for a brand-new trip.
+    trip_direction: Direction | None = None
+    trip_office_id: uuid.UUID | None = None
+    trip_pooling_blocked: bool = False
+    trip_has_other_riders: bool = False
+    #: Rule 11, from the rider's client policy resolved against operator config (B28).
+    #: Off by default, which is Phase 1's behaviour and the behaviour of every operator
+    #: who has not turned it on.
+    night_safety_enabled: bool = False
+    night_start: time = time(20, 0)
+    night_end: time = time(6, 0)
+    night_safety_positions: str = "both"
+    #: Pickup time as the **operator's wall clock** shows it, which is what a window
+    #: written "20:00-06:00" means. `None` when the caller has not converted, and the
+    #: rule then does not fire: comparing a UTC time of day against a local window is
+    #: wrong by five and a half hours here and passes every test written in UTC, so it
+    #: has to be impossible to do by accident rather than merely discouraged.
+    pickup_time_local: time | None = None
+
+
+AVAILABLE_FOR_DISPATCH = frozenset({"available", "on_trip"})
+VIP_VEHICLE_TYPE = "vip"
+
+
+def check_hard_rules(
+    facts: AssignmentFacts,
+    insertion: Insertion | None = None,
+    limits: dict[uuid.UUID, DetourLimits] | None = None,
+    direct_seconds: dict[uuid.UUID, float] | None = None,
+    night_escort_required: Collection[uuid.UUID] | None = None,
+) -> list[Violation]:
+    """Every hard rule this assignment breaks, in the order `allocation-rules.md` lists them.
+
+    An empty list means the assignment satisfies section 2. Capacity is deliberately **not**
+    here: the caller refuses on capacity (ADR-0011), so it can never be quietly reported
+    and then ignored.
+    """
+    violations: list[Violation] = []
+
+    # 1. Vehicle state and fresh GPS.
+    if facts.vehicle_status not in AVAILABLE_FOR_DISPATCH:
+        violations.append(Violation.vehicle_unavailable)
+    if facts.gps_age_seconds is None or facts.gps_age_seconds > facts.stale_gps_seconds:
+        violations.append(Violation.gps_stale)
+
+    # 3. Locks.
+    if facts.lock_vehicle_id is not None and facts.lock_vehicle_id != facts.vehicle_id:
+        violations.append(Violation.locked_to_other_vehicle)
+    if facts.trip_pooling_blocked and facts.trip_has_other_riders:
+        violations.append(Violation.pooling_blocked)
+
+    # 4. VIP: a VIP vehicle, and the trip is theirs alone.
+    if facts.employee_is_vip:
+        if facts.vehicle_type != VIP_VEHICLE_TYPE:
+            violations.append(Violation.vip_needs_vip_vehicle)
+        if facts.trip_has_other_riders:
+            violations.append(Violation.no_sharing)
+
+    # 6. Direction and office compatibility.
+    if facts.trip_direction is not None and facts.trip_direction is not facts.direction:
+        violations.append(Violation.direction_mismatch)
+    if facts.trip_office_id is not None and facts.trip_office_id != facts.office_id:
+        violations.append(Violation.office_mismatch)
+
+    # 7. Detour limits, for every rider on the resulting trip.
+    if insertion is not None:
+        violations.extend(_detour_violations(insertion, limits or {}, direct_seconds or {}))
+
+    # 11. Night safety. Judged on the resulting **order**, so it needs the insertion;
+    # a brand-new trip has one rider and no order to get wrong.
+    if (
+        insertion is not None
+        and facts.pickup_time_local is not None
+        and breaches_night_safety(
+            direction=facts.direction,
+            order=[rider.request_id for rider in insertion.plan.order],
+            flagged=night_escort_required or (),
+            at=facts.pickup_time_local,
+            enabled=facts.night_safety_enabled,
+            night_start=facts.night_start,
+            night_end=facts.night_end,
+            positions=facts.night_safety_positions,
+        )
+    ):
+        violations.append(Violation.night_safety_breach)
+
+    # 8. Time window - `to_office` only (`allocation-rules.md` §2 rule 8). A `from_office`
+    # rider is ready at their requested time and nothing promised them a cab inside a
+    # window around it; it is also the direction the evening hold window (B29) delays on
+    # purpose, so applying the window here would make the hold and the rule contradict
+    # each other the moment the hold ends - exactly what the first B29 test found.
+    if facts.direction is Direction.to_office:
+        drift = abs((facts.pickup_at - facts.requested_time).total_seconds())
+        if drift > facts.pickup_window_minutes * 60:
+            violations.append(Violation.pickup_window_missed)
+
+    # 9. Opt-out of sharing.
+    if (
+        facts.request_no_sharing
+        and facts.trip_has_other_riders
+        and Violation.no_sharing not in violations
+    ):
+        violations.append(Violation.no_sharing)
+
+    # Section 3: the candidate ETA ceiling. One limit per candidate *kind*, as section 3
+    # describes them: an idle cab is judged on how long it takes to arrive, an en-route
+    # one on whether it is really passing by. Flagging both at once would say the same
+    # thing twice and tell the supervisor nothing extra.
+    #
+    # "Passing by" is route-aware (B33): the extra driving the cab does to collect this
+    # rider where the insertion puts them, when the caller could say where the cab is.
+    if facts.trip_direction is None:
+        if facts.eta_to_pickup_seconds > facts.candidate_max_eta_minutes * 60:
+            violations.append(Violation.eta_over_candidate_limit)
+    else:
+        proximity = (
+            insertion.slot_detour_seconds
+            if insertion is not None and insertion.slot_detour_seconds is not None
+            else facts.eta_to_pickup_seconds
+        )
+        if proximity > facts.enroute_reuse_max_eta_minutes * 60:
+            violations.append(Violation.enroute_reuse_eta_exceeded)
+
+    return violations
+
+
+def widened_candidate_eta_minutes(
+    base_minutes: int,
+    waited_minutes: float,
+    escalate_after_minutes: int,
+    retry_after_minutes: int,
+    widen_minutes: int,
+    ceiling_minutes: int,
+) -> int:
+    """How far to look for a cab for a request nobody has served yet (ADR-0019).
+
+    `allocation-rules.md` section 3.1. A rider who has waited half an hour is better served
+    by a cab twenty-five minutes away than by the rule that says twenty.
+
+    Nothing widens until the wait is "too long" by the operator's own threshold,
+    `escalate_after_minutes` (`alert_wait_minutes` - ADR-0023); after that it widens once
+    per `retry_after_minutes`, and stops at `ceiling_minutes`, or the reasoning would run
+    to the other end of the city.
+
+    Derived from the wait rather than stored, so it cannot drift from what the board shows
+    and re-running the sweep changes nothing.
+    """
+    if retry_after_minutes <= 0 or widen_minutes <= 0:
+        return base_minutes
+    overdue = waited_minutes - escalate_after_minutes
+    if overdue < 0:
+        return base_minutes
+    rounds = 1 + int(overdue // retry_after_minutes)
+    # A ceiling below the base is a misconfiguration, not an instruction to narrow.
+    return min(base_minutes + rounds * widen_minutes, max(ceiling_minutes, base_minutes))
+
+
+def _detour_violations(
+    insertion: Insertion,
+    limits: dict[uuid.UUID, DetourLimits],
+    direct_seconds: dict[uuid.UUID, float],
+) -> list[Violation]:
+    """`ride <= min(direct x factor, direct + minutes)` for every rider on the trip."""
+    found: list[Violation] = []
+    for request_id, ride in insertion.plan.ride_seconds.items():
+        limit = limits.get(request_id)
+        direct = direct_seconds.get(request_id)
+        if limit is None or direct is None:
+            continue
+        over_factor = ride > direct * limit.max_detour_factor
+        over_minutes = ride > direct + limit.max_detour_minutes * 60
+        if over_factor and Violation.detour_factor_exceeded not in found:
+            found.append(Violation.detour_factor_exceeded)
+        if over_minutes and Violation.detour_minutes_exceeded not in found:
+            found.append(Violation.detour_minutes_exceeded)
+    return found
+
+
+def stricter(first: DetourLimits, second: DetourLimits) -> DetourLimits:
+    """The tighter of two clients' limits (`allocation-rules.md` section 2, rule 7)."""
+    return DetourLimits(
+        max_detour_factor=min(first.max_detour_factor, second.max_detour_factor),
+        max_detour_minutes=min(first.max_detour_minutes, second.max_detour_minutes),
+    )
+
+
+def pickup_time(now: datetime, eta_seconds: float) -> datetime:
+    return now + timedelta(seconds=eta_seconds)

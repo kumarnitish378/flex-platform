@@ -16,6 +16,15 @@
 # --- development: anonymous clients may use the whole versioned topic tree ---
 topic readwrite sc/v1/#
 
+# --- development: authenticated clients too -----------------------------------
+# A client that sends a username is NOT anonymous, so the rule above does not cover it,
+# and Mosquitto denies its publishes silently at QoS 0. The simulator (M04) and the
+# driver app both authenticate as their vehicle, so without this `make up` accepts the
+# connection and then drops every ping with no error anywhere - which reads exactly like
+# "MQTT is broken". Production replaces this whole file with the generated per-vehicle
+# one (B11), where each user may write only to its own topic.
+pattern readwrite sc/v1/#
+
 # --- template for the generated production file (task B11) -------------------
 # Per-vehicle credentials, one block per vehicle, username = vehicle UUID:
 #

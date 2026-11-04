@@ -6,7 +6,9 @@ alone switch between the public OSM servers and a self-hosted stack (ADR-0010).
 """
 
 from app.modules.routing.factory import (
+    build_bulk_eta_service,
     build_geocoding_provider,
+    build_learned_speeds,
     build_rate_limiter,
     build_routing_provider,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "RoutingProvider",
     "Source",
     "TableResult",
+    "build_bulk_eta_service",
+    "build_learned_speeds",
     "build_geocoding_provider",
     "build_rate_limiter",
     "build_routing_provider",

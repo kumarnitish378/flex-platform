@@ -10,8 +10,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.domain.enums import ActorType
 from app.domain.errors import InvalidTransition, ValidationFailed
 from app.domain.state_machines import (
+    _ACTOR_TYPES,
     Actor,
     Recipient,
     RequestContext,
@@ -20,6 +22,7 @@ from app.domain.state_machines import (
     StopStatus,
     TripStatus,
     VehicleStatus,
+    actor_type_for,
     is_terminal_request,
     is_terminal_stop,
     is_terminal_trip,
@@ -44,7 +47,9 @@ EXPECTED_REQUEST_EDGES: dict[RequestStatus, set[RequestStatus]] = {
     R.queued: {R.suggested, R.assigned, R.cancelled, R.expired},
     R.suggested: {R.queued, R.assigned, R.cancelled},
     R.assigned: {R.queued, R.picked_up, R.no_show, R.cancelled},
-    R.picked_up: {R.dropped},
+    # `queued` only via the abort guard (OQ-27); the matrix supplies a context that
+    # satisfies it, and `test_a_rider_cannot_be_un_collected_otherwise` covers the rest.
+    R.picked_up: {R.dropped, R.queued},
     R.dropped: set(),
     R.no_show: set(),
     R.cancelled: set(),
@@ -89,6 +94,8 @@ def satisfying_context(current: RequestStatus, target: RequestStatus) -> Request
         )
     if current is R.assigned and target is R.queued:
         return RequestContext(actor=Actor.supervisor)
+    if current is R.picked_up and target is R.queued:
+        return RequestContext(actor=Actor.system, trip_status=T.aborted)
     return RequestContext(actor=Actor.system)
 
 
@@ -425,3 +432,57 @@ def test_default_context_is_the_system_actor() -> None:
 def test_stale_is_not_a_stored_vehicle_status() -> None:
     """trip-lifecycle.md §4: `stale` is derived from GPS age, never written."""
     assert "stale" not in {str(status) for status in V}
+
+
+# --- actors -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("actor", "expected"),
+    [
+        (Actor.employee, ActorType.employee),
+        (Actor.driver, ActorType.driver),
+        (Actor.supervisor, ActorType.supervisor),
+        (Actor.system, ActorType.system),
+    ],
+)
+def test_the_actor_maps_onto_what_the_event_table_stores(actor: Actor, expected: ActorType) -> None:
+    assert actor_type_for(actor) is expected
+
+
+@pytest.mark.parametrize("actor", [Actor.operator_admin, Actor.client_admin, Actor.platform_admin])
+def test_every_supervisory_role_is_logged_as_supervisor(actor: Actor) -> None:
+    """The event log answers "was a human overriding this"; `actor_user_id` says who."""
+    assert actor_type_for(actor) is ActorType.supervisor
+
+
+def test_every_actor_has_a_mapping() -> None:
+    """A new Actor must not silently become `system` in the audit trail."""
+    for actor in Actor:
+        assert actor in _ACTOR_TYPES, f"{actor} has no ActorType mapping"
+
+
+# --- picked_up -> queued: only when the cab broke down (OQ-27) ---------------
+
+
+def test_a_stranded_rider_returns_to_the_queue() -> None:
+    """The one situation where a rider already in a cab goes back to waiting.
+
+    `trip-lifecycle.md` section 2: an aborted trip leaves riders who were not dropped
+    needing new handling. They are standing at the roadside, so the queue is where
+    another cab is arranged.
+    """
+    event = transition_request(
+        R.picked_up, R.queued, RequestContext(actor=Actor.system, trip_status=T.aborted)
+    )
+
+    assert event.to_status == str(R.queued)
+
+
+@pytest.mark.parametrize("trip_status", [T.in_progress, T.completed, T.cancelled, None])
+def test_a_rider_cannot_be_un_collected_otherwise(trip_status: TripStatus | None) -> None:
+    """Without the abort, this edge would let anyone undo a pickup after the fact."""
+    with pytest.raises(InvalidTransition, match="only when their trip is aborted"):
+        transition_request(
+            R.picked_up, R.queued, RequestContext(actor=Actor.system, trip_status=trip_status)
+        )

@@ -1,0 +1,36 @@
+{
+  "options": {
+    "paths": {
+      "root": "/config",
+      "styles": "/config/styles",
+      "mbtiles": "/data",
+      "fonts": "/fonts"
+    },
+    "serveAllStyles": false,
+    "formatQuality": {
+      "jpeg": 80,
+      "webp": 90
+    },
+    "maxScaleFactor": 2,
+    "maxSize": 2048
+  },
+  "styles": {
+    "basic": {
+      "style": "basic/style.json",
+      "tilejson": {
+        "type": "overlay",
+        "bounds": [
+          76.8,
+          28.2,
+          77.75,
+          28.95
+        ]
+      }
+    }
+  },
+  "data": {
+    "ncr": {
+      "mbtiles": "ncr.mbtiles"
+    }
+  }
+}

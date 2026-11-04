@@ -7,6 +7,7 @@ misspelled `seed` would quietly destroy reproducibility.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, time, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -27,6 +28,9 @@ class RoutingMode(StrEnum):
 
 class SupervisorPolicy(StrEnum):
     manual_nearest = "manual_nearest"
+    #: Watches a `full_auto` scope and works only the requests the platform hands back
+    #: to manual - the person on the end of the optimizer-down alert (S12, M13).
+    monitor = "monitor"
     approve_all = "approve_all"
     mixed = "mixed"
     absent = "absent"
@@ -86,6 +90,8 @@ class Employees(Strict):
     count: int = Field(ge=1)
     home_zones: list[str] = Field(default_factory=list)
     vip_share: float = Field(default=0.0, ge=0, le=1)
+    #: S11: the share of riders flagged `night_escort_required`.
+    night_escort_share: float = Field(default=0.0, ge=0, le=1)
     priority_dist: dict[int, float] = Field(default_factory=dict)
     shifts: list[Shift] = Field(min_length=1)
 
@@ -118,6 +124,11 @@ class Client(Strict):
 class Supervisor(Strict):
     policy: SupervisorPolicy = SupervisorPolicy.manual_nearest
     reaction_delay_s: list[int] = Field(default=[20, 120], min_length=2, max_length=2)
+    #: `mixed` only: the share of the system's offers this supervisor approves. The
+    #: rest are overridden with a cab of their own choosing, which is what makes the
+    #: Phase 2 acceptance rate a measurement - an offer that could not have been
+    #: rejected tells you nothing about whether the suggestions are any good.
+    accept_rate: float = Field(default=0.7, ge=0.0, le=1.0)
 
     @field_validator("reaction_delay_s")
     @classmethod
@@ -135,15 +146,40 @@ class ModeEntry(Strict):
     mode: OperatorMode
 
 
+class Direction(StrEnum):
+    """Which way a rider is travelling.
+
+    Defined here rather than on the rider agent: it is part of the scenario format and
+    of the API contract, and the agent is only one of its users.
+    """
+
+    to_office = "to_office"
+    from_office = "from_office"
+
+
 class Traffic(Strict):
     profile: str = "ncr_default"
 
 
 class Event(Strict):
+    """One timed event (`simulator-spec.md` section 7).
+
+    `type` is validated by the injector rather than by an enum here, so that an event
+    listed in the spec but not yet implementable is refused with the reason why instead
+    of a bare "not a valid choice".
+    """
+
     at_ist: time
     type: str
-    duration_min: int | None = None
+    duration_min: int | None = Field(default=None, gt=0)
     vehicle: str | None = None
+    #: `demand_surge` / `vip_burst`: how many extra riders.
+    count: int | None = Field(default=None, gt=0)
+    #: `demand_surge`: 1.15 means "15% more demand than the day already has".
+    multiplier: float | None = Field(default=None, gt=0)
+    #: `demand_surge`: which way the extra riders are going. S03 is an evening surge of
+    #: people leaving the office, which loads the fleet quite differently from arrivals.
+    direction: Direction | None = None
 
 
 class Assertions(Strict):
@@ -154,6 +190,31 @@ class Assertions(Strict):
     invalid_transitions: int | None = None
     api_5xx_max: int | None = None
     all_requests_terminal: bool | None = None
+    #: S07: a VIP is never pooled with another rider (`allocation-rules.md` section 2
+    #: rule 4). Checked from the trips the drivers actually drove, not from intent.
+    vip_never_pooled: bool | None = None
+    #: S08: the failsafe actually fired. Without this a semi-auto run that never
+    #: engaged passes every other assertion by doing nothing.
+    failsafe_assignments_min: int | None = None
+    #: S09: no locked request rode in a cab other than the one it was pinned to
+    #: (`control-model.md` §3 rule 1, CLAUDE.md hard rule 6). Fails if no lock was
+    #: placed at all - a check that measured nothing has not been satisfied.
+    locks_respected: bool | None = None
+    #: Phase 2's exit criterion, as a scenario assertion. Approvals over the offers a
+    #: human answered; failsafe assignments are not acceptances.
+    acceptance_rate_min: float | None = None
+    #: S10: pooling actually happened, and nobody was detoured past rule 7.
+    riders_per_trip_min: float | None = None
+    detour_over_limit_max: int | None = None
+    vehicles_used_max: int | None = None
+    #: S11: no flagged rider was left alone in the lone position of a pooled trip
+    #: (`allocation-rules.md` section 2 rule 11). Fails if no flagged rider travelled.
+    night_safety_violations_max: int | None = None
+    #: S12: the optimizer was killed, the platform noticed (an alert), did nothing
+    #: automatic while it was down, and recovered on its own.
+    optimizer_outage_handled: bool | None = None
+    #: S10: the optimizer, not a person, did the assigning.
+    optimizer_assignments_min: int | None = None
 
 
 class Scenario(Strict):
@@ -162,6 +223,11 @@ class Scenario(Strict):
     seed: int
     start: datetime
     duration_hours: float = Field(gt=0, le=24 * 14)
+    #: Overtime, after the demand window closes, for rides already under way to finish
+    #: (OQ-28). No new demand is created and the supervisor stops assigning; the run ends
+    #: as soon as nobody is in a cab, so this is a cap and not a cost. Zero means "stop
+    #: dead at the window", which leaves whoever was mid-journey counted as unresolved.
+    drain_minutes_max: float = Field(default=60.0, ge=0, le=24 * 60)
     speed_factor: float = Field(default=60.0, gt=0)
     routing: RoutingMode = RoutingMode.approx
     operator: Operator = Field(default_factory=Operator)
@@ -185,7 +251,13 @@ class Scenario(Strict):
 
     @property
     def end(self) -> datetime:
+        """When the demand window closes. Nothing new is asked for after this."""
         return self.start + timedelta(hours=self.duration_hours)
+
+    @property
+    def drain_end(self) -> datetime:
+        """The latest a run may still be finishing a ride that started in the window."""
+        return self.end + timedelta(minutes=self.drain_minutes_max)
 
     @property
     def vehicle_count(self) -> int:
@@ -194,6 +266,26 @@ class Scenario(Strict):
     @property
     def employee_count(self) -> int:
         return sum(client.employees.count for client in self.clients)
+
+    @property
+    def night_escort_employee_count(self) -> int:
+        """How many seeded employees are flagged for a night escort (S11), rounded up."""
+        return sum(
+            math.ceil(client.employees.count * client.employees.night_escort_share)
+            for client in self.clients
+        )
+
+    @property
+    def vip_employee_count(self) -> int:
+        """How many seeded employees must be VIPs, from each client's `vip_share`.
+
+        Rounded up: a scenario asking for VIP behaviour with a share that rounds to zero
+        would seed no VIPs at all and quietly test nothing.
+        """
+        return sum(
+            math.ceil(client.employees.count * client.employees.vip_share)
+            for client in self.clients
+        )
 
 
 class ScenarioError(Exception):

@@ -11,22 +11,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from sim.events import EventSummary
 from sim.geo import LatLng, haversine_km
 from sim.pings import Ping
-
-
-def percentile(values: list[float], fraction: float) -> float | None:
-    """Linear-interpolated percentile. `None` for an empty sample."""
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    position = fraction * (len(ordered) - 1)
-    lower = int(position)
-    upper = min(lower + 1, len(ordered) - 1)
-    weight = position - lower
-    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+from sim.pooling import PoolingMetrics
+from sim.stats import percentile
 
 
 @dataclass
@@ -43,17 +32,112 @@ class FleetMetrics:
 
 @dataclass
 class DemandMetrics:
-    """Placeholders until M05 adds employee and driver agents."""
+    """What the riders did (M05).
 
+    `None` means "not measured in this run" and is deliberately distinct from zero:
+    "nobody gave up" and "give-ups were never counted" are different claims, and an
+    offline run measures neither.
+    """
+
+    riders: int | None = None
     requests: int | None = None
+    completed: int | None = None
     assigned: int | None = None
     cancelled: int | None = None
     gave_up: int | None = None
     no_shows: int | None = None
     expired: int | None = None
+    unresolved: int | None = None
+    not_travelling: int | None = None
+    #: The two halves of `unresolved`, so a failing run says which it is (OQ-29).
+    #: `still_waiting`: asked for a cab and nobody ever came, which is the platform
+    #: failing. `still_riding`: was being carried when the clock stopped after the drain,
+    #: which is a ride that never ended.
+    still_waiting: int | None = None
+    still_riding: int | None = None
     wait_minutes_median: float | None = None
     wait_minutes_p90: float | None = None
     eta_error_minutes_p90: float | None = None
+    #: VIP riders who travelled (S07).
+    vip_requests: int | None = None
+    #: VIP riders who ended up sharing a cab. `allocation-rules.md` section 2 rule 4
+    #: says this must never happen, so any value above zero fails S07.
+    vip_pooled: int | None = None
+
+    @property
+    def all_terminal(self) -> bool | None:
+        """S01: nothing still hanging when the run ended."""
+        return None if self.unresolved is None else self.unresolved == 0
+
+
+@dataclass
+class DrivingMetrics:
+    """What the drivers did (M05)."""
+
+    drivers: int | None = None
+    on_duty: int | None = None
+    trips_started: int | None = None
+    trips_completed: int | None = None
+    stops_done: int | None = None
+    no_shows: int | None = None
+    faults: int | None = None
+
+
+@dataclass
+class DispatchMetrics:
+    """What the supervisor did (M06). `policy` is None when nobody was watching."""
+
+    policy: str | None = None
+    assignments: int = 0
+    refusals: int = 0
+    #: Offers answered after the platform had settled them (see `SupervisorRecord`).
+    late_answers: int = 0
+    no_candidate: int = 0
+    violations_accepted: int = 0
+    #: Which hard rules those assignments broke, and how often (ADR-0011 reports rather
+    #: than enforces in Phase 1). "46 of 46 assignments broke something" is a mystery;
+    #: "46 of them were `eta_over_candidate_limit`" is a finding about the fleet.
+    violations_by_rule: dict[str, int] = field(default_factory=dict)
+    #: How old the chosen cab's position was, by the server's clock. A run reporting
+    #: `gps_stale` on every assignment needs the number to tell a real problem from a
+    #: time-compression artefact.
+    gps_age_seconds_median: float | None = None
+    gps_age_seconds_max: float | None = None
+    #: Semi-auto (M09). `acceptance_rate` is Phase 2's exit criterion - approvals over
+    #: the offers a **human** answered. `None` in a manual run, where no offer was
+    #: answered at all: reporting 0% there would put a figure on the board for
+    #: something that never happened.
+    offers_seen: int = 0
+    approvals: int = 0
+    overrides: int = 0
+    rejections: int = 0
+    acceptance_rate: float | None = None
+    #: Offers the failsafe closed because nobody answered in time (`control-model.md`
+    #: §4). Deliberately **not** counted as acceptances - an absent supervisor would
+    #: otherwise score 100%.
+    failsafe_assignments: int = 0
+    #: S09. Requests a supervisor pinned to a cab, and how many ended up somewhere
+    #: else. The second number must be zero: CLAUDE.md hard rule 6.
+    locks_placed: int = 0
+    locks_broken: int = 0
+    errors: int = 0
+
+
+@dataclass
+class OptimizerMetrics:
+    """What the batch optimizer did (M12), from the platform's own report of each jump."""
+
+    runs: int | None = None
+    applied: int | None = None
+    suggested: int | None = None
+    hinted: int | None = None
+    failed: int | None = None
+    #: S12. `None` when no outage was injected.
+    outage_minutes: float | None = None
+    applied_while_down: int | None = None
+    suggested_while_down: int | None = None
+    alert_raised: bool | None = None
+    alert_resolved: bool | None = None
 
 
 @dataclass
@@ -63,6 +147,9 @@ class IntegrityMetrics:
     invalid_transitions: int = 0
     hard_rule_violations: int = 0
     api_5xx: int = 0
+    #: Anything an agent's API call raised. Counted rather than fatal, so a run finishes
+    #: and reports honestly instead of dying on the first hiccup.
+    agent_errors: int = 0
 
 
 @dataclass
@@ -73,8 +160,20 @@ class RunMetrics:
     started_at: str
     ended_at: str
     simulated_hours: float
+    #: Overtime the run spent letting rides already under way finish, after the demand
+    #: window closed (OQ-28). Outside `simulated_hours`, which is the measured window.
+    drain_minutes: float = 0.0
+    #: True when that overtime ran out with someone still in a cab - a stuck ride, which
+    #: is a real failure, rather than a run that merely stopped at an awkward moment.
+    drain_capped: bool = False
     fleet: FleetMetrics = field(default_factory=FleetMetrics)
     demand: DemandMetrics = field(default_factory=DemandMetrics)
+    driving: DrivingMetrics = field(default_factory=DrivingMetrics)
+    dispatch: DispatchMetrics = field(default_factory=DispatchMetrics)
+    #: Phase 3's exit criterion (M11): cab-km per trip, vehicles used, riders per trip.
+    pooling: PoolingMetrics = field(default_factory=PoolingMetrics)
+    optimizer: OptimizerMetrics = field(default_factory=OptimizerMetrics)
+    events: EventSummary = field(default_factory=EventSummary)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
 
     def to_dict(self) -> dict[str, Any]:

@@ -1,0 +1,93 @@
+# S09 override_respected (scenarios.md): what a supervisor pins, stays pinned.
+#
+# `control-model.md` §3 rule 1 and CLAUDE.md hard rule 6: an overridden or locked item
+# is never changed by an automatic path. This run puts the operator in `semi_auto`, so
+# there *is* an automatic path with an opinion, then has the supervisor lock ten waiting
+# requests to cabs of their own choosing and lets the morning run.
+#
+# The lock is deliberately **not** the cab the system would have picked - the event asks
+# for the second-best suggestion. Locking a rider to the cab the optimizer already wanted
+# would make "the optimizer never moved it" indistinguishable from "the optimizer
+# agreed", which is the thing this scenario exists to tell apart.
+#
+# The check is against the cab each rider actually rode in, read from the drivers' own
+# records rather than from `lock_vehicle_id`: the column would still read correctly if
+# something had moved them.
+#
+# Not part of `make sim-quick` - it needs a live backend.
+name: override_respected
+version: 1
+seed: 909
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+# Five hours plus a long drain: with two depots and a 45-minute ETA ceiling the
+# journeys are long, and the first run left two riders still in a cab at the end.
+duration_hours: 5
+drain_minutes_max: 120
+speed_factor: 60
+routing: approx
+
+operator:
+  config_overrides:
+    failsafe_timeout_seconds: 180
+    failsafe_action: auto_assign
+    alert_wait_minutes: 20
+    request_expiry_minutes: 90
+    # Wide enough that a locked cab which is not the nearest one is still a legal
+    # assignment. With the default 20 minutes the lock would often be refused as
+    # `eta_over_candidate_limit`, and the run would measure the ETA ceiling instead of
+    # the override.
+    candidate_max_eta_minutes: 45
+
+modes:
+  - {mode: semi_auto}
+
+fleet:
+  # Two depots, so the second-best cab for a rider is genuinely a different journey
+  # rather than the same cab from the same place.
+  - {type: sedan_4, count: 8, depot: [28.5355, 77.3910]}
+  - {type: sedan_4, count: 6, depot: [28.6100, 77.3600]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 40
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      priority_dist: {3: 0.5, 5: 0.5}
+      shifts:
+        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+
+supervisor:
+  # `mixed`, not `approve_all`: overriding roughly a third of the offers is the only
+  # thing in the suite that exercises `choose_other` against a real backend, and an
+  # override is the other half of what this scenario is named for. It also makes the
+  # lock test harder - the supervisor is actively choosing cabs of their own, which is
+  # exactly the traffic a lock has to survive.
+  policy: mixed
+  accept_rate: 0.7
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # The first rider of the day asks at about 08:15 IST, so a lock at 06:45 would
+  # find an empty queue and silently check nothing - which is what the first run
+  # did, and why `locks_respected` fails rather than passes when no lock was placed.
+  - {at_ist: "08:30", type: lock_requests, count: 10}
+
+assertions:
+  # Zero is the only passing answer, and a run that locked nothing fails rather than
+  # passes - a check that measured nothing has not been satisfied.
+  locks_respected: true
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

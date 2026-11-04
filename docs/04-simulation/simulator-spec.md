@@ -108,6 +108,7 @@ version: 1
 seed: 42
 start: "2026-10-05T00:30:00Z"     # 06:00 IST
 duration_hours: 16
+drain_minutes_max: 60           # overtime for rides already under way (default 60; 0 = off)
 speed_factor: 60
 routing: approx                   # approx (default) | osrm (self-hosted only)
 operator:
@@ -148,19 +149,64 @@ assertions:
   invalid_transitions: 0
 ```
 
+### The demand window and the drain
+`duration_hours` is the **demand window**: riders ask for nothing after it and the
+supervisor stops assigning. A run then keeps the clock going for up to
+`drain_minutes_max` so that rides already under way can finish, and stops the moment no
+rider is in a cab — so a healthy run pays nothing for it. Nothing new happens during the
+drain; the only processes still working are drivers completing trips they had already
+started.
+
+Without this, a run stopped dead on the hour and whoever was mid-journey was left
+`picked_up`, which is not terminal, so `all_requests_terminal` failed for no reason other
+than where the clock stopped — and failed only sometimes, because live timing varies
+(OQ-28, ADR-0017). `metrics.json` reports `drain_minutes` and `drain_capped`; the cap
+running out with someone still aboard is a genuinely stuck ride and still fails the run.
+
 ## 9. Metrics recorded
 Per run (JSON + CSV): requests, assigned, dropped, cancelled, gave up, no-shows, expired; wait (median, p90, max) overall and by direction/client/priority; ETA error (median, p90); vehicles used; trips; riders per trip; km total and empty km share; supervisor actions count and time; suggestion acceptance; failsafe triggers; override count; hard-rule violations (must be 0); invalid state transitions (must be 0); API errors; backend latency percentiles.
+
+Also `drain_minutes` and `drain_capped` (see the drain, above), and the two halves of
+`unresolved` (ADR-0018): `still_waiting`, riders who asked for a cab and were never served
+— the platform losing a rider — and `still_riding`, riders being carried when the clock
+stopped after the drain. Both fail `all_requests_terminal`; reporting them separately is
+what lets a red run name its own cause.
+
+### Phase 3 metrics (M11, M12)
+
+`metrics.json` gains two sections, both computed from what the agents did, never from what
+dispatch intended:
+
+* **`pooling`** - trips driven that carried someone, **vehicles used**, riders per trip,
+  pooled trips and rate, **cab-km per trip / per rider** (from each cab's odometer between
+  the driver starting and finishing the trip), and detour minutes per rider against a direct
+  ride, with a count of rides over rule 7's limit. For S11, flagged riders carried and the
+  pooled trips that left one alone in the lone position (`allocation-rules.md` §2 rule 11).
+* **`optimizer`** - runs, applied, suggested, hinted and failed, as the backend reported them
+  after each clock jump; and, for S12, the outage's length, what the platform applied or
+  offered while the optimizer was down (must be zero), and whether the `optimizer_down`
+  alert was raised and cleared.
+
+`trips.csv` now has one row per trip a driver started. A metric that was not measured is
+`null` in the JSON and `-` in a table, never zero.
 
 ## 10. Outputs and visualization
 - `runs/<timestamp>_<scenario>/metrics.json`, `requests.csv`, `trips.csv`, `pings.csv`, `summary.md`, plots (wait histogram, vehicles in use over time).
 - Live view: point the supervisor app (or Flutter web build) at the sim backend to watch cabs move at `speed_factor: 1–5`.
 - Compare mode: `python -m sim compare runA runB` → table of metric deltas.
+- Policy comparison (M13): `python -m sim policies scenarios/pooling_efficiency.yaml --platform URL`
+  runs the **same scenario and seed** under `manual`, `semi_auto` and `full_auto` and prints
+  and writes (`runs/policies_<scenario>_seed<N>.md`) one table with the change against the
+  first mode. The variants differ in exactly three fields - the operator mode, the supervisor
+  policy that mode is staffed by (`manual_nearest`, `approve_all`, `monitor`) and the name -
+  and a test diffs the whole scenario to prove it. Scenario assertions are not evaluated: they
+  describe what one mode must achieve.
 
 ## 11. Replay mode (Phase 1+)
 Load real requests and vehicle shifts from an exported day; replay with a chosen policy; compare against what actually happened.
 
 ## 12. CI integration
-- `make sim-quick`: 3 short scenarios (1 hour sim time each), on every pull request touching `backend/` or `simulator/`.
+- `make sim-quick`: the PR gate, on every pull request touching `backend/` or `simulator/`. `smoke_tiny` (the end-to-end loop) and `breakdown_with_riders` (the incident path - aborted trip, riders re-queued, a stranded rider collected from the roadside), about four minutes of wall clock between them. The incident path is in the gate because four separate defects have hidden there.
 - `make sim-full`: full suite nightly and before each release. Any failed assertion blocks release.
 
 ## 13. Determinism

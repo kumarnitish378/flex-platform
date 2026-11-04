@@ -36,9 +36,9 @@ flowchart LR
 
 **office** — `operator_id`, `client_id`, `name`, `location` point, `address_text`.
 
-**client_policy** — `client_id` (unique), `pooling_allowed` bool, `employee_opt_out_allowed` bool, `night_safety_enabled` bool, `night_start`, `night_end` (time), `max_detour_factor` (nullable, stricter only), `max_detour_minutes` (nullable), `pickup_window_minutes` (nullable), `no_show_wait_minutes` (nullable).
+**client_policy** — `client_id` (unique), `pooling_allowed` bool (default true), `employee_opt_out_allowed` bool (**default true**: asking not to share is a behaviour Phase 1 shipped ungated, so defaulting it off would revoke a permission every rider already had, and creating a policy row to set a detour limit would silently take it away - B28), `night_safety_enabled` bool (a **floor**: the rule is on if either this or the operator's key says so, because an untouched row is indistinguishable from a deliberate no - B28), `night_start`, `night_end` (time, both or neither), `max_detour_factor` (nullable, stricter only), `max_detour_minutes` (nullable), `pickup_window_minutes` (nullable), `no_show_wait_minutes` (nullable).
 
-**employee** — `operator_id`, `client_id`, `user_id` (nullable until first login), `name`, `phone`, `office_id`, `home_location` point, `home_landmark`, `zone_id` (derived, nullable), `priority` smallint 1–10 (default 5), `is_vip` bool, `night_escort_required` bool, `active` bool.
+**employee** — `operator_id`, `client_id`, `user_id` (nullable until first login), `name`, `phone`, `office_id`, `home_location` point, `home_landmark`, `zone_id` (derived, nullable), `priority` smallint 1–10 (default 5), `is_vip` bool, `night_escort_required` bool, `gender` (`female`/`male`/`other`, nullable - read only by the night escort rule, OQ-10), `active` bool.
 
 **saved_place** — `employee_id`, `label`, `location`, `landmark`.
 
@@ -49,15 +49,15 @@ flowchart LR
 
 **driver** — `operator_id`, `user_id`, `name`, `phone`, `licence_last4`, `default_vehicle_id`, `active`.
 
-**duty_session** — `driver_id`, `vehicle_id`, `started_at`, `ended_at`.
+**duty_session** — `driver_id`, `vehicle_id`, `started_at`, `ended_at`, `odometer_start_km` / `odometer_end_km` (optional dashboard readings entered on going on / off duty), `gps_distance_m` (running metres from the cab's pings, fixed when the session closes; null if it sent too few), `billing_basis` (`gps` default / `odometer`, set by an operator admin) with `billing_basis_set_by` / `_at` / `_note`. The unit of per-cab-per-day billing (B38).
 
 ## Requests and trips
-**ride_request** — `operator_id`, `client_id`, `employee_id`, `direction` (`to_office`,`from_office`), `office_id`, `location` point (home/pickup or drop), `landmark`, `requested_time` timestamptz, `urgency` (`high`,`medium`,`low`), `no_sharing` bool, `status` (see lifecycle), `channel` (`app`,`supervisor`,`offer`,`sim`), `created_by_user_id`, `trip_id` nullable, `lock_vehicle_id` nullable, `forced_priority` bool, `hold_until` nullable, `override_until` nullable, `cancel_reason` nullable, `expires_at`.
+**ride_request** — `operator_id`, `client_id`, `employee_id`, `direction` (`to_office`,`from_office`), `office_id`, `location` point (home/pickup or drop), `pickup_location` point nullable (collect here instead of the usual place for the direction - set when a breakdown strands a rider who was already on board, ADR-0016), `landmark`, `requested_time` timestamptz, `urgency` (`high`,`medium`,`low`) - **an input from the rider/client, never written by the platform** (ADR-0021), `no_sharing` bool, `status` (see lifecycle), `channel` (`app`,`supervisor`,`offer`,`sim`), `created_by_user_id`, `trip_id` nullable, `lock_vehicle_id` nullable, `forced_priority` bool, `hold_until` nullable, `override_until` nullable, `cancel_reason` nullable, `expires_at`, `escalated_at` nullable (set once when an unassigned request is escalated, so it escalates and alerts once - ADR-0019), `pooling_added_minutes` float nullable (minutes in the cab beyond riding alone, as of the last plan that touched the trip - B32).
 Indexes: (operator_id, status), (employee_id, requested_time), GIST(location).
 
 **ride_request_event** — `request_id`, `from_status`, `to_status`, `actor_type` (`employee`,`driver`,`supervisor`,`system`,`system_failsafe`,`optimizer`), `actor_user_id`, `reason`, `at`, `data` jsonb.
 
-**trip** — `operator_id`, `vehicle_id`, `driver_id`, `direction`, `office_id`, `status`, `pooling_blocked` bool, `planned_start`, `started_at`, `completed_at`, `planned_distance_m`, `actual_distance_m`, `empty_distance_m`, `mode_used` (`manual`,`semi_auto`,`full_auto`,`failsafe`), `route_geometry` linestring (nullable).
+**trip** — `operator_id`, `vehicle_id`, `driver_id`, `direction`, `office_id`, `status`, `pooling_blocked` bool, `override_until` nullable (when a `block_pooling` override lapses - control-model.md §3 rule 5; null means the block was not set by an override, as for a VIP or a `no_sharing` rider, or was set open-ended), `planned_start`, `started_at`, `completed_at`, `planned_distance_m`, `actual_distance_m` (metres the cab moved between starting and finishing, **measured from its pings when the driver completes the trip**; null when it sent fewer than two - B38/B39), `empty_distance_m`, `mode_used` (`manual`,`semi_auto`,`full_auto`,`failsafe`), `route_geometry` linestring (nullable), `escort_basis` (`escort_arranged`/`male_co_rider_present`; `last_out` accepts only the first), `escort_confirmed_by`, `escort_confirmed_at`, `escort_note` - the supervisor's night-escort confirmation, all null when the trip never needed one (OQ-10).
 
 **trip_stop** — `trip_id`, `sequence` smallint, `stop_type` (`pickup`,`drop`), `request_id`, `location`, `status` (`pending`,`en_route`,`arrived`,`done`,`skipped`), `planned_eta`, `latest_eta`, `arrived_at`, `done_at`, `event_location` point.
 Unique (trip_id, sequence).
@@ -67,19 +67,23 @@ Unique (trip_id, sequence).
 ## Tracking
 **location_ping** — `vehicle_id`, `operator_id`, `recorded_at` (device time), `received_at`, `location` point, `speed_mps`, `heading_deg`, `accuracy_m`, `battery_pct`, `source` (`app`,`esp32`,`sim`). No `updated_at`. Partitioned by month on `recorded_at`; retention 90 days.
 
-**road_speed_profile** — `osm_way_id` bigint, `slot` smallint (0–167 = hour of week), `speed_kph`, `samples`, `updated_at`. PK (osm_way_id, slot).
+**road_speed_profile** — `osm_way_id` bigint, `slot` smallint (0–167 = hour of week), `speed_kph`, `samples`, `distance_m` and `seconds` (the totals `speed_kph` is derived from, so later trips fold in exactly), `updated_at`. PK (osm_way_id, slot). Phase 3 writes only the whole-service-area aggregate under `osm_way_id = 0`, in `approx`'s own frame (B37). **speed_profile_state** — one row: `processed_until`, how far through completed trips the nightly learner has read.
+
+**optimizer_run** — `operator_id`, `started_at`, `status` (`solved`,`no_solution`,`failed`,`paused`), `mode`, `solver` (`greedy`,`darp`,`greedy_fallback`), `requests`, `placed`, `unplaced`, `applied`, `suggested`, `hinted`, `solve_seconds`, `plan_cost`, `request_ids`, `plan` jsonb, `error`. One row per batch the optimizer was handed (B30-B32); B36 decides the optimizer is down from these. **optimizer_hint** — `operator_id`, `run_id`, `request_id`, `vehicle_id`, `trip_id` nullable, `rider_order`, `pickup_eta_seconds`, `cost`, `reasons`, `superseded_at` nullable: what the optimizer would do for a request in a `manual` scope (B32).
 
 ## Dispatch control
-**mode_setting** — `operator_id`, `client_id` nullable, `zone_id` nullable, `direction` nullable, `weekdays` smallint bitmask nullable, `start_time`/`end_time` nullable, `mode`, `updated_by`.
+**mode_setting** — `operator_id`, `client_id` nullable, `zone_id` nullable, `direction` nullable, `weekdays` smallint array nullable (ISO weekdays, Monday = 1; an array rather than the bitmask first drafted here, because `[1,5]` is readable in `psql` and in a log line and cannot be confused with the Sunday = 0 convention - B24), `start_time`/`end_time` nullable, `mode`, `updated_by`.
 
 **assignment_suggestion** (Phase 2) — `request_id`, `created_at`, `candidates` jsonb (ranked list: vehicle_id, trip_id, cost, eta, reasons), `status` (`open`,`approved`,`rejected`,`expired`,`failsafe_applied`), `chosen_vehicle_id`, `decided_by`, `decided_at`, `failsafe_due_at`.
 
-**override_log** — `operator_id`, `action`, `request_id`, `trip_id`, `vehicle_id`, `before` jsonb, `after` jsonb, `reason_code`, `note`, `expires_at`, `user_id`, `at`.
+**override_log** — `operator_id`, `action`, `request_id`, `trip_id`, `vehicle_id`, `before` jsonb, `after` jsonb, `reason_code`, `note`, `waived_violations` jsonb (the hard rules this override set aside, each naming the config key behind it - control-model.md §3 rule 4 requires these to be flagged in reports, and a `jsonb` predicate is not something a report should have to know about), `expires_at` (null = until the trip ends; set to the moment of release when the inverse action closes the row), `user_id`, `at`.
+
+`before` and `after` hold only the fields the action touched, not a whole-row snapshot: a snapshot would bury the one value that changed and would copy a rider's home location into a table nobody thinks of as holding personal data.
 
 **operator_config** — `operator_id`, `key`, `value` jsonb, `updated_by`, `version`. Unique (operator_id, key). History in `operator_config_history`.
 
 ## Alerts, notifications, feedback
-**alert** — `operator_id`, `type` (`sos`,`driver_issue`,`request_near_expiry`,`vip_no_vehicle`,`failsafe`,`stale_vehicle`,`mode_prompt`,`system`), `severity`, `request_id`, `trip_id`, `vehicle_id`, `data` jsonb, `status` (`open`,`acknowledged`,`resolved`), `acknowledged_by`, `resolved_at`.
+**alert** — `operator_id`, `type` (`sos`,`driver_issue`,`request_unassigned`,`request_near_expiry`,`vip_no_vehicle`,`failsafe`,`stale_vehicle`,`mode_prompt`,`system`), `severity`, `request_id`, `trip_id`, `vehicle_id`, `data` jsonb, `status` (`open`,`acknowledged`,`resolved`), `acknowledged_by`, `resolved_at`.
 
 **notification** — `user_id`, `type`, `title`, `body`, `data` jsonb, `sent_at`, `read_at`.
 

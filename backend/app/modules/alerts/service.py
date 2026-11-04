@@ -1,0 +1,700 @@
+"""Alerts: raising them, listing them, and closing them (B17, EMP-08, DRV-06).
+
+An alert is the product admitting something needs a human. Three things follow from that:
+
+* **Raising one is never blocked.** An SOS from a rider in trouble must not fail because
+  the trip id was wrong or the vehicle is unknown. Everything except the operator and the
+  position is optional.
+* **Nobody is told twice about the same thing.** A vehicle that has been quiet for ten
+  minutes is one alert, not twenty. Deduplication is on the open alert, so acknowledging
+  and then going quiet again does raise a new one.
+* **SOS goes out before anything else.** It is published to the supervisor channel
+  immediately (B17 acceptance: within 2 seconds), and the notification is high priority.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
+
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.clock import Clock
+from app.core.events import Event, EventPublisher, NullEventPublisher, operator_channel
+from app.core.geo import to_point
+from app.core.logging import get_logger
+from app.domain.enums import AlertSeverity, AlertStatus, AlertType
+from app.domain.errors import Conflict, NotFound, ValidationFailed
+from app.domain.notifications import NotificationType
+from app.domain.state_machines import (
+    TERMINAL_TRIP_STATUSES,
+    Actor,
+    Recipient,
+    RequestContext,
+    RequestStatus,
+    StopStatus,
+    TripStatus,
+    VehicleStatus,
+    transition_request,
+    transition_stop,
+    transition_trip,
+    transition_vehicle,
+)
+from app.modules.alerts.models import Alert
+from app.modules.config.service import ConfigService
+from app.modules.fleet.models import Vehicle
+from app.modules.notifications.service import Audience, NotificationService
+
+logger = get_logger(__name__)
+
+#: DRV-06: what a driver can report.
+ISSUE_TYPES = ("breakdown", "accident", "traffic_block", "rider_issue", "other")
+
+#: DRV-06: "breakdown marks the vehicle `out_of_service` pending supervisor confirmation".
+ISSUE_TAKES_VEHICLE_OFF_ROAD = frozenset({"breakdown", "accident"})
+
+#: How severe each alert type is. Kept as a table so a new type cannot default to silence.
+SEVERITY: dict[AlertType, AlertSeverity] = {
+    AlertType.sos: AlertSeverity.critical,
+    AlertType.driver_issue: AlertSeverity.warning,
+    # Nobody has sent this rider a cab. A supervisor can still fix it, which is what
+    # makes it a warning rather than information (ADR-0019).
+    AlertType.request_unassigned: AlertSeverity.warning,
+    AlertType.request_near_expiry: AlertSeverity.warning,
+    # Manual phase: informational. The supervisor decides, so this is a prompt, not a
+    # failure (`allocation-rules.md` section 2 rule 4, OQ-12).
+    AlertType.vip_no_vehicle: AlertSeverity.info,
+    AlertType.failsafe: AlertSeverity.warning,
+    AlertType.stale_vehicle: AlertSeverity.warning,
+    AlertType.mode_prompt: AlertSeverity.info,
+    # A woman alone in a cab at night with nobody having said an escort is arranged.
+    AlertType.escort_required: AlertSeverity.critical,
+    AlertType.system: AlertSeverity.warning,
+}
+
+OPEN_STATUSES = (AlertStatus.open, AlertStatus.acknowledged)
+
+#: How far back a breakdown looks for the cab's own last position, when the driver's
+#: report carried none. Older than this and the ping says where the cab *was*, not where
+#: it stopped; sending the next cab to a wrong place is worse than admitting we do not
+#: know and letting the supervisor read the alert.
+LAST_POSITION_LOOKBACK = timedelta(minutes=15)
+
+
+@dataclass(frozen=True, slots=True)
+class StaleSweep:
+    raised: int = 0
+    #: Alerts closed because the vehicle started reporting again (ADR-0022).
+    cleared: int = 0
+
+
+class AlertService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        clock: Clock,
+        events: EventPublisher | None = None,
+        notifications: NotificationService | None = None,
+        config: ConfigService | None = None,
+    ) -> None:
+        self.session = session
+        self.clock = clock
+        self.events = events or NullEventPublisher()
+        self.notifications = notifications or NotificationService(session, clock)
+        self.config = config or ConfigService(session, clock)
+
+    # --- raising ---------------------------------------------------------------------
+
+    async def raise_alert(
+        self,
+        operator_id: uuid.UUID,
+        alert_type: AlertType,
+        data: dict[str, Any] | None = None,
+        request_id: uuid.UUID | None = None,
+        trip_id: uuid.UUID | None = None,
+        vehicle_id: uuid.UUID | None = None,
+        dedupe: bool = False,
+    ) -> Alert | None:
+        """Record an alert and tell the people who can act on it.
+
+        With `dedupe`, an existing open alert of the same type for the same subject wins
+        and `None` comes back: a vehicle quiet for ten minutes is one alert, not twenty.
+        """
+        if dedupe and await self._already_open(operator_id, alert_type, vehicle_id, request_id):
+            return None
+
+        alert = Alert(
+            operator_id=operator_id,
+            type=alert_type,
+            severity=SEVERITY.get(alert_type, AlertSeverity.warning),
+            request_id=request_id,
+            trip_id=trip_id,
+            vehicle_id=vehicle_id,
+            data=data,
+            status=AlertStatus.open,
+        )
+        self.session.add(alert)
+        await self.session.flush()
+
+        await self.events.publish(
+            Event(
+                f"alert.{alert_type}",
+                operator_channel(operator_id, "alerts"),
+                {
+                    "alert_id": str(alert.id),
+                    "type": str(alert_type),
+                    "severity": alert.severity,
+                    "trip_id": str(trip_id) if trip_id else None,
+                    "vehicle_id": str(vehicle_id) if vehicle_id else None,
+                    **(data or {}),
+                },
+            )
+        )
+        logger.info(
+            "alert_raised",
+            alert_id=str(alert.id),
+            alert_type=str(alert_type),
+            severity=alert.severity,
+        )
+        return alert
+
+    async def sos(
+        self,
+        operator_id: uuid.UUID,
+        user_id: uuid.UUID,
+        lat: float,
+        lng: float,
+        trip_id: uuid.UUID | None = None,
+    ) -> Alert:
+        """EMP-08: an emergency, with live location, to supervisor and operator admin.
+
+        Deliberately the most forgiving path in the codebase. Nothing about the trip is
+        validated: someone pressing this button is not in a position to have got the
+        payload right, and a refused SOS is the worst failure this product can have.
+        """
+        alert = await self.raise_alert(
+            operator_id,
+            AlertType.sos,
+            data={"lat": lat, "lng": lng, "raised_by": str(user_id)},
+            trip_id=trip_id,
+        )
+        assert alert is not None  # never deduplicated
+        await self.notifications.notify(
+            NotificationType.sos,
+            Audience(operator_id=operator_id),
+            {"alert_id": str(alert.id), "trip_id": str(trip_id) if trip_id else None},
+        )
+        return alert
+
+    async def driver_issue(
+        self,
+        operator_id: uuid.UUID,
+        driver_user_id: uuid.UUID,
+        issue_type: str,
+        note: str | None = None,
+        trip_id: uuid.UUID | None = None,
+        vehicle_id: uuid.UUID | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> Alert:
+        """DRV-06. A breakdown or accident also takes the vehicle off the road."""
+        if issue_type not in ISSUE_TYPES:
+            raise ValidationFailed(
+                f"Unknown issue type: {issue_type}", {"allowed": list(ISSUE_TYPES)}
+            )
+
+        alert = await self.raise_alert(
+            operator_id,
+            AlertType.driver_issue,
+            data={
+                "issue_type": issue_type,
+                "note": note,
+                "lat": lat,
+                "lng": lng,
+                "reported_by": str(driver_user_id),
+            },
+            trip_id=trip_id,
+            vehicle_id=vehicle_id,
+        )
+        assert alert is not None
+
+        if issue_type in ISSUE_TAKES_VEHICLE_OFF_ROAD and vehicle_id is not None:
+            await self._take_off_road(vehicle_id)
+            await self._abort_the_trip(operator_id, vehicle_id, lat, lng)
+
+        # DRV-06 says "supervisor is alerted", which is the alert itself plus the event on
+        # the operator's alerts channel. No push: a breakdown is urgent for whoever is
+        # watching the board, not a reason to wake every supervisor's phone.
+        return alert
+
+    async def _take_off_road(self, vehicle_id: uuid.UUID) -> None:
+        """DRV-06: "pending supervisor confirmation" - the driver reports, we act.
+
+        A broken-down cab must stop being a dispatch candidate immediately; waiting for a
+        supervisor to confirm would keep assigning riders to a vehicle on a hard shoulder.
+        """
+        vehicle = await self.session.scalar(select(Vehicle).where(Vehicle.id == vehicle_id))
+        if vehicle is None or vehicle.status == str(VehicleStatus.out_of_service):
+            return
+        transition = transition_vehicle(
+            VehicleStatus(vehicle.status), VehicleStatus.out_of_service, actor=Actor.driver
+        )
+        vehicle.status = transition.to_status
+        logger.info("vehicle_out_of_service", vehicle_id=str(vehicle_id), reason="driver_issue")
+
+    async def _where_the_cab_stopped(
+        self, vehicle_id: uuid.UUID, lat: float | None, lng: float | None
+    ) -> object | None:
+        """Where a stranded rider actually is: the driver's reported position, or the
+        cab's last known one.
+
+        `None` when neither is known. A re-ride with no pickup point is still better than
+        no re-ride, so the rider is re-queued anyway and the supervisor alert says so.
+        """
+        if lat is not None and lng is not None:
+            reported: object = to_point(lat, lng)
+            return reported
+
+        # `location_ping`, not Redis: Redis holds the live map's hot path and expires, and
+        # a position read from a cold cache is no position at all - the same reason
+        # dispatch reads pings for its decisions.
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT ST_Y(location::geometry) AS lat, ST_X(location::geometry) AS lng
+                    FROM location_ping
+                    WHERE vehicle_id = :vehicle_id AND recorded_at >= :since
+                    ORDER BY recorded_at DESC
+                    LIMIT 1
+                    """
+                ).bindparams(vehicle_id=vehicle_id, since=self.clock.now() - LAST_POSITION_LOOKBACK)
+            )
+        ).first()
+        if row is None:
+            return None
+        point: object = to_point(row.lat, row.lng)
+        return point
+
+    async def _abort_the_trip(
+        self,
+        operator_id: uuid.UUID,
+        vehicle_id: uuid.UUID,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> None:
+        """`trip-lifecycle.md`: `in_progress --> aborted: breakdown / emergency`.
+
+        Taking the cab off the road is not enough on its own. Without this the trip stays
+        open, and the driver of a cab on the hard shoulder can go on marking stops
+        arrived and completing the ride - which the S05 scenario showed happening.
+
+        Riders who had not been collected go back on the queue for the supervisor to
+        reassign, which is the `assigned -> queued` edge the state machine already has.
+        A rider who was already **on board** goes back on the queue too, by the
+        `picked_up -> queued` edge that exists for exactly this (ADR-0016, OQ-27), with
+        `pickup_location` set to where the cab stopped - they are standing at the
+        roadside, and the next cab must come to them rather than to their home or to the
+        office.
+        """
+        from app.modules.dispatch.models import Trip, TripStop
+        from app.modules.requests.models import RideRequest
+
+        trip = await self.session.scalar(
+            select(Trip)
+            .where(Trip.vehicle_id == vehicle_id)
+            .where(Trip.status.notin_([str(item) for item in TERMINAL_TRIP_STATUSES]))
+        )
+        if trip is None:
+            return
+
+        # `trip-lifecycle.md` section 2 distinguishes the two by whether the trip had
+        # started: `cancelled` is "before start", `aborted` is "stopped mid-way". A cab
+        # that breaks down in the depot cancels its trip; one that breaks down carrying
+        # riders aborts it.
+        current = TripStatus(trip.status)
+        ending = TripStatus.aborted if current is TripStatus.in_progress else TripStatus.cancelled
+        trip.status = transition_trip(current, ending, actor=Actor.driver).to_status
+
+        stops = (
+            (await self.session.execute(select(TripStop).where(TripStop.trip_id == trip.id)))
+            .scalars()
+            .all()
+        )
+        stranded: list[uuid.UUID] = []
+        for stop in stops:
+            if stop.status in {str(StopStatus.done), str(StopStatus.skipped)}:
+                continue
+            stop.status = transition_stop(
+                StopStatus(stop.status), StopStatus.skipped, actor=Actor.system
+            ).to_status
+            if stop.request_id is not None:
+                stranded.append(stop.request_id)
+
+        breakdown_at = await self._where_the_cab_stopped(vehicle_id, lat, lng)
+        requeued = 0
+        aboard = 0
+        #: Employees to tell, kept apart because they are told different things: one
+        #: group is standing at a roadside, the other is still at home (ADR-0020).
+        stranded_riders: list[uuid.UUID] = []
+        waiting_riders: list[uuid.UUID] = []
+        for request_id in set(stranded):
+            request = await self.session.scalar(
+                select(RideRequest).where(RideRequest.id == request_id)
+            )
+            if request is None:
+                continue
+
+            rider_status = RequestStatus(request.status)
+            if rider_status is RequestStatus.picked_up:
+                # This rider is standing at the roadside, not at home and not at the
+                # office. `location` is the *drop* for a from_office request, so writing
+                # the breakdown point there would lose their destination; the pickup
+                # override is the field that moves (ADR-0016).
+                if breakdown_at is not None:
+                    request.pickup_location = breakdown_at
+                # They have already waited once and been let down, so they go ahead of
+                # someone still at home - but through `forced_priority`, never by
+                # rewriting `urgency`, which is what the *rider* asked for (ADR-0021).
+                request.forced_priority = True
+                stranded_riders.append(request.employee_id)
+                aboard += 1
+            elif rider_status is not RequestStatus.assigned:
+                continue
+            else:
+                waiting_riders.append(request.employee_id)
+
+            request.status = transition_request(
+                rider_status,
+                RequestStatus.queued,
+                RequestContext(
+                    actor=Actor.system,
+                    reason="vehicle_breakdown",
+                    trip_status=TripStatus.aborted,
+                ),
+            ).to_status
+            request.trip_id = None
+            requeued += 1
+
+        if aboard:
+            # A rider left on the roadside is a different problem from one still at home,
+            # and the supervisor has to know which they are looking at.
+            await self.raise_alert(
+                operator_id,
+                AlertType.system,
+                data={
+                    "reason": "riders_stranded_by_breakdown",
+                    "riders": aboard,
+                    "trip_id": str(trip.id),
+                    # So the board can say "and we do not know where", which is a
+                    # different job for the supervisor.
+                    "pickup_known": breakdown_at is not None,
+                },
+                vehicle_id=vehicle_id,
+            )
+
+        await self._tell_everyone_the_trip_stopped(
+            operator_id, trip, ending, stranded_riders, waiting_riders
+        )
+
+        logger.info(
+            "trip_ended_by_driver_issue",
+            trip_id=str(trip.id),
+            vehicle_id=str(vehicle_id),
+            reason="driver_issue",
+            ended_as=str(ending),
+            requeued=requeued,
+            stranded_aboard=aboard,
+        )
+
+    async def _tell_everyone_the_trip_stopped(
+        self,
+        operator_id: uuid.UUID,
+        trip: Any,
+        ending: TripStatus,
+        stranded: list[uuid.UUID],
+        waiting: list[uuid.UUID],
+    ) -> None:
+        """`trip-lifecycle.md` section 6, plus the row it was missing (ADR-0020).
+
+        Section 6 says an aborted trip notifies the supervisor and operator admin at high
+        priority. The template for that existed from B16 and **nothing ever sent it**:
+        ADR-0012 decided a breakdown needed no push because it was "urgent for whoever is
+        watching the board", which quietly contradicted the table. It is sent now.
+
+        Section 6 had no row for the rider at all, which since ADR-0016 means a rider
+        whose cab broke down under them sees their request reappear in the queue with no
+        explanation. They are told too, and told the right one of two things.
+        """
+        context = {"trip_id": str(trip.id), "ended_as": str(ending)}
+
+        for employee_ids, stranded_flag in ((stranded, True), (waiting, False)):
+            if not employee_ids:
+                continue
+            users = await self._users_of_employees(employee_ids)
+            if not users:
+                continue
+            await self.notifications.notify(
+                NotificationType.ride_interrupted,
+                Audience(extra={Recipient.employee: users}),
+                {**context, "stranded": stranded_flag},
+            )
+
+        if ending is TripStatus.aborted:
+            await self.notifications.notify(
+                NotificationType.trip_aborted,
+                Audience(operator_id=operator_id),
+                context,
+            )
+
+    async def _users_of_employees(self, employee_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        """App users behind these employees, in one query.
+
+        An employee with no `user_id` has never logged in; there is nobody to notify and
+        that is not an error - the supervisor's alert is their safety net.
+        """
+        from app.modules.people.models import Employee
+
+        rows = await self.session.execute(
+            select(Employee.user_id)
+            .where(Employee.id.in_(employee_ids))
+            .where(Employee.user_id.is_not(None))
+        )
+        return [user_id for user_id in rows.scalars().all() if user_id is not None]
+
+    async def vip_without_vehicle(
+        self,
+        operator_id: uuid.UUID,
+        request_id: uuid.UUID,
+        reasons: list[str] | None = None,
+    ) -> Alert | None:
+        """`allocation-rules.md` section 2 rule 4: alert, never auto-assign a normal cab.
+
+        `reasons` are the rules that ruled every cab out, so the supervisor reads "no VIP
+        vehicle is free" or "the VIP vehicle is over its approach limit" and not just that
+        something is wrong. One open alert per request however many batches fail to place
+        them.
+        """
+        return await self.raise_alert(
+            operator_id,
+            AlertType.vip_no_vehicle,
+            data={"request_id": str(request_id), "reasons": reasons or []},
+            request_id=request_id,
+            dedupe=True,
+        )
+
+    async def clear_for_request(
+        self, operator_id: uuid.UUID, alert_type: AlertType, request_id: uuid.UUID
+    ) -> int:
+        """Resolve, on the platform's own authority, alerts about a request it has now served.
+
+        A "VIP has no vehicle" banner that outlives the VIP being collected teaches a
+        supervisor to ignore the banner. The alert is not acknowledged by anyone, because
+        nobody did anything: the problem went away.
+        """
+        rows = (
+            (
+                await self.session.execute(
+                    select(Alert)
+                    .where(Alert.operator_id == operator_id)
+                    .where(Alert.type == str(alert_type))
+                    .where(Alert.request_id == request_id)
+                    .where(Alert.status != str(AlertStatus.resolved))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for alert in rows:
+            alert.status = AlertStatus.resolved
+            alert.resolved_at = self.clock.now()
+            await self._announce_change(alert)
+        return len(rows)
+
+    async def vehicle_on_duty_for(self, driver_user_id: uuid.UUID) -> uuid.UUID | None:
+        """The cab this driver is signed into right now.
+
+        Resolved here rather than taken from the request body: a driver reporting a
+        breakdown must not be able to take another driver's vehicle off the road.
+        """
+        from app.modules.fleet.duty_models import DutySession
+        from app.modules.fleet.models import Driver
+
+        vehicle_id: uuid.UUID | None = await self.session.scalar(
+            select(DutySession.vehicle_id)
+            .join(Driver, Driver.id == DutySession.driver_id)
+            .where(Driver.user_id == driver_user_id)
+            .where(DutySession.ended_at.is_(None))
+        )
+        return vehicle_id
+
+    # --- the stale-vehicle sweep ---------------------------------------------------
+
+    async def sweep_stale_vehicles(self, operator_id: uuid.UUID | None = None) -> StaleSweep:
+        """One alert per on-duty vehicle that has gone quiet (SUP-01).
+
+        Clock-driven due work, like the expiry and ETA sweeps, so `/simctl/clock` runs it.
+        """
+        from app.modules.fleet.duty_models import DutySession
+        from app.modules.tracking.service import GpsIngestor
+
+        query = select(DutySession.operator_id, DutySession.vehicle_id).where(
+            DutySession.ended_at.is_(None)
+        )
+        if operator_id is not None:
+            query = query.where(DutySession.operator_id == operator_id)
+        on_duty = list((await self.session.execute(query)).all())
+
+        raised = 0
+        ingestor = GpsIngestor(self.session, self.clock)
+        for operator, _vehicle in {(row[0], row[1]) for row in on_duty}:
+            stale_after = int(await self.config.get(operator, "stale_gps_seconds"))
+            for vehicle_id in await ingestor.stale_vehicles(operator, stale_after):
+                alert = await self.raise_alert(
+                    operator,
+                    AlertType.stale_vehicle,
+                    data={"stale_after_seconds": stale_after},
+                    vehicle_id=vehicle_id,
+                    dedupe=True,
+                )
+                raised += 1 if alert is not None else 0
+
+        cleared = await self._clear_recovered_vehicles(operator_id)
+        if raised or cleared:
+            logger.info("stale_vehicle_sweep", raised=raised, cleared=cleared)
+        return StaleSweep(raised=raised, cleared=cleared)
+
+    async def _clear_recovered_vehicles(self, operator_id: uuid.UUID | None) -> int:
+        """Close the alert once the vehicle is reporting again (ADR-0022).
+
+        The alert says "this cab has gone quiet". When it starts pinging, that stops
+        being true, and a condition alert that outlives its condition is worse than no
+        alert: the board shows cabs as lost while they are driving, and a supervisor
+        learns to scroll past the row - so the one that matters next is missed too. The
+        same reasoning as the rolling unassigned-request alert, applied to the other
+        condition alert we raise.
+
+        Dedupe means a vehicle that goes quiet again after recovering raises a fresh
+        alert, which is right: that is a new incident, not a continuation.
+        """
+        from app.modules.tracking.service import GpsIngestor
+
+        query = (
+            select(Alert)
+            .where(Alert.type == str(AlertType.stale_vehicle))
+            .where(Alert.status.in_([str(status) for status in OPEN_STATUSES]))
+        )
+        if operator_id is not None:
+            query = query.where(Alert.operator_id == operator_id)
+
+        open_alerts = list((await self.session.execute(query)).scalars().all())
+        if not open_alerts:
+            return 0
+
+        ingestor = GpsIngestor(self.session, self.clock)
+        # One query per operator, not per alert: this runs on every simulated clock jump.
+        still_quiet: dict[uuid.UUID, set[uuid.UUID]] = {}
+        cleared = 0
+        for alert in open_alerts:
+            if alert.vehicle_id is None:
+                continue
+            if alert.operator_id not in still_quiet:
+                stale_after = int(await self.config.get(alert.operator_id, "stale_gps_seconds"))
+                still_quiet[alert.operator_id] = set(
+                    await ingestor.stale_vehicles(alert.operator_id, stale_after)
+                )
+            if alert.vehicle_id in still_quiet[alert.operator_id]:
+                continue
+            alert.status = AlertStatus.resolved
+            alert.resolved_at = self.clock.now()
+            cleared += 1
+
+        if cleared:
+            await self.session.flush()
+        return cleared
+
+    # --- reading and closing ----------------------------------------------------------
+
+    async def list_alerts(self, operator_id: uuid.UUID, status: str | None = None) -> list[Alert]:
+        """Newest first: a supervisor's alert list is read from the top."""
+        query = (
+            select(Alert).where(Alert.operator_id == operator_id).order_by(Alert.created_at.desc())
+        )
+        if status is not None:
+            query = query.where(Alert.status == status)
+        return list((await self.session.execute(query)).scalars().all())
+
+    async def acknowledge(
+        self, operator_id: uuid.UUID, alert_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Alert:
+        alert = await self._alert(operator_id, alert_id)
+        if alert.status == str(AlertStatus.resolved):
+            raise Conflict("A resolved alert cannot be acknowledged", {"status": alert.status})
+        if alert.status == str(AlertStatus.acknowledged):
+            return alert
+
+        alert.status = AlertStatus.acknowledged
+        alert.acknowledged_by = user_id
+        await self._announce_change(alert)
+        return alert
+
+    async def resolve(
+        self, operator_id: uuid.UUID, alert_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Alert:
+        alert = await self._alert(operator_id, alert_id)
+        if alert.status == str(AlertStatus.resolved):
+            return alert
+
+        alert.status = AlertStatus.resolved
+        alert.resolved_at = self.clock.now()
+        if alert.acknowledged_by is None:
+            # Resolving without acknowledging first is normal for a quick fix; record who.
+            alert.acknowledged_by = user_id
+        await self._announce_change(alert)
+        return alert
+
+    async def announce_change(self, alert: Alert) -> None:
+        """Tell subscribers an alert changed (public for sweeps owned by other modules)."""
+        await self._announce_change(alert)
+
+    async def _announce_change(self, alert: Alert) -> None:
+        await self.session.flush()
+        await self.events.publish(
+            Event(
+                "alert.resolved" if alert.status == str(AlertStatus.resolved) else "alert.updated",
+                operator_channel(alert.operator_id, "alerts"),
+                {"alert_id": str(alert.id), "status": alert.status},
+            )
+        )
+
+    async def _alert(self, operator_id: uuid.UUID, alert_id: uuid.UUID) -> Alert:
+        alert = await self.session.scalar(
+            select(Alert).where(Alert.id == alert_id).where(Alert.operator_id == operator_id)
+        )
+        if alert is None:
+            # Another operator's alert is a 404, not a 403.
+            raise NotFound("Alert not found")
+        return alert
+
+    async def _already_open(
+        self,
+        operator_id: uuid.UUID,
+        alert_type: AlertType,
+        vehicle_id: uuid.UUID | None,
+        request_id: uuid.UUID | None,
+    ) -> bool:
+        query = (
+            select(Alert.id)
+            .where(Alert.operator_id == operator_id)
+            .where(Alert.type == str(alert_type))
+            .where(Alert.status.in_([str(status) for status in OPEN_STATUSES]))
+        )
+        query = (
+            query.where(Alert.vehicle_id == vehicle_id)
+            if vehicle_id is not None
+            else query.where(Alert.request_id == request_id)
+        )
+        return await self.session.scalar(query) is not None

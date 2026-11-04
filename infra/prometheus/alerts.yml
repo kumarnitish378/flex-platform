@@ -1,0 +1,116 @@
+# Alerting rules (task R01).
+#
+# Deliberately few. Every rule here is something a human must act on tonight; anything
+# that is merely interesting belongs on a dashboard, because a page nobody acts on
+# trains people to ignore the next one.
+#
+# There is no Alertmanager in the pilot compose - these fire into Prometheus's own alert
+# list, which Grafana shows. Wire Alertmanager up when somebody is actually on call.
+
+groups:
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.job }} has not been scrapeable for two minutes"
+          description: >-
+            The process is gone or unreachable. For `ingestor` this means GPS is not
+            being consumed: cabs will go stale on every map within a minute.
+
+      - alert: ApiNotReady
+        expr: smartcab_http_requests_total == 0 and on() up{job="api"} == 1
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "the API is up but has served nothing for half an hour"
+          description: >-
+            Expected overnight. During the morning or evening peak it means traffic is
+            not reaching the box - check Caddy and DNS before the application.
+
+  - name: tracking
+    rules:
+      - alert: GpsIngestionStopped
+        expr: rate(smartcab_gps_pings_total{outcome="accepted"}[5m]) == 0
+              and smartcab_vehicles_on_duty > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "cabs are on duty and no GPS is arriving"
+          description: >-
+            Broker, ingestor or the driver apps. Every map is frozen and dispatch is
+            choosing cabs from stale positions, which is how a rider gets a cab that
+            left ten minutes ago.
+
+      - alert: ManyStaleVehicles
+        expr: smartcab_stale_vehicles / smartcab_vehicles_on_duty > 0.25
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "more than a quarter of on-duty cabs have gone quiet"
+          description: >-
+            One stale cab is a phone in a basement. A quarter of them is the platform.
+
+      - alert: GpsPingsBeingDropped
+        expr: >-
+          sum(rate(smartcab_gps_pings_total{outcome!="accepted"}[10m]))
+          / sum(rate(smartcab_gps_pings_total[10m])) > 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "over a tenth of GPS pings are being dropped ({{ $labels.outcome }})"
+          description: >-
+            Exactly the shape of OQ-33, where half of every run's GPS was discarded as
+            `too_far_future` and nothing said so. Read the `outcome` label: it names the
+            drop rule being hit.
+
+  - name: service-quality
+    rules:
+      - alert: RidersWaitingTooLong
+        expr: smartcab_longest_pending_wait_seconds > 2700
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "somebody has been waiting 45 minutes for a cab"
+          description: >-
+            Either nobody is dispatching or there is no cab to dispatch. The supervisor
+            board should already be showing this; if it is not, that is the bug.
+
+      - alert: ApiLatencyHigh
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(smartcab_http_request_duration_seconds_bucket[5m]))
+          ) > 0.3
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "API p95 is over the 300 ms target"
+          description: "non-functional.md, Performance."
+
+      - alert: MostEtasAreApproximate
+        expr: >-
+          sum(rate(smartcab_routing_requests_total{approximate="true"}[15m]))
+          / sum(rate(smartcab_routing_requests_total[15m])) > 0.5
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "over half of ETAs are coming from the approx provider"
+          description: >-
+            OSRM is down, slow, or the shared 1 req/s budget is exhausted. The product
+            still works - that is the point of the ladder - but every ETA is a
+            straight-line estimate, and `non-functional.md` excludes these from the
+            accuracy target. If it is the budget, it is the trigger for I02b.
+
+      - alert: ScheduledSweepFailing
+        expr: rate(smartcab_sweep_runs_total{outcome="failed"}[15m]) > 0
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "the {{ $labels.task }} sweep has been failing for fifteen minutes"
+          description: >-
+            A failing sweep is silent by design - the task logs and returns so one bad
+            pass cannot stop the beat. The symptom is that nothing expires, nobody is
+            warned and no stale cab is flagged: a quiet morning (B20).

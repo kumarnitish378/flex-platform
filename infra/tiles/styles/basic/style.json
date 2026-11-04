@@ -1,0 +1,172 @@
+{
+  "version": 8,
+  "name": "Smart Cab basic",
+  "metadata": {
+    "smartcab:note": "A deliberately plain basemap for dispatch and tracking (task I02b). The map is a backdrop for cab markers, route lines and pickup pins, so anything that competes with those - hillshade, 3D buildings, points of interest, strong colour - is left out. Roads are drawn by class so a supervisor can read the network at a glance, and the labels are the ones a driver or dispatcher actually names a place by.",
+    "smartcab:schema": "OpenMapTiles, as produced by Planetiler in infra/scripts/prepare_maps.sh"
+  },
+  "glyphs": "{fontstack}/{range}.pbf",
+  "sources": {
+    "openmaptiles": {
+      "type": "vector",
+      "url": "mbtiles://{ncr}"
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": { "background-color": "#f6f4f0" }
+    },
+    {
+      "id": "landcover-wood",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landcover",
+      "filter": ["==", "class", "wood"],
+      "paint": { "fill-color": "#e3e9dd", "fill-opacity": 0.7 }
+    },
+    {
+      "id": "landuse-residential",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landuse",
+      "filter": ["==", "class", "residential"],
+      "paint": { "fill-color": "#eeeae4" }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "filter": ["!=", "brunnel", "tunnel"],
+      "paint": { "fill-color": "#c7dcea" }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "waterway",
+      "paint": { "line-color": "#c7dcea", "line-width": 1.2 }
+    },
+    {
+      "id": "building",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "building",
+      "minzoom": 14,
+      "paint": { "fill-color": "#e6e1da", "fill-outline-color": "#ddd7cf" }
+    },
+
+    {
+      "id": "road-minor",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 12,
+      "filter": ["in", "class", "minor", "service", "track"],
+      "layout": { "line-cap": "round", "line-join": "round" },
+      "paint": {
+        "line-color": "#ffffff",
+        "line-width": { "base": 1.4, "stops": [[12, 0.5], [14, 1.5], [18, 10]] }
+      }
+    },
+    {
+      "id": "road-secondary",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "secondary", "tertiary"],
+      "layout": { "line-cap": "round", "line-join": "round" },
+      "paint": {
+        "line-color": "#ffffff",
+        "line-width": { "base": 1.4, "stops": [[8, 0.7], [12, 2], [18, 16]] }
+      }
+    },
+    {
+      "id": "road-primary",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["==", "class", "primary"],
+      "layout": { "line-cap": "round", "line-join": "round" },
+      "paint": {
+        "line-color": "#fcf3d2",
+        "line-width": { "base": 1.4, "stops": [[7, 1], [12, 3], [18, 22]] }
+      }
+    },
+    {
+      "id": "road-trunk-motorway",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "trunk", "motorway"],
+      "layout": { "line-cap": "round", "line-join": "round" },
+      "paint": {
+        "line-color": "#f8d7a3",
+        "line-width": { "base": 1.4, "stops": [[5, 1], [12, 4], [18, 26]] }
+      }
+    },
+    {
+      "id": "rail",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 11,
+      "filter": ["==", "class", "rail"],
+      "paint": {
+        "line-color": "#d4cfc7",
+        "line-width": { "base": 1.4, "stops": [[11, 0.5], [18, 3]] }
+      }
+    },
+    {
+      "id": "boundary-state",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "filter": ["<=", "admin_level", 4],
+      "paint": {
+        "line-color": "#b9b2a8",
+        "line-dasharray": [3, 2],
+        "line-width": { "base": 1, "stops": [[4, 0.6], [12, 1.6]] }
+      }
+    },
+
+    {
+      "id": "road-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "transportation_name",
+      "minzoom": 13,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": "{name}",
+        "text-font": ["Noto Sans Regular"],
+        "text-size": { "base": 1, "stops": [[13, 10], [18, 13]] }
+      },
+      "paint": {
+        "text-color": "#6b645b",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.2
+      }
+    },
+    {
+      "id": "place-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "filter": ["in", "class", "city", "town", "suburb", "neighbourhood"],
+      "layout": {
+        "text-field": "{name}",
+        "text-font": ["Noto Sans Regular"],
+        "text-size": { "base": 1.2, "stops": [[8, 11], [14, 15]] },
+        "text-max-width": 8
+      },
+      "paint": {
+        "text-color": "#44403a",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.5
+      }
+    }
+  ]
+}

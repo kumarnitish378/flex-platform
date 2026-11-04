@@ -1,0 +1,30 @@
+# Provisioned at start, so a rebuilt box has its data sources without anyone clicking
+# through the UI (task R01).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # Fixed uid, because the dashboards in infra/grafana/dashboards/ reference it.
+    # Letting Grafana generate one makes every panel say "datasource not found".
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Must match `scrape_interval` in prometheus.yml, or Grafana picks step sizes
+      # that silently smooth away short incidents.
+      timeInterval: 15s
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # Every log line carries `request_id` (app/core/logging.py). This turns it into
+        # a link, so a slow request on a latency panel can be followed into its logs.
+        - name: request_id
+          matcherRegex: '"request_id":\s*"([^"]+)"'
+          url: '${__value.raw}'

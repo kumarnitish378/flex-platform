@@ -1,0 +1,602 @@
+"""Talking to the real backend (M04, `simulator-spec.md` sections 2 and 5).
+
+The simulator is a **closed loop**: it drives the same API a phone drives, so a bug in
+assignment or tracking shows up here rather than in production. Nothing in this module
+reaches into the database or imports backend code - if the simulator can do it, a client
+can do it.
+
+Three things it needs from the platform:
+
+1. **A world to act in** - `/simctl/reset` seeds the fixture and hands back ids and one
+   access token per role.
+2. **Shared time** - `/simctl/clock` so the backend's `Clock` and the SimPy clock agree.
+   Without this the backend would expire requests on wall-clock time while the simulator
+   runs an hour a second.
+3. **Credentials to publish GPS** - a driver going on duty is issued the MQTT username
+   and password for their vehicle (B11), exactly as the driver app is.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+
+import httpx
+
+DEFAULT_TIMEOUT_SECONDS = 180.0
+
+
+class PlatformError(RuntimeError):
+    """The backend refused something the simulator needs. Always fatal to a run."""
+
+
+@dataclass(frozen=True, slots=True)
+class SeededUser:
+    role: str
+    phone: str
+    user_id: uuid.UUID
+    access_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class DutyCredentials:
+    """What the driver app gets when it goes on duty, and so does a simulated driver.
+
+    Includes the broker address and topic prefix, so the simulator publishes where the
+    backend told it to rather than reconstructing the topic from `mqtt-topics.md` and
+    drifting the day that document changes.
+    """
+
+    vehicle_id: uuid.UUID
+    host: str
+    port: int
+    username: str
+    password: str
+    topic_prefix: str
+
+    @property
+    def gps_topic(self) -> str:
+        return f"{self.topic_prefix}/gps"
+
+
+@dataclass(frozen=True, slots=True)
+class CreatedRequest:
+    id: uuid.UUID
+    status: str
+
+
+@dataclass(slots=True)
+class SeededWorld:
+    operator_id: uuid.UUID
+    client_id: uuid.UUID
+    office_ids: list[uuid.UUID] = field(default_factory=list)
+    employee_ids: list[uuid.UUID] = field(default_factory=list)
+    #: Which of them are VIPs (S07). Without this a VIP scenario would burst ordinary
+    #: riders and report a result it never tested.
+    vip_employee_ids: list[uuid.UUID] = field(default_factory=list)
+    #: Which are flagged `night_escort_required` (S11).
+    night_escort_employee_ids: list[uuid.UUID] = field(default_factory=list)
+    vehicle_ids: list[uuid.UUID] = field(default_factory=list)
+    vip_vehicle_ids: list[uuid.UUID] = field(default_factory=list)
+    driver_ids: list[uuid.UUID] = field(default_factory=list)
+    users: list[SeededUser] = field(default_factory=list)
+    now: datetime | None = None
+
+    def token_for(self, role: str) -> str:
+        for user in self.users:
+            if user.role == role:
+                return user.access_token
+        raise PlatformError(f"The reset fixture seeded no {role}")
+
+    def tokens_for(self, role: str) -> list[str]:
+        """Every login of a role.
+
+        There is one driver account per seeded cab, because a driver may hold only one
+        open duty session (B11): a fleet cannot share an account.
+        """
+        return [user.access_token for user in self.users if user.role == role]
+
+
+@dataclass(slots=True)
+class OptimizerLedger:
+    """What the batch optimizer did, as the backend reported it after each clock jump (M12).
+
+    Read from the platform's own account of each jump rather than counted by the simulator:
+    a simulator that counted its own expectation would pass whether or not the optimizer
+    did anything. `*_while_down` is what it did during an outage the simulator caused,
+    which S12 requires to be zero.
+    """
+
+    runs: int = 0
+    applied: int = 0
+    suggested: int = 0
+    hinted: int = 0
+    failed: int = 0
+    applied_while_down: int = 0
+    suggested_while_down: int = 0
+
+
+class PlatformClient:
+    """A thin, synchronous client. SimPy is single-threaded, so async buys nothing here."""
+
+    def __init__(
+        self,
+        base_url: str,
+        client: httpx.Client | None = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        run_id: str | None = None,
+        force: bool = False,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._client = client or httpx.Client(timeout=timeout)
+        self._owns_client = client is None
+        #: Identifies this run to the backend. A reset while another run holds the claim
+        #: is refused rather than truncating that run's world out from under it - which
+        #: is how three long runs were lost before the claim existed.
+        self.run_id = run_id or f"sim-{uuid.uuid4().hex[:12]}"
+        self.force = force
+        self.optimizer = OptimizerLedger()
+        #: True between `set_optimizer(False)` and `set_optimizer(True)`.
+        self.optimizer_down = False
+
+    # --- the world ------------------------------------------------------------
+
+    def reset(
+        self,
+        employees: int | None = None,
+        vehicles: int | None = None,
+        vip_employees: int | None = None,
+        fleet: Sequence[tuple[str, int]] | None = None,
+        night_escort_employees: int | None = None,
+    ) -> SeededWorld:
+        """Truncate and seed a world the size this scenario needs.
+
+        Refused with a 409 if another run is already driving this backend.
+
+        Sizing it here rather than taking the fixture's defaults: a fixed fixture caps
+        every scenario at the smallest one, and a run quietly working with twenty riders
+        when the scenario asked for three hundred measures the wrong thing.
+        """
+        body = self._post(
+            "/simctl/reset",
+            json={
+                "employees": employees,
+                "vehicles": vehicles,
+                "vip_employees": vip_employees,
+                "night_escort_employees": night_escort_employees,
+                "fleet": (
+                    [{"type": name, "count": count} for name, count in fleet] if fleet else None
+                ),
+                "run_id": self.run_id,
+                "force": self.force,
+            },
+        )
+        return SeededWorld(
+            operator_id=uuid.UUID(body["operator_id"]),
+            client_id=uuid.UUID(body["client_id"]),
+            office_ids=[uuid.UUID(value) for value in body.get("office_ids", [])],
+            employee_ids=[uuid.UUID(value) for value in body.get("employee_ids", [])],
+            vip_employee_ids=[uuid.UUID(value) for value in body.get("vip_employee_ids", [])],
+            night_escort_employee_ids=[
+                uuid.UUID(value) for value in body.get("night_escort_employee_ids", [])
+            ],
+            vehicle_ids=[uuid.UUID(value) for value in body.get("vehicle_ids", [])],
+            vip_vehicle_ids=[uuid.UUID(value) for value in body.get("vip_vehicle_ids", [])],
+            driver_ids=[uuid.UUID(value) for value in body.get("driver_ids", [])],
+            users=[
+                SeededUser(
+                    role=user["role"],
+                    phone=user["phone"],
+                    user_id=uuid.UUID(user["user_id"]),
+                    access_token=user["access_token"],
+                )
+                for user in body.get("users", [])
+            ],
+            now=_parse_time(body.get("now")),
+        )
+
+    def apply_config(self, token: str, overrides: dict[str, Any]) -> dict[str, Any]:
+        """Push the scenario's `operator.config_overrides` (B05, `PATCH /admin/config`).
+
+        Through the API, not the database: the ranges and the audit trail are part of what
+        the scenario is exercising, and a scenario that sets an out-of-range value should
+        fail loudly here rather than quietly run with something the product would refuse.
+        """
+        if not overrides:
+            return {}
+        return self._patch("/admin/config", json=dict(overrides), token=token)
+
+    # --- time -------------------------------------------------------------------
+
+    def set_clock(self, now: datetime) -> datetime:
+        """Move the backend's clock to a simulated instant and run what became due."""
+        body = self._put("/simctl/clock", json={"now": now.isoformat()})
+        self._note_optimizer(body)
+        return _parse_time(body["now"]) or now
+
+    def advance_clock(self, seconds: int) -> dict[str, Any]:
+        """Advance and report what the jump triggered, so a scenario can assert on it."""
+        body = self._put("/simctl/clock", json={"advance_seconds": seconds})
+        self._note_optimizer(body)
+        return body
+
+    def _note_optimizer(self, body: dict[str, Any]) -> None:
+        ledger = self.optimizer
+        applied = int(body.get("optimizer_applied") or 0)
+        suggested = int(body.get("optimizer_suggested") or 0)
+        ledger.runs += int(body.get("optimizer_runs") or 0)
+        ledger.applied += applied
+        ledger.suggested += suggested
+        ledger.hinted += int(body.get("optimizer_hinted") or 0)
+        ledger.failed += int(body.get("optimizer_failed") or 0)
+        if self.optimizer_down:
+            ledger.applied_while_down += applied
+            ledger.suggested_while_down += suggested
+
+    def set_optimizer(self, available: bool) -> None:
+        """Kill or restore the optimizer (S12, `PUT /simctl/optimizer`)."""
+        self._put("/simctl/optimizer", json={"available": available})
+        self.optimizer_down = not available
+
+    def request_mode(self, token: str, request_id: uuid.UUID) -> dict[str, Any]:
+        """Which mode is actually serving this request right now, and why (B24, B36)."""
+        return self._get(f"/dispatch/requests/{request_id}/mode", token=token)
+
+    def alerts(self, token: str, status: str | None = None) -> list[dict[str, Any]]:
+        query = f"?status={status}" if status else ""
+        items: list[dict[str, Any]] = self._get(f"/alerts{query}", token=token).get("items", [])
+        return items
+
+    def clock(self) -> datetime | None:
+        return _parse_time(self._get("/simctl/clock")["now"])
+
+    # --- driving -------------------------------------------------------------------
+
+    def go_on_duty(self, driver_token: str, vehicle_id: uuid.UUID) -> DutyCredentials:
+        """Sign a driver into a cab and collect its MQTT credentials (B11, DRV-02)."""
+        body = self._post(
+            "/driver/duty",
+            json={"on_duty": True, "vehicle_id": str(vehicle_id)},
+            token=driver_token,
+        )
+        mqtt = body.get("mqtt")
+        if not mqtt:
+            raise PlatformError(
+                "Going on duty returned no MQTT credentials; the simulator cannot publish GPS"
+            )
+        return DutyCredentials(
+            vehicle_id=uuid.UUID(str(body.get("vehicle_id") or vehicle_id)),
+            host=str(mqtt["host"]),
+            port=int(mqtt["port"]),
+            username=str(mqtt["username"]),
+            password=str(mqtt["password"]),
+            topic_prefix=str(mqtt["topic_prefix"]),
+        )
+
+    def go_off_duty(self, driver_token: str) -> None:
+        self._post("/driver/duty", json={"on_duty": False}, token=driver_token)
+
+    # --- riding (M05) ---------------------------------------------------------------
+
+    def create_request(
+        self,
+        token: str,
+        direction: str,
+        requested_time: datetime,
+        lat: float | None = None,
+        lng: float | None = None,
+        landmark: str | None = None,
+    ) -> CreatedRequest:
+        """`POST /ride-requests` as the employee. The same call the app makes (EMP-02).
+
+        With no coordinates the backend uses the employee's saved home, exactly as the
+        app does when a rider taps "home" rather than dropping a pin.
+        """
+        payload: dict[str, Any] = {
+            "direction": direction,
+            "requested_time": requested_time.isoformat(),
+            "landmark": landmark,
+        }
+        if lat is not None and lng is not None:
+            payload["location"] = {"lat": lat, "lng": lng}
+        body = self._post("/ride-requests", json=payload, token=token)
+        return CreatedRequest(id=uuid.UUID(body["id"]), status=str(body["status"]))
+
+    def request_status(self, token: str, request_id: uuid.UUID) -> str:
+        """What the backend says this request is now. Never inferred locally."""
+        body = self._get(f"/ride-requests/{request_id}", token=token)
+        return str(body["status"])
+
+    def cancel_request(self, token: str, request_id: uuid.UUID, reason: str) -> str:
+        body = self._post(
+            f"/ride-requests/{request_id}/cancel", json={"reason": reason}, token=token
+        )
+        return str(body.get("status", "cancelled"))
+
+    # --- dispatching (M06) ------------------------------------------------------------
+
+    def pending_requests(
+        self,
+        token: str,
+        status: str = "queued",
+        statuses: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The supervisor's board, oldest first (SUP-02).
+
+        `statuses` asks for several at once, which is how the simulator reads every
+        request in one call instead of one per rider (OQ-26).
+        """
+        wanted = list(statuses) if statuses else [status]
+        query = "&".join(f"status={item}" for item in wanted)
+        body = self._get(f"/dispatch/requests?{query}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def candidates(self, token: str, request_id: uuid.UUID) -> list[dict[str, Any]]:
+        """Vehicles that could take it, best first, with ETA and violations (SUP-03)."""
+        body = self._get(f"/dispatch/requests/{request_id}/candidates", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def suggestions(self, token: str, request_id: uuid.UUID) -> list[dict[str, Any]]:
+        """What the system *recommends* for one request (B23).
+
+        Not the same list as `candidates`: suggestions are filtered by the hard rules,
+        candidates are not. A supervisor policy that approves what it is shown has to
+        read this one.
+        """
+        body = self._get(f"/dispatch/requests/{request_id}/suggestions", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def open_offers(self, token: str, request_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+        """Offers a `semi_auto` scope is waiting for an answer to (B25).
+
+        Carries the `id` the decision endpoint needs and the `failsafe_due_at` the
+        countdown is measured against - neither of which the recomputed suggestion list
+        has, because that list is not a record of anything.
+        """
+        query = "?status=offered" + (f"&request_id={request_id}" if request_id else "")
+        body = self._get(f"/dispatch/suggestions{query}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def offers_with_status(self, token: str, status: str) -> list[dict[str, Any]]:
+        """Offers in one terminal state, for the end-of-run count (S08)."""
+        body = self._get(f"/dispatch/suggestions?status={status}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def apply_override(
+        self,
+        token: str,
+        action: str,
+        reason_code: str = "local_knowledge",
+        note: str | None = None,
+        **targets: Any,
+    ) -> dict[str, Any]:
+        """One of the override actions (`control-model.md` §3, B26)."""
+        payload: dict[str, Any] = {"action": action, "reason_code": reason_code}
+        if note is not None:
+            payload["note"] = note
+        payload.update(
+            {key: (str(value) if value is not None else None) for key, value in targets.items()}
+        )
+        return self._post("/dispatch/overrides", json=payload, token=token)
+
+    def decide_suggestion(
+        self,
+        token: str,
+        suggestion_id: uuid.UUID,
+        decision: str,
+        vehicle_id: uuid.UUID | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """`approve`, `choose_other` or `reject` (`control-model.md` §1)."""
+        return self._post(
+            f"/dispatch/suggestions/{suggestion_id}/decision",
+            json={
+                "decision": decision,
+                "vehicle_id": str(vehicle_id) if vehicle_id else None,
+                "note": note,
+            },
+            token=token,
+        )
+
+    def set_mode(self, token: str, mode: str, note: str | None = None) -> dict[str, Any]:
+        """Put the whole operator into one mode (`POST /admin/mode-settings`, B24).
+
+        The catch-all setting - no client, no zone, no window - which `control-model.md`
+        §2 resolves at level 8. A scenario says `modes: [{mode: semi_auto}]` and means
+        "this operator runs in semi-auto", not "some corner of it does".
+        """
+        return self._post(
+            "/admin/mode-settings",
+            json={"mode": mode, "note": note or "scenario mode"},
+            token=token,
+        )
+
+    def assign(
+        self,
+        token: str,
+        request_id: uuid.UUID,
+        vehicle_id: uuid.UUID,
+        trip_id: uuid.UUID | None = None,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        """`POST /dispatch/assign` - the button the supervisor actually presses."""
+        return self._post(
+            "/dispatch/assign",
+            json={
+                "request_id": str(request_id),
+                "vehicle_id": str(vehicle_id),
+                "trip_id": str(trip_id) if trip_id else None,
+                "reason_code": reason_code,
+            },
+            token=token,
+        )
+
+    # --- driving a trip (M05) -----------------------------------------------------------
+
+    def driver_trips(self, token: str, scope: str = "active") -> list[dict[str, Any]]:
+        """The driver's own trips, with their stops in order (DRV-03)."""
+        body = self._get(f"/driver/trips?scope={scope}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def dispatch_trips(
+        self, token: str, statuses: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Every live trip for the operator, with stops, in one read (OQ-26).
+
+        Needs a supervisor token: this is the whole operator's work, not one driver's.
+        """
+        query = "".join(f"&status={status}" for status in (statuses or ()))
+        body = self._get(f"/dispatch/trips?{query.lstrip('&')}", token=token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def start_trip(self, token: str, trip_id: uuid.UUID, at: datetime) -> dict[str, Any]:
+        return self._driver_event(f"/driver/trips/{trip_id}/start", token, at)
+
+    def complete_trip(self, token: str, trip_id: uuid.UUID, at: datetime) -> dict[str, Any]:
+        return self._driver_event(f"/driver/trips/{trip_id}/complete", token, at)
+
+    def stop_action(
+        self,
+        token: str,
+        stop_id: uuid.UUID,
+        action: str,
+        at: datetime,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> dict[str, Any]:
+        """`arrived`, `done` or `no_show`, with the position the tap happened at."""
+        return self._driver_event(f"/driver/stops/{stop_id}/{action}", token, at, lat=lat, lng=lng)
+
+    def report_issue(
+        self, token: str, issue_type: str, note: str | None = None, trip_id: uuid.UUID | None = None
+    ) -> dict[str, Any]:
+        """DRV-06, used by the fault injector."""
+        return self._post(
+            "/driver/issues",
+            json={"type": issue_type, "note": note, "trip_id": str(trip_id) if trip_id else None},
+            token=token,
+        )
+
+    def _driver_event(
+        self,
+        path: str,
+        token: str,
+        at: datetime,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> dict[str, Any]:
+        """Every driver action carries a fresh idempotency key and the tap time (B15)."""
+        body: dict[str, Any] = {
+            "client_event_id": str(uuid.uuid4()),
+            "occurred_at": at.isoformat(),
+        }
+        if lat is not None and lng is not None:
+            body["lat"] = lat
+            body["lng"] = lng
+        return self._post(path, json=body, token=token)
+
+    # --- reading back ------------------------------------------------------------------
+
+    def live_vehicles(self, supervisor_token: str) -> list[dict[str, Any]]:
+        """What the supervisor's live map shows (SUP-01).
+
+        This is how a run proves its cabs are moving: the same endpoint the map reads,
+        rather than a database query only the simulator knows how to make.
+        """
+        body = self._get("/dispatch/vehicles", token=supervisor_token)
+        items: list[dict[str, Any]] = body.get("items", [])
+        return items
+
+    def health(self) -> bool:
+        """Is anything answering?
+
+        The health endpoints sit at the server root, outside the `/api/v1` prefix, so
+        this asks the origin rather than the API base.
+        """
+        try:
+            response = self._client.get(f"{self._origin()}/health/live")
+        except httpx.HTTPError:
+            return False
+        return response.status_code == 200
+
+    def _origin(self) -> str:
+        parsed = httpx.URL(self.base_url)
+        return f"{parsed.scheme}://{parsed.netloc.decode()}"
+
+    # --- plumbing --------------------------------------------------------------------------
+
+    def _get(self, path: str, token: str | None = None) -> dict[str, Any]:
+        return self._send("GET", path, token=token)
+
+    def _post(self, path: str, json: dict[str, Any], token: str | None = None) -> dict[str, Any]:
+        return self._send("POST", path, json=json, token=token)
+
+    def _put(self, path: str, json: dict[str, Any], token: str | None = None) -> dict[str, Any]:
+        return self._send("PUT", path, json=json, token=token)
+
+    def _patch(self, path: str, json: dict[str, Any], token: str | None = None) -> dict[str, Any]:
+        return self._send("PATCH", path, json=json, token=token)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        json: dict[str, Any] | None = None,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        try:
+            response = self._client.request(
+                method, f"{self.base_url}{path}", json=json, headers=headers
+            )
+        except httpx.HTTPError as exc:
+            raise PlatformError(f"{method} {path} failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise PlatformError(
+                f"{method} {path} returned {response.status_code}: {response.text[:200]}"
+            )
+        if not response.content:
+            return {}
+        parsed: dict[str, Any] = response.json()
+        return parsed
+
+    def release(self) -> None:
+        """Give up this run's claim so the next run need not wait out the TTL."""
+        # A run that has finished must not fail on cleanup.
+        with contextlib.suppress(Exception):
+            self._post("/simctl/release", json={"run_id": self.run_id})
+
+    def close(self) -> None:
+        # Release first: the claim is only useful while this run is live, and leaving it
+        # behind means the next run - often the same person seconds later - is refused
+        # by a run that no longer exists.
+        self.release()
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> PlatformClient:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None

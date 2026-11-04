@@ -1,0 +1,84 @@
+# S10 pooling_efficiency (scenarios.md): the morning peak in full_auto, with pooling.
+#
+# Phase 3's exit criterion is stated in this scenario's numbers: cab-km per trip and
+# vehicles used down against the same morning run under `manual` (M13 runs that
+# comparison; this file is the full_auto half of it), riders per trip up, and nobody
+# detoured past rule 7.
+#
+# **What it is and is not.** A 3.5-hour morning, not S02's sixteen: the peak is the part
+# pooling changes, and a run has to finish in minutes for the comparison to be repeatable.
+# Cabs are parked in the two zones the riders live in (OQ-32 is the reason: one depot
+# 45 minutes away measures the depot, not the dispatch). Absolute minutes are properties
+# of the `approx` speed constants (OQ-22); use it to compare policies against each other.
+#
+# The supervisor is a `monitor`: it works only what the platform hands back to manual, so
+# in a healthy full_auto scope it does nothing at all and every assignment is the
+# optimizer's.
+#
+# Not part of `make sim-quick` - it needs a live backend.
+name: pooling_efficiency
+version: 1
+seed: 1010
+start: "2026-10-05T02:45:00Z"      # 08:15 IST: after the 08:00 speed drop, so no ride is planned at a speed that changes under it
+duration_hours: 3.5
+drain_minutes_max: 120
+speed_factor: 60
+routing: approx
+
+operator:
+  config_overrides:
+    # Riders ask ~45 minutes ahead for a requested time that is the shift start, so a
+    # pickup window of 10 minutes would make every request wait until it was almost due.
+    pickup_window_minutes: 30
+    candidate_max_eta_minutes: 45
+    alert_wait_minutes: 30
+    request_expiry_minutes: 120
+    batch_window_seconds: 30
+    optimizer_time_limit_seconds: 3
+    # A parked cab pings every 30 s and the simulator holds the backend clock 20 s ahead, so
+    # a healthy cab can look 50 s old; 60 would flag half the fleet stale for nothing.
+    stale_gps_seconds: 90
+    # Simulated boarding takes 30-120 s (mean 75), so plan with more than the 60 s default.
+    stop_dwell_seconds: 90
+
+modes:
+  - {mode: full_auto}
+
+fleet:
+  - {type: sedan_4, count: 7, depot: [28.50, 77.38]}
+  - {type: sedan_4, count: 7, depot: [28.46, 77.40]}
+
+drivers:
+  shift_start_ist: "07:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 60
+      home_zones: [sector_135, sector_168]
+      vip_share: 0.0
+      priority_dist: {3: 0.3, 5: 0.7}
+      shifts:
+        - {start_ist: "10:00", end_ist: "19:00", share: 1.0}
+
+supervisor:
+  policy: monitor
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+assertions:
+  # The optimizer, not a person, did the work.
+  optimizer_assignments_min: 20
+  # Pooling happened at all, and nobody paid for it beyond rule 7.
+  riders_per_trip_min: 1.2
+  detour_over_limit_max: 0
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

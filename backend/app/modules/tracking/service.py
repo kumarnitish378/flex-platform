@@ -1,0 +1,371 @@
+"""GPS ingestion (B12).
+
+The hot path of the whole product: at pilot scale this runs ~40 times a second, forever,
+and every supervisor's map depends on it. Three jobs, in order of how much they matter:
+
+1. **Reject nonsense** before it reaches anyone (`mqtt-topics.md`, Ingestor validation).
+2. **Keep the latest position fresh in Redis**, which is what the live map reads.
+3. **Persist everything in batches**, because one INSERT per ping would spend the
+   database on round trips.
+
+Deliberately transport-agnostic: MQTT hands it payloads, and so does the `/driver/location`
+HTTPS fallback. The rules must not differ between the two, or a driver on a bad connection
+would get different validation from one on a good one.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
+
+from geoalchemy2.shape import from_shape
+from shapely.geometry import Point as ShapelyPoint
+from sqlalchemy import insert, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import metrics
+from app.core.clock import Clock
+from app.core.logging import get_logger
+from app.core.redis import RedisLike
+from app.domain.gps import DropReason, Ping, Rejected, check_ping, is_newer, parse_payload
+from app.modules.tracking.models import LocationPing
+
+logger = get_logger(__name__)
+
+#: Redis key for a vehicle's latest position, and how long it survives without updates.
+POSITION_KEY = "veh:{vehicle_id}:pos"
+POSITION_TTL_SECONDS = 600
+#: The channel the WebSocket hub subscribes to. Named by `websocket-protocol.md`, not
+#: invented here: a private name would publish into a feed nobody is listening on.
+EVENT_CHANNEL = "operator.{operator_id}.vehicles"
+EVENT_NAME = "vehicle.location"
+
+#: How far back the stale sweep looks for a last ping. Anything older is stale several
+#: times over, and the bound keeps the query off older partitions.
+STALE_LOOKBACK = timedelta(hours=2)
+
+#: `trip.{id}` carries a cab's position to the riders on that trip (`websocket-protocol.md` section
+#: 4). Which trips a cab is on changes a few times an hour, so the ingestor reads the whole map
+#: from the database at most this often instead of once per ping. The price is that a trip assigned
+#: this second starts receiving positions within this many seconds.
+TRIP_MAP_REFRESH_SECONDS = 5
+LIVE_TRIP_QUERY = text(
+    "SELECT vehicle_id, id FROM trip WHERE status IN ('planned', 'dispatched', 'in_progress')"
+)
+
+#: Flush at least this often, or once this many pings are queued — whichever first.
+FLUSH_INTERVAL_SECONDS = 5
+FLUSH_MAX_ROWS = 1000
+
+
+@dataclass
+class IngestResult:
+    accepted: int = 0
+    dropped: int = 0
+    reasons: dict[str, int] = field(default_factory=dict)
+    #: One example of each reason, kept because the count alone is undiagnosable: "2251
+    #: dropped as too_far_future" does not say whether the clock is a second out or an
+    #: hour, and `Rejected.detail` already carries the number (OQ-33).
+    examples: dict[str, str] = field(default_factory=dict)
+    #: Rows this call wrote to the session. The caller commits when it is non-zero: a
+    #: write nobody commits is invisible to the API's own connection (OQ-33).
+    written: int = 0
+    latest_moved: bool = False
+
+    def drop(self, rejection: Rejected) -> None:
+        self.dropped += 1
+        self.reasons[str(rejection.reason)] = self.reasons.get(str(rejection.reason), 0) + 1
+        # Last one wins: in a drifting clock the most recent example is the useful one.
+        self.examples[str(rejection.reason)] = rejection.detail
+
+
+class GpsIngestor:
+    """Validates, caches and buffers pings. Flushing is explicit, so tests control it."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        clock: Clock,
+        redis: RedisLike | None = None,
+    ) -> None:
+        self.session = session
+        self.clock = clock
+        self.redis = redis
+        self._buffer: list[dict[str, Any]] = []
+        self._last_flush = clock.now()
+        #: One writer at a time. The ingestor process flushes from two places - the
+        #: message handler and the timer loop - and an AsyncSession is not safe for
+        #: concurrent use: overlapping writes on one connection stall each other, which
+        #: showed up as the map lagging the broker by tens of seconds under a burst.
+        self._writing = asyncio.Lock()
+        #: Held by the ingestor process around "write, then commit": the message handler and the
+        #: flush timer share this one session, and `_writing` is released between a write and
+        #: its commit, so the other task could start an INSERT while the commit was in flight
+        #: ("session is in 'prepared' state") and the whole batch was rolled back and lost.
+        #: Found by the load test, 2026-11-03.
+        self.session_lock = asyncio.Lock()
+        #: Last accepted ping per vehicle, for the jump check and ordering.
+        self._latest: dict[uuid.UUID, Ping] = {}
+        #: vehicle -> the trips it is on now, and when that was read.
+        self._live_trips: dict[uuid.UUID, list[uuid.UUID]] = {}
+        self._live_trips_read_at: datetime | None = None
+
+    # --- ingestion ----------------------------------------------------------
+
+    async def ingest(
+        self, vehicle_id: uuid.UUID, operator_id: uuid.UUID, payload: Any
+    ) -> IngestResult:
+        """Handle one MQTT message or one HTTPS batch."""
+        result = IngestResult()
+        parsed = parse_payload(payload)
+        for rejection in parsed.rejected:
+            result.drop(rejection)
+
+        # Read the simulated clock *here*, not just on the flush loop. The ingestor is a
+        # separate process and `SharedSimClock` serves the last value it read, so judging
+        # a ping against a value refreshed every five real seconds means judging it
+        # against a clock that is five seconds stale - which at `speed_factor: 60` is
+        # **five simulated minutes**, against a two-minute future tolerance.
+        #
+        # That is how half of every run's GPS was being discarded as `too_far_future`,
+        # in bursts of whole minutes, while the surviving positions were minutes old and
+        # so flagged `gps_stale` on every candidate (OQ-33). `SharedSimClock`'s own
+        # docstring assumed this call existed; it did not.
+        refresh = getattr(self.clock, "refresh", None)
+        if refresh is not None:
+            await refresh()
+
+        now = self.clock.now()
+        # Oldest first, so a reconnect batch is judged in the order it happened rather
+        # than tripping the jump check against its own newest ping.
+        for ping in sorted(parsed.pings, key=lambda p: p.recorded_at):
+            previous = self._latest.get(vehicle_id)
+            dropped = check_ping(ping, now, previous)
+            if dropped is not None:
+                result.drop(dropped)
+                continue
+
+            self._buffer.append(self._row(vehicle_id, operator_id, ping, now))
+            result.accepted += 1
+            metrics.gps_pings.labels(outcome="accepted").inc()
+            # How late a ping was when we took it. `non-functional.md` wants a position
+            # visible within 10 s of the ping; this is the first half of that number
+            # (broker to ingestor), the other half being the flush.
+            metrics.gps_ingest_lag.observe(max((now - ping.recorded_at).total_seconds(), 0.0))
+
+            # Out-of-order pings are stored but must not move the marker backwards.
+            if is_newer(ping, previous):
+                self._latest[vehicle_id] = ping
+                await self._publish_latest(vehicle_id, operator_id, ping)
+                result.latest_moved = True
+
+        for reason, count in result.reasons.items():
+            metrics.gps_pings.labels(outcome=reason).inc(count)
+
+        if result.dropped:
+            logger.info(
+                "gps_pings_dropped",
+                vehicle_id=str(vehicle_id),
+                dropped=result.dropped,
+                reasons=result.reasons,
+                examples=result.examples,
+            )
+        result.written = await self.flush_if_due()
+        return result
+
+    def _row(
+        self, vehicle_id: uuid.UUID, operator_id: uuid.UUID, ping: Ping, received_at: datetime
+    ) -> dict[str, Any]:
+        return {
+            "vehicle_id": vehicle_id,
+            "operator_id": operator_id,
+            "recorded_at": ping.recorded_at,
+            "received_at": received_at,
+            "location": from_shape(ShapelyPoint(ping.lng, ping.lat), srid=4326),
+            "speed_mps": ping.speed_mps,
+            "heading_deg": ping.heading_deg,
+            "accuracy_m": ping.accuracy_m,
+            "battery_pct": ping.battery_pct,
+            "source": ping.source,
+        }
+
+    # --- Redis ---------------------------------------------------------------
+
+    async def _publish_latest(
+        self, vehicle_id: uuid.UUID, operator_id: uuid.UUID, ping: Ping
+    ) -> None:
+        """Write the live position and tell the WebSocket hub.
+
+        Redis being down must not stop ingestion: the map goes stale, but the pings still
+        reach the database, so nothing is lost permanently.
+        """
+        if self.redis is None:
+            return
+
+        payload = {
+            "vehicle_id": str(vehicle_id),
+            "lat": ping.lat,
+            "lng": ping.lng,
+            "ts": ping.recorded_at.isoformat(),
+            "spd": ping.speed_mps,
+            "hdg": ping.heading_deg,
+        }
+        try:
+            await self.redis.set(
+                POSITION_KEY.format(vehicle_id=vehicle_id),
+                json.dumps(payload),
+                ex=POSITION_TTL_SECONDS,
+            )
+            publish = getattr(self.redis, "publish", None)
+            if publish is not None:
+                channels = [
+                    EVENT_CHANNEL.format(operator_id=operator_id),
+                    *[f"trip.{trip_id}" for trip_id in await self._trips_of(vehicle_id)],
+                ]
+                for channel in channels:
+                    await publish(
+                        channel,
+                        json.dumps(
+                            {
+                                "type": "event",
+                                "event": EVENT_NAME,
+                                "channel": channel,
+                                "data": payload,
+                            }
+                        ),
+                    )
+        except Exception as exc:  # noqa: BLE001 - a stale map beats a dropped ping
+            logger.warning("gps_latest_write_failed", error=type(exc).__name__)
+
+    async def _trips_of(self, vehicle_id: uuid.UUID) -> list[uuid.UUID]:
+        """The live trips this cab is on, from a map refreshed every few seconds."""
+        now = self.clock.now()
+        stale = self._live_trips_read_at is None or (
+            now - self._live_trips_read_at >= timedelta(seconds=TRIP_MAP_REFRESH_SECONDS)
+        )
+        if stale:
+            try:
+                rows = (await self.session.execute(LIVE_TRIP_QUERY)).all()
+            except Exception as exc:  # noqa: BLE001 - riders' maps lag; the operator map must not
+                logger.warning("gps_trip_map_failed", error=type(exc).__name__)
+                self._live_trips_read_at = now
+                return self._live_trips.get(vehicle_id, [])
+            fresh: dict[uuid.UUID, list[uuid.UUID]] = {}
+            for vehicle, trip in rows:
+                fresh.setdefault(vehicle, []).append(trip)
+            self._live_trips, self._live_trips_read_at = fresh, now
+        return self._live_trips.get(vehicle_id, [])
+
+    async def latest_position(self, vehicle_id: uuid.UUID) -> dict[str, Any] | None:
+        if self.redis is None:
+            return None
+        try:
+            raw = await self.redis.get(POSITION_KEY.format(vehicle_id=vehicle_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gps_latest_read_failed", error=type(exc).__name__)
+            return None
+        if raw is None:
+            return None
+        try:
+            loaded: dict[str, Any] = json.loads(raw)
+            return loaded
+        except (TypeError, ValueError):
+            return None
+
+    # --- persistence ----------------------------------------------------------
+
+    @property
+    def pending(self) -> int:
+        return len(self._buffer)
+
+    async def flush_if_due(self) -> int:
+        """Flush on the interval or when the buffer is full."""
+        due = (self.clock.now() - self._last_flush) >= timedelta(seconds=FLUSH_INTERVAL_SECONDS)
+        if self._buffer and (due or len(self._buffer) >= FLUSH_MAX_ROWS):
+            return await self.flush()
+        return 0
+
+    async def flush(self) -> int:
+        """Write the buffer in one statement."""
+        async with self._writing:
+            return await self._write()
+
+    async def _write(self) -> int:
+        if not self._buffer:
+            return 0
+        rows, self._buffer = self._buffer, []
+        # One multi-row INSERT rather than len(rows) round trips.
+        await self.session.execute(insert(LocationPing), rows)
+        await self.session.flush()
+        self._last_flush = self.clock.now()
+        metrics.gps_rows_written.inc(len(rows))
+        logger.info("gps_batch_persisted", rows=len(rows))
+        return len(rows)
+
+    # --- stale detection --------------------------------------------------------
+
+    async def stale_vehicles(
+        self, operator_id: uuid.UUID, stale_after_seconds: int
+    ) -> list[uuid.UUID]:
+        """On-duty vehicles whose last ping is older than `stale_gps_seconds`.
+
+        Read from the database rather than Redis: a vehicle that has gone quiet has no
+        Redis key at all once the TTL lapses, and "no key" is exactly the case we are
+        looking for, so Redis cannot answer the question.
+        """
+        from app.modules.fleet.duty_models import DutySession
+
+        cutoff = self.clock.now() - timedelta(seconds=stale_after_seconds)
+        on_duty = (
+            (
+                await self.session.execute(
+                    select(DutySession.vehicle_id)
+                    .where(DutySession.operator_id == operator_id)
+                    .where(DutySession.ended_at.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not on_duty:
+            return []
+
+        # One query for the whole fleet, not one per vehicle. Per-vehicle lookups made
+        # the stale sweep the slowest thing in the sim clock jump - ten seconds for 35
+        # cabs - and an operator's ETA worker runs this every 30 seconds in production.
+        # The lookback keeps it off the older partitions of `location_ping`.
+        last_seen = await self.session.execute(
+            text(
+                """
+                SELECT DISTINCT ON (vehicle_id) vehicle_id, recorded_at
+                FROM location_ping
+                WHERE operator_id = :operator_id
+                  AND vehicle_id = ANY(:vehicle_ids)
+                  AND recorded_at >= :since
+                ORDER BY vehicle_id, recorded_at DESC
+                """
+            ).bindparams(
+                operator_id=operator_id,
+                vehicle_ids=list(on_duty),
+                since=cutoff - STALE_LOOKBACK,
+            )
+        )
+        latest = {row.vehicle_id: row.recorded_at for row in last_seen}
+
+        # A vehicle with no ping at all is stale by definition: never heard from is worse
+        # than heard from late, not better.
+        return [
+            vehicle_id
+            for vehicle_id in on_duty
+            if latest.get(vehicle_id) is None or latest[vehicle_id] < cutoff
+        ]
+
+
+def drop_reasons() -> list[str]:
+    """Every reason a ping can be dropped, for metrics registration."""
+    return [str(reason) for reason in DropReason]

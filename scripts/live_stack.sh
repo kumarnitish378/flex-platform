@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# Bring up everything a closed-loop scenario needs, and wait until it is actually ready.
+#
+# One script for CI and for a developer reproducing a CI failure, because two versions of
+# "start the stack" drift and the one that drifts is always the one you are not looking
+# at. Postgres and Redis come from the workflow's `services:` block (or `make up`
+# locally); this starts the pieces those cannot: the broker, the migrations, the API and
+# the GPS ingestor.
+#
+# Usage:  scripts/live_stack.sh up | down
+# Env:    DATABASE_URL, REDIS_URL, MQTT_HOST, MQTT_PORT, API_PORT, LOG_DIR
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+API_PORT="${API_PORT:-8000}"
+MQTT_HOST="${MQTT_HOST:-localhost}"
+MQTT_PORT="${MQTT_PORT:-1883}"
+LOG_DIR="${LOG_DIR:-/tmp/live-stack}"
+PID_DIR="$LOG_DIR/pids"
+BROKER_NAME="smartcab-ci-mosquitto"
+
+export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://smartcab:smartcab@localhost:5432/smartcab}"
+export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+export MQTT_HOST MQTT_PORT
+
+# APP_ENV=sim is what enables /simctl/*, and ADR-0008 makes that impossible anywhere
+# else. A scenario cannot seed a world without it.
+export APP_ENV=sim
+export SIMCTL_ENABLED=true
+# ADR-0010 rule 6: CI must never call the public OSM servers. `approx` is the default
+# and the only safe one, but a box with a self-hosted OSRM (task I02b) can ask for real
+# routing - which is the whole point of OQ-22, where the approx speed constant is the
+# dominant term in every number the suite reports. Overridable, never defaulted:
+#
+#   ROUTING_PROVIDER=cached_osrm OSRM_URL=http://localhost:5000 scripts/live_stack.sh up
+#
+# The backend refuses a public OSRM for bulk work on its own (the shared 1 req/s
+# limiter), so the worst a mistake here can do is make the run slow, not antisocial.
+export ROUTING_PROVIDER="${ROUTING_PROVIDER:-approx}"
+export GEOCODING_PROVIDER=none
+# OSRM_URL is deliberately not exported with a default: an empty value fails the
+# settings validator, and a caller that prefixes it (`OSRM_URL=... scripts/live_stack.sh`)
+# already has it in this script's environment, so children inherit it.
+# Not a secret: this process is thrown away with the job, and the value never leaves it.
+export JWT_SECRET="${JWT_SECRET:-ci-only-ephemeral-secret-0123456789ab}"
+
+start_broker() {
+  # Anonymous access, because the broker is reachable only from this job and handing CI
+  # a password file buys nothing. The dev broker in infra/ requires auth; production
+  # requires auth and TLS.
+  if docker ps --format '{{.Names}}' | grep -qx "$BROKER_NAME"; then
+    echo "broker already running"
+    return
+  fi
+  mkdir -p "$LOG_DIR/mosquitto"
+  cat > "$LOG_DIR/mosquitto/mosquitto.conf" <<'CONF'
+listener 1883
+allow_anonymous true
+CONF
+  docker run -d --rm --name "$BROKER_NAME" \
+    -p "${MQTT_PORT}:1883" \
+    -v "$LOG_DIR/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" \
+    eclipse-mosquitto:2 >/dev/null
+  echo "broker started"
+}
+
+wait_for_broker() {
+  for _ in $(seq 1 30); do
+    if (exec 3<>"/dev/tcp/${MQTT_HOST}/${MQTT_PORT}") 2>/dev/null; then
+      exec 3>&- 2>/dev/null || true
+      echo "broker ready"
+      return
+    fi
+    sleep 1
+  done
+  echo "::error::the MQTT broker never accepted a connection" >&2
+  exit 1
+}
+
+migrate() {
+  (cd "$ROOT/backend" && alembic upgrade head)
+  echo "migrations applied"
+}
+
+port_is_free() {
+  ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+require_free_port() {
+  port_is_free "$1" && return 0
+  cat >&2 <<MSG
+::error::port $1 is already in use.
+
+Something is already serving it - almost certainly a previous stack that did not stop.
+That matters more than it looks: uvicorn would fail to bind, this script would then
+find the *old* process answering, report "stack up", and every scenario after it would
+run against stale code. Stop it first:
+
+  scripts/live_stack.sh down
+  # if that is not enough, find and kill the listener:
+  #   linux:   lsof -ti :$1 | xargs kill
+  #   windows: netstat -ano | grep ":$1 " ; powershell Stop-Process -Id <pid> -Force
+MSG
+  exit 1
+}
+
+start_api() {
+  # Checked before starting, not after: `wait_for_api` cannot tell a healthy new
+  # process from a healthy old one, so by then the damage is silent.
+  require_free_port "$API_PORT"
+  mkdir -p "$PID_DIR"
+  (cd "$ROOT/backend" && nohup python -m uvicorn app.main:create_app --factory \
+    --port "$API_PORT" --log-level warning > "$LOG_DIR/api.log" 2>&1 & echo $! > "$PID_DIR/api")
+  (cd "$ROOT/backend" && nohup python -m app.ingestor > "$LOG_DIR/ingestor.log" 2>&1 \
+    & echo $! > "$PID_DIR/ingestor")
+  echo "api and ingestor starting"
+}
+
+wait_for_api() {
+  for _ in $(seq 1 60); do
+    if curl -fsS "http://localhost:${API_PORT}/health/live" >/dev/null 2>&1; then
+      echo "api ready"
+      return
+    fi
+    sleep 1
+  done
+  echo "::error::the API never became healthy" >&2
+  tail -50 "$LOG_DIR/api.log" >&2 || true
+  exit 1
+}
+
+# The ingestor is not optional: without it no GPS reaches the database, so no vehicle has
+# a known position, so dispatch offers no candidates and every scenario reports a fleet
+# that never moved. Failing here is far clearer than that.
+check_ingestor() {
+  local pid
+  pid="$(cat "$PID_DIR/ingestor" 2>/dev/null || echo)"
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    echo "::error::the GPS ingestor is not running; scenarios would report a motionless fleet" >&2
+    tail -50 "$LOG_DIR/ingestor.log" >&2 || true
+    exit 1
+  fi
+  echo "ingestor running"
+}
+
+case "${1:-up}" in
+  up)
+    mkdir -p "$LOG_DIR"
+    start_broker
+    wait_for_broker
+    migrate
+    start_api
+    wait_for_api
+    sleep 3
+    check_ingestor
+    echo "stack up on http://localhost:${API_PORT}"
+    ;;
+  down)
+    pids=""
+    for name in api ingestor; do
+      pid="$(cat "$PID_DIR/$name" 2>/dev/null || echo)"
+      [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+      pids="$pids $pid"
+      rm -f "$PID_DIR/$name"
+    done
+    docker rm -f "$BROKER_NAME" >/dev/null 2>&1 || true
+
+    # Verify, rather than assume. `$!` is the backgrounded job's pid, which under Git
+    # Bash is a wrapper around python rather than python itself - so the kill above can
+    # succeed while uvicorn keeps the port. Saying "stack down" when it is not is how a
+    # later run ends up testing code nobody deployed.
+    for _ in $(seq 1 10); do
+      port_is_free "$API_PORT" && break
+      sleep 1
+    done
+    # uvicorn on SIGTERM waits for its open connections (the simulator's keep-alive and
+    # WebSocket clients) and can take longer than that; CI then failed "stack down" after a
+    # passing suite. A stack that was ours to stop is ours to force.
+    if ! port_is_free "$API_PORT"; then
+      # shellcheck disable=SC2086
+      kill -9 $pids 2>/dev/null || true
+      if command -v fuser >/dev/null 2>&1; then
+        fuser -k -9 "${API_PORT}/tcp" >/dev/null 2>&1 || true
+      elif command -v lsof >/dev/null 2>&1; then
+        lsof -ti ":${API_PORT}" | xargs -r kill -9 2>/dev/null || true
+      fi
+      for _ in $(seq 1 5); do
+        port_is_free "$API_PORT" && break
+        sleep 1
+      done
+    fi
+    if port_is_free "$API_PORT"; then
+      echo "stack down"
+    else
+      echo "::warning::stopped what this script started, but port ${API_PORT} is still" >&2
+      echo "in use - something else is serving it. 'up' will refuse until it is freed." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "usage: $0 up|down" >&2
+    exit 2
+    ;;
+esac

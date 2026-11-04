@@ -17,6 +17,7 @@ from app.modules.routing.factory import (
     build_routing_provider,
 )
 from app.modules.routing.geocoding import NoGeocodingProvider
+from app.modules.routing.metered import MeteredRoutingProvider
 from app.modules.routing.osrm import OsrmRoutingProvider
 from app.modules.routing.rate_limit import RedisRateLimiter, UnlimitedRateLimiter
 from app.modules.routing.types import GeocodingUnavailableError, RoutingProvider
@@ -40,22 +41,32 @@ def redis() -> FakeRedis:
     return FakeRedis(clock())
 
 
+def selected(provider: RoutingProvider) -> RoutingProvider:
+    """The provider the factory chose, with the metering wrapper taken off.
+
+    Every build is wrapped (`test_every_build_is_metered`); these tests are about which
+    implementation was selected, which is a different question.
+    """
+    assert isinstance(provider, MeteredRoutingProvider), "factory must meter every provider"
+    return provider.inner
+
+
 # --- provider selection ------------------------------------------------------
 
 
 def test_approx_is_selected() -> None:
     provider = build_routing_provider(settings(routing_provider="approx"), clock(), redis())
-    assert isinstance(provider, ApproxRoutingProvider)
+    assert isinstance(selected(provider), ApproxRoutingProvider)
 
 
 def test_osrm_is_selected() -> None:
     provider = build_routing_provider(settings(routing_provider="osrm"), clock(), redis())
-    assert isinstance(provider, OsrmRoutingProvider)
+    assert isinstance(selected(provider), OsrmRoutingProvider)
 
 
 def test_cached_osrm_is_the_default() -> None:
     provider = build_routing_provider(settings(), clock(), redis())
-    assert isinstance(provider, CachedRoutingProvider)
+    assert isinstance(selected(provider), CachedRoutingProvider)
 
 
 def test_every_provider_satisfies_the_protocol() -> None:
@@ -66,12 +77,12 @@ def test_every_provider_satisfies_the_protocol() -> None:
 
 def test_cached_degrades_to_plain_osrm_without_redis() -> None:
     provider = build_routing_provider(settings(routing_provider="cached_osrm"), clock(), None)
-    assert isinstance(provider, OsrmRoutingProvider)
+    assert isinstance(selected(provider), OsrmRoutingProvider)
 
 
 def test_approx_needs_no_redis() -> None:
     provider = build_routing_provider(settings(routing_provider="approx"), clock(), None)
-    assert isinstance(provider, ApproxRoutingProvider)
+    assert isinstance(selected(provider), ApproxRoutingProvider)
 
 
 # --- rate limiting -----------------------------------------------------------
@@ -160,7 +171,7 @@ def test_contact_email_is_required_in_production_on_public_servers() -> None:
     with pytest.raises(ValidationError, match="OSM_CONTACT_EMAIL"):
         Settings(
             app_env="prod",
-            jwt_secret="real-secret",
+            jwt_secret="real-secret-long-enough-for-hs256-01",
             database_url=DB,
             osrm_url=PUBLIC_OSRM,
             osm_contact_email="",
@@ -170,7 +181,7 @@ def test_contact_email_is_required_in_production_on_public_servers() -> None:
 def test_production_on_self_hosted_needs_no_contact_email() -> None:
     configured = Settings(
         app_env="prod",
-        jwt_secret="real-secret",
+        jwt_secret="real-secret-long-enough-for-hs256-01",
         database_url=DB,
         osrm_url=SELF_HOSTED_OSRM,
         tiles_url="http://localhost:8081",

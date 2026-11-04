@@ -15,13 +15,33 @@ All numbers below are **config keys** (table `operator_config`, overridable per 
 | `max_detour_factor` | 1.5 | 1.0–3.0 | yes (stricter only) | Rider ride time ≤ factor × direct time. |
 | `max_detour_minutes` | 15 | 0–60 | yes (stricter only) | Rider ride time ≤ direct time + this. |
 | `enroute_reuse_max_eta_minutes` | 5 | 0–15 | no | An assigned/en-route vehicle may take a new same-direction rider if it reaches them within this. |
+| `retry_after_minutes` | 10 | 5–60 | no | How often an already-escalated request widens its search again. The *first* escalation is at `alert_wait_minutes`. |
+| `retry_eta_widen_minutes` | 10 | 0–30 | no | Each escalation widens `candidate_max_eta_minutes` for that request by this. |
+| `retry_eta_max_minutes` | 45 | 5–120 | no | The widest the candidate ETA ceiling may ever get, however long the wait. |
 | `batch_window_seconds` | 45 | 10–120 | no | Micro-batch window for optimizer runs. |
+| `optimizer_time_limit_seconds` | 10 | 1–60 | no | Hard cap on one DARP run. No solution within it falls back to single-insertion greedy. |
+| `billing_rate_per_km` | 0 | 0-100000 | no | What the operator charges a client company per km, on each cab's running km per day (OQ-03; Rs 8 for the pilot). 0 = no rate set: the billing export gives km and no amount. |
+| `stop_dwell_seconds` | 60 | 0–300 | no | Seconds a cab spends at each stop while riders get in or out; the optimizer plans with it (B31). **Provisional** - the real figure is a pilot measurement. |
+| `billing_odometer_gap_percent` | 10 | 0-100 | no | A cab-day whose GPS km differ from the odometer's by more than this share of the odometer figure is flagged on the billing report (B38). |
+| `billing_default_client_id` | (empty) | client id | no | Where a cab-day is billed when the cab carried several clients' riders, or none (OQ-40). Empty = the operator's only client, else the oldest. |
+| `optimizer_failure_threshold` | 3 | 1–10 | no | This many most-recent optimizer runs all failing means it is down (`control-model.md` §6). **Provisional.** |
+| `optimizer_failure_memory_minutes` | 15 | 1–120 | no | A failed optimizer run older than this says nothing about now. **Provisional.** |
+| `optimizer_stall_seconds` | 180 | 60–3600 | no | A request ready this long with no optimizer run since means the worker is not running; never less than three batch windows. **Provisional.** |
+| `mode_prompt_window_minutes` | 15 | 5–60 | no | How far back a mode-switch prompt looks (`control-model.md` §5). |
+| `mode_prompt_rejected_share` | 0.30 | 0.05–1.0 | no | Prompt when at least this share of a scope's suggestions were rejected. |
+| `mode_prompt_eta_error_minutes` | 10 | 1–60 | no | Prompt when the median pickup-ETA error in a scope exceeds this. |
+| `mode_prompt_pending_multiple` | 2.0 | 1.0–10.0 | no | Prompt when pending requests exceed this multiple of normal for the time slot. |
+| `mode_prompt_fleet_share` | 0.20 | 0.05–1.0 | no | Prompt when this share of the fleet is stale or out of service. |
+| `mode_prompt_min_samples` | 5 | 1–50 | no | Fewest decisions / pickups / pending requests a ratio is judged on. **Provisional** (§5 names none). |
+| `mode_prompt_baseline_days` | 14 | 1–60 | no | Past days that define "normal" pending requests for a time slot. |
 | `failsafe_timeout_seconds` | 180 | 30–900 | no | Semi-auto suggestion timeout. |
 | `failsafe_action` | `auto_assign` | `auto_assign` / `escalate` | no | What happens on timeout. |
-| `alert_wait_minutes` | 20 | 5–60 | no | Pending request turns red. |
+| `alert_wait_minutes` | 20 | 5–60 | no | A waiting request has waited too long: the board turns it red **and escalation starts** (ADR-0023). |
 | `request_expiry_minutes` | 120 | 30–480 | no | Unassigned request expires. |
 | `no_show_wait_minutes` | 5 | 1–15 | yes | Driver wait before no-show allowed. |
-| `stale_gps_seconds` | 60 | 20–300 | no | Vehicle considered stale. |
+| `stale_gps_seconds` | 150 | 20–300 | no | Vehicle considered stale. Must be at least 1.5 x `gps_heartbeat_seconds` (the config service refuses less). Was 60 until the phone moved to a distance filter + 60 s heartbeat. |
+| `gps_distance_filter_m` | 5 | 1–100 | no | The driver app publishes a position after moving this far. Sent to the app in `/driver/duty`. |
+| `gps_heartbeat_seconds` | 60 | 15–120 | no | While stationary the app publishes a heartbeat this often, so a parked cab is not stale. |
 | `weight_wait` | 1.0 | 0–10 | no | Weight of new rider's wait minutes. |
 | `weight_empty_km` | 2.0 | 0–20 | no | Minutes-equivalent per empty km. |
 | `cost_new_vehicle` | 15.0 | 0–120 | no | Minutes-equivalent cost of deploying an idle vehicle. |
@@ -45,12 +65,43 @@ Applied in this order. A candidate that fails any rule is removed. If no candida
 9. **Opt-out:** request marked `no_sharing` → exclusive trip.
 10. **High priority / high urgency:** `priority ≤ 2` or `urgency = high` → no hold window.
 11. **Night safety (if enabled, client policy):** during night window, a trip's sequence must not leave a rider flagged `night_escort_required` as first pickup or last drop without an escort (exact client policy configurable; see OQ-10). Overrides require explicit reason.
+12. **Night escort gate (owner decision 2026-11-01; OQ-10; not a hard rule on assignment - a gate on *starting*):** during the night window (client policy, `night_safety_enabled`), if a **female** rider would be the **only rider** in the cab, the trip is flagged to the supervisor (dispatch board, trip detail, `escort_required` alert) and **cannot start** until a supervisor confirms `escort_arranged` or `male_co_rider_present`; who confirmed and when is recorded. A male rider on the same route sharing the cab clears the flag by itself. **Second case (owner decision 2026-11-02):** on a shared `from_office` trip, a woman who is the **last rider left in the cab** (the last drop) also needs an escort, whoever shared the earlier part of the trip; only `escort_arranged` clears it (a man dropped before her is not there). Flagged when the trip is planned. The platform never assigns an escort. Unknown gender never triggers it. Rule 11 (order of a shared trip, `night_escort_required`) is unchanged.
 
 ## 3. Candidates
 - Idle vehicles: `available`, ETA to pickup ≤ `candidate_max_eta_minutes` (OSRM time, adjusted by speed profile).
-- En-route reuse: vehicles on a trip of the same direction whose route passes within `enroute_reuse_max_eta_minutes` of the pickup and satisfy all hard rules after insertion.
+- En-route reuse: vehicles on a trip of the same direction whose route passes within `enroute_reuse_max_eta_minutes` of the pickup and satisfy all hard rules after insertion. **"Passes within" is the extra driving** the cab does to collect the rider where the insertion puts them - `dur(a, p) + dur(p, b) - dur(a, b)` for the neighbouring stops `a` and `b` (B33) - not the straight ETA from where the cab is now. A cab about to drive past the rider's door is a candidate however far off it is; one that must double back is not however near. When the cab's position is unknown the straight ETA is the fallback. The rider's pickup time for rule 8 is likewise the time the cab reaches them along that route.
 - Return-trip reuse: vehicles that just completed a drop (become `available`) are ordinary idle candidates; no special rule needed.
 - "Nearby" is always **time-based (ETA)**, never straight-line distance.
+- Each candidate kind is judged against its own ceiling, and only its own: an idle cab on
+  `candidate_max_eta_minutes`, an en-route one on `enroute_reuse_max_eta_minutes`. A twenty-minute
+  diversion by a cab with riders aboard is a different proposition from a twenty-minute approach by an
+  empty one.
+
+### 3.1 When nobody has been served
+A request still `queued` once it has waited `alert_wait_minutes` - the operator's own answer to "how long
+is too long", and the threshold their board already turns red at - is **escalated**, and again every
+`retry_after_minutes` after that (ADR-0019, ADR-0023). It stays one request with one waiting clock — the number the pilot is
+judged on must keep counting from the original ask, so nothing here cancels and re-creates it.
+
+Each escalation:
+- widens that request's candidate ETA ceiling by `retry_eta_widen_minutes`, up to `retry_eta_max_minutes`.
+  A rider who has waited half an hour is better served by a cab twenty-five minutes away than by the
+  rule that says twenty;
+- stamps `escalated_at`, which is what a board renders as "late". **`urgency` is not touched** - that is
+  the rider's own answer and the platform never rewrites it (ADR-0021);
+- refreshes **one rolling `request_unassigned` alert per operator**, carrying how many riders are unserved
+  and the longest wait, which resolves itself once nobody is (ADR-0022). One alert per request put 142 rows
+  on the board in a single surge run;
+- sets `forced_priority`, which in Phase 1 is **only a flag**: the hold window it short-circuits
+  (section 2 rule 10) is not implemented yet, and the Phase 2 cost function is what will weigh it.
+
+Escalation only ever changes how hard the platform looks and who it tells. It never assigns, and it
+never cancels and re-creates the request - that would reset the waiting clock.
+
+The widening is derived from how long the request has waited, so it needs no stored state and cannot
+drift from what the board shows. In Phase 1 the ceilings are **reported, not enforced** (ADR-0011), so
+widening removes a flag from a cab a supervisor could already have chosen; it becomes a real filter when
+the Phase 2 optimizer uses the same numbers.
 
 ## 4. Cost function (minutes-equivalent)
 For assigning request *r* to vehicle *v* (single insertion, Phase 2):
@@ -76,7 +127,7 @@ Examples: priority 1 + high = 3.0 · priority 5 + medium = 0.9 · priority 10 + 
 Each suggestion lists: ETA to pickup, seats free after assignment, added minutes per existing rider, empty km added, whether it opens a new trip, and cost. Shown as plain text, e.g. "8 min away · 2 seats left · +4 min for Rahul · reuses trip T-102".
 
 ## 6. Pooling optimizer (Phase 3)
-- Runs every `batch_window_seconds` for each operator on all `queued` requests whose hold window has elapsed or which are no-hold, plus modifiable (`planned`/`dispatched`, not locked) trips.
+- Runs when a batch window closes (B30): the window opens when the oldest ready request became ready and lasts `batch_window_seconds`, with at least one window between runs. Each run covers, for the operator, all `queued` requests whose hold window has elapsed or which are no-hold, plus modifiable (`planned`/`dispatched`, not locked) trips.
 - Model: Pickup-and-Delivery Problem with Time Windows and capacities (Dial-a-Ride), solved with **Google OR-Tools routing** using OSRM time matrices.
 - Objective matches the cost function; hard rules become constraints (capacity, time windows, max ride time per rider, vehicle types, exclusivity).
 - Time limit per run: 10 s (config `optimizer_time_limit_seconds`). If no solution, fall back to single-insertion greedy using §4.
@@ -85,7 +136,7 @@ Each suggestion lists: ETA to pickup, seats free after assignment, added minutes
 
 ### Evening hold window
 - `from_office` requests (not VIP, not high priority/urgency, not opt-out) wait between `hold_window_min_minutes` and `hold_window_max_minutes`.
-- Phase 3: fixed at the min value.
+- Phase 3: fixed at the min value (B29). The window runs from the later of `queued_at` and the requested time, ends at the instant it elapses, and binds automatic assignment only - a supervisor may still send a cab early. A client policy that forbids pooling is exempt, as is any request under `forced_priority` (§3.1).
 - Phase 4: dynamic — hold while predicted probability of a compatible rider arriving in the next *t* minutes × expected savings > rider's weighted wait cost.
 
 ## 7. Ride offers (Phase 4)

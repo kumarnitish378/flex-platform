@@ -13,8 +13,15 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 # mqtt-topics.md, "Ping intervals".
+#: How often the simulated phone *looks* at its GPS. Whether it publishes is the distance
+#: filter below (owner decision 1): these are sampling intervals, not publishing intervals.
 MOVING_INTERVAL_SECONDS = 5
 STATIONARY_INTERVAL_SECONDS = 30
+#: The phone publishes only after moving this far (`gps_distance_filter_m`) ...
+DISTANCE_FILTER_M = 5.0
+#: ... or after this long without publishing, so a parked cab is not marked stale
+#: (`gps_heartbeat_seconds`).
+HEARTBEAT_SECONDS = 60.0
 # A vehicle counts as stationary below this speed, after STATIONARY_AFTER_SECONDS.
 STATIONARY_SPEED_MS = 1.0
 STATIONARY_AFTER_SECONDS = 120

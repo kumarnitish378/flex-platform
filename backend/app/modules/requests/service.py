@@ -1,0 +1,825 @@
+"""Ride request use cases (B09).
+
+Every status change goes through `app/domain/state_machines.py` and writes an event
+(CLAUDE.md hard rule 5); nothing here assigns to `request.status` directly except through
+`_apply`.
+
+Time comes from the injected `Clock` throughout — `requested_time` validation, `expires_at`
+and the expiry sweep alike — so the simulator can drive a request from created to expired
+in one step.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.clock import Clock
+from app.core.geo import to_point as _point
+from app.core.logging import get_logger
+from app.domain.enums import (
+    ActorType,
+    AlertSeverity,
+    AlertStatus,
+    AlertType,
+    Direction,
+    RequestChannel,
+    Role,
+    Urgency,
+)
+from app.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from app.domain.failsafe import SuggestionStatus
+from app.domain.notifications import NotificationType
+from app.domain.state_machines import (
+    Actor,
+    RequestContext,
+    RequestStatus,
+    StopStatus,
+    TransitionEvent,
+    TripStatus,
+    VehicleStatus,
+    actor_type_for,
+    is_terminal_request,
+    transition_request,
+    transition_stop,
+    transition_trip,
+    transition_vehicle,
+)
+from app.modules.alerts.models import Alert
+from app.modules.config.service import ConfigService
+from app.modules.dispatch.semi_auto import close_offers_for
+from app.modules.notifications.service import Audience, NotificationService
+from app.modules.people.models import Employee
+from app.modules.requests.models import RideRequest, RideRequestEvent
+from app.modules.tenancy.policy_service import ClientPolicyService
+
+logger = get_logger(__name__)
+
+# EMP-02: "a time up to 7 days ahead".
+MAX_LEAD_TIME = timedelta(days=7)
+# EMP-02: "two active requests with the same direction whose times are within 60 minutes".
+DUPLICATE_WINDOW = timedelta(minutes=60)
+# trip-lifecycle.md §6: "request near expiry (15 min before) -> Supervisor".
+NEAR_EXPIRY_WARNING = timedelta(minutes=15)
+# A little slack so a clock skew or a slow client does not reject a legitimate "now".
+PAST_TOLERANCE = timedelta(minutes=5)
+
+#: Statuses that still occupy a rider — used for the duplicate check.
+ACTIVE_STATUSES = (
+    RequestStatus.requested,
+    RequestStatus.queued,
+    RequestStatus.suggested,
+    RequestStatus.assigned,
+    RequestStatus.picked_up,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExpirySweep:
+    """What one run of the scheduler did."""
+
+    expired: int = 0
+    warned: int = 0
+    #: Requests nobody had served after `retry_after_minutes` (ADR-0019).
+    escalated: int = 0
+
+
+class RideRequestService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        clock: Clock,
+        notifications: NotificationService | None = None,
+    ) -> None:
+        self.notifications = notifications or NotificationService(session, clock)
+        self.session = session
+        self.clock = clock
+        self.config = ConfigService(session, clock)
+
+    # --- creation -----------------------------------------------------------
+
+    async def create(
+        self,
+        operator_id: uuid.UUID,
+        actor_role: Role,
+        actor_user_id: uuid.UUID,
+        direction: Direction,
+        requested_time: datetime,
+        employee_id: uuid.UUID | None = None,
+        location: tuple[float, float] | None = None,
+        landmark: str | None = None,
+        urgency: Urgency = Urgency.medium,
+        no_sharing: bool = False,
+        caller_client_id: uuid.UUID | None = None,
+    ) -> RideRequest:
+        """Create a request, for oneself or on behalf of an employee."""
+        employee = await self._resolve_employee(
+            operator_id, actor_role, employee_id, actor_user_id, caller_client_id
+        )
+        self._validate_requested_time(requested_time)
+        await self._reject_duplicate(employee, direction, requested_time)
+
+        point = location or await self._home_of(employee)
+        expiry_minutes = await self.config.get(operator_id, "request_expiry_minutes")
+
+        if no_sharing:
+            # `allocation-rules.md` §1: whether an employee may ask not to share is
+            # their client's decision. Refused rather than silently ignored - a rider
+            # who ticks the box and is pooled anyway has been told something untrue,
+            # and will report it as a bug in the dispatch rather than a policy.
+            policy = await ClientPolicyService(self.session, self.clock, self.config).for_client(
+                operator_id, employee.client_id
+            )
+            if not policy.employee_opt_out_allowed:
+                raise ValidationFailed(
+                    "This client does not allow employees to opt out of sharing",
+                    {"client_id": str(employee.client_id), "no_sharing": True},
+                )
+
+        request = RideRequest(
+            operator_id=operator_id,
+            client_id=employee.client_id,
+            employee_id=employee.id,
+            direction=direction,
+            office_id=employee.office_id,
+            location=_point(point[0], point[1]),
+            landmark=landmark,
+            requested_time=requested_time,
+            urgency=urgency,
+            no_sharing=no_sharing,
+            status=RequestStatus.requested,
+            channel=(
+                RequestChannel.app if actor_role is Role.employee else RequestChannel.supervisor
+            ),
+            created_by_user_id=actor_user_id,
+            # Both from the Clock, not the database: the simulator must be able to age
+            # a request, and a wait measured against `created_at` would be measured
+            # against wall time (hard rule 2).
+            queued_at=self.clock.now(),
+            expires_at=self.clock.now() + timedelta(minutes=int(expiry_minutes)),
+        )
+        self.session.add(request)
+        await self.session.flush()
+
+        self._record(request, None, RequestStatus.requested, _actor_for(actor_role), actor_user_id)
+
+        # A request is only useful once validated, and validation just succeeded.
+        self._apply(
+            request,
+            transition_request(
+                RequestStatus.requested,
+                RequestStatus.queued,
+                RequestContext(actor=_actor_for(actor_role)),
+            ),
+            actor_user_id,
+        )
+        await self.session.flush()
+
+        logger.info(
+            "ride_request_created",
+            request_id=str(request.id),
+            employee_id=str(employee.id),
+            direction=str(direction),
+        )
+        return request
+
+    async def employee_for_user(
+        self, operator_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Employee | None:
+        """The employee record linked to a login, if there is one.
+
+        The access token carries the user, not the employee: one person may be an
+        employee at one client and a supervisor elsewhere, so the link is resolved per
+        operator rather than baked into the token.
+        """
+        result = await self.session.execute(
+            select(Employee)
+            .where(Employee.operator_id == operator_id)
+            .where(Employee.user_id == user_id)
+        )
+        return result.scalars().first()
+
+    async def _resolve_employee(
+        self,
+        operator_id: uuid.UUID,
+        actor_role: Role,
+        employee_id: uuid.UUID | None,
+        caller_user_id: uuid.UUID,
+        caller_client_id: uuid.UUID | None,
+    ) -> Employee:
+        """Work out whose request this is, and whether the caller may make it."""
+        if actor_role is Role.employee:
+            # "employee_id ... ignored for employee role" (api-spec): a rider can only
+            # ever request for themselves, whatever they put in the body.
+            own = await self.employee_for_user(operator_id, caller_user_id)
+            if own is None:
+                raise Forbidden("This account is not linked to an employee record")
+            target_id = own.id
+        else:
+            if employee_id is None:
+                raise ValidationFailed("employee_id is required when creating on behalf")
+            target_id = employee_id
+
+        employee = (
+            (
+                await self.session.execute(
+                    select(Employee)
+                    .where(Employee.operator_id == operator_id)
+                    .where(Employee.id == target_id)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+        if employee is None:
+            raise NotFound("Employee not found", {"id": str(target_id)})
+        if not employee.active:
+            raise ValidationFailed("That employee is not active")
+        if caller_client_id is not None and employee.client_id != caller_client_id:
+            raise Forbidden("This role may only act for its own client's employees")
+        return employee
+
+    def _validate_requested_time(self, requested_time: datetime) -> None:
+        if requested_time.tzinfo is None:
+            raise ValidationFailed("requested_time must include a timezone")
+
+        now = self.clock.now()
+        if requested_time < now - PAST_TOLERANCE:
+            raise ValidationFailed("requested_time is in the past", {"now": now.isoformat()})
+        if requested_time > now + MAX_LEAD_TIME:
+            raise ValidationFailed(
+                "requested_time is more than 7 days ahead",
+                {"max": (now + MAX_LEAD_TIME).isoformat()},
+            )
+
+    async def _reject_duplicate(
+        self, employee: Employee, direction: Direction, requested_time: datetime
+    ) -> None:
+        """EMP-02: no two active same-direction requests within 60 minutes."""
+        window_start = requested_time - DUPLICATE_WINDOW
+        window_end = requested_time + DUPLICATE_WINDOW
+
+        clash = (
+            (
+                await self.session.execute(
+                    select(RideRequest)
+                    .where(RideRequest.employee_id == employee.id)
+                    .where(RideRequest.direction == direction)
+                    .where(RideRequest.status.in_(ACTIVE_STATUSES))
+                    .where(RideRequest.requested_time > window_start)
+                    .where(RideRequest.requested_time < window_end)
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+        if clash is not None:
+            raise Conflict(
+                "You already have a request in that direction within an hour of this time",
+                {
+                    "existing_request_id": str(clash.id),
+                    "existing_requested_time": clash.requested_time.isoformat(),
+                },
+            )
+
+    async def _home_of(self, employee: Employee) -> tuple[float, float]:
+        """The saved home pin, as (lat, lng)."""
+        from geoalchemy2.elements import WKBElement
+        from geoalchemy2.shape import to_shape
+
+        stored = employee.home_location
+        if not isinstance(stored, WKBElement):
+            # Null for an employee imported without a home pin (B07 allows that).
+            raise ValidationFailed("No location given and this employee has no home location saved")
+        shape = to_shape(stored)
+        return (shape.y, shape.x)
+
+    # --- reads --------------------------------------------------------------
+
+    async def get(
+        self,
+        operator_id: uuid.UUID,
+        request_id: uuid.UUID,
+        caller_employee_id: uuid.UUID | None = None,
+        caller_client_id: uuid.UUID | None = None,
+    ) -> RideRequest:
+        request = (
+            (
+                await self.session.execute(
+                    select(RideRequest)
+                    .where(RideRequest.operator_id == operator_id)
+                    .where(RideRequest.id == request_id)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+        if request is None:
+            raise NotFound("Ride request not found", {"id": str(request_id)})
+
+        # "employee sees only their own requests" (roles-and-permissions.md).
+        if caller_employee_id is not None and request.employee_id != caller_employee_id:
+            raise NotFound("Ride request not found", {"id": str(request_id)})
+        if caller_client_id is not None and request.client_id != caller_client_id:
+            raise NotFound("Ride request not found", {"id": str(request_id)})
+        return request
+
+    async def list_mine(
+        self, operator_id: uuid.UUID, employee_id: uuid.UUID, limit: int = 50
+    ) -> list[RideRequest]:
+        result = await self.session.execute(
+            select(RideRequest)
+            .where(RideRequest.operator_id == operator_id)
+            .where(RideRequest.employee_id == employee_id)
+            .order_by(RideRequest.requested_time.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    # --- cancellation -------------------------------------------------------
+
+    async def cancel(
+        self,
+        operator_id: uuid.UUID,
+        request_id: uuid.UUID,
+        actor_role: Role,
+        actor_user_id: uuid.UUID,
+        reason: str | None,
+        caller_employee_id: uuid.UUID | None = None,
+        caller_client_id: uuid.UUID | None = None,
+    ) -> RideRequest:
+        request = await self.get(operator_id, request_id, caller_employee_id, caller_client_id)
+
+        # The state machine requires a reason for every cancellation. An employee
+        # cancelling their own pending request should not have to invent one, so supply
+        # a truthful default rather than forcing the client to send filler.
+        effective_reason = reason or (
+            "Cancelled by employee" if actor_role is Role.employee else "Cancelled by operator"
+        )
+
+        event = transition_request(
+            RequestStatus(request.status),
+            RequestStatus.cancelled,
+            RequestContext(
+                actor=_actor_for(actor_role),
+                reason=effective_reason,
+                is_locked=request.is_locked,
+            ),
+        )
+        request.cancel_reason = effective_reason
+        self._apply(request, event, actor_user_id)
+        await self._release_the_trip(request, actor_user_id)
+        # An offer for a ride that no longer exists is not an open offer (M09). Left
+        # alone it stays on the supervisor's board and answers 409 forever.
+        await close_offers_for(
+            self.session, request.id, SuggestionStatus.superseded, self.clock.now()
+        )
+        await self.session.flush()
+
+        # `trip-lifecycle.md` section 6 splits this by who cancelled: the employee
+        # cancelling tells the driver and supervisor; the operator cancelling tells the
+        # employee, and must include the reason.
+        await self.notifications.notify(
+            NotificationType.request_cancelled,
+            Audience(
+                employee=await self._user_of_employee(request.employee_id),
+                driver=await self._driver_user_of_trip(request.trip_id),
+                operator_id=operator_id,
+            ),
+            {
+                "request_id": str(request.id),
+                "trip_id": str(request.trip_id) if request.trip_id else None,
+                "cancelled_by_employee": actor_role is Role.employee,
+                "reason": effective_reason,
+            },
+        )
+
+        logger.info("ride_request_cancelled", request_id=str(request.id), actor=str(actor_role))
+        return request
+
+    async def _release_the_trip(
+        self, request: RideRequest, actor_user_id: uuid.UUID | None
+    ) -> None:
+        """Take a cancelled rider off the trip they were on.
+
+        Without this the trip keeps their stops: the driver drives to a pickup nobody is
+        waiting at, and `done` is refused because a cancelled request cannot become
+        `picked_up` - so the trip can never complete and the cab is stuck on it forever.
+        Found by the S02 simulator run, where it stranded every assigned cab.
+        """
+        if request.trip_id is None:
+            return
+
+        from app.modules.dispatch.models import TripStop
+
+        stops = (
+            (
+                await self.session.execute(
+                    select(TripStop)
+                    .where(TripStop.trip_id == request.trip_id)
+                    .where(TripStop.request_id == request.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        skipped = 0
+        for stop in stops:
+            if stop.status in {str(StopStatus.done), str(StopStatus.skipped)}:
+                continue
+            # Through the state machine like everything else (hard rule 5).
+            transition = transition_stop(
+                StopStatus(stop.status), StopStatus.skipped, actor=Actor.system
+            )
+            stop.status = transition.to_status
+            skipped += 1
+
+        if skipped:
+            logger.info(
+                "trip_stops_released",
+                request_id=str(request.id),
+                trip_id=str(request.trip_id),
+                skipped=skipped,
+            )
+            await self._close_trip_if_empty(request.trip_id)
+
+    async def _close_trip_if_empty(self, trip_id: uuid.UUID) -> None:
+        """Cancel a trip that has not started once its last rider has gone, and free the cab.
+
+        `trip-lifecycle.md` section 2: a trip is `cancelled` "before start". Left `planned` with
+        every stop skipped, the driver's list (which shows trips with live stops) hides it, so
+        they cannot complete it, and the cab stays `on_trip` - the driver cannot even go off
+        duty. The supervisor's cancel already did this (`OverrideService._close_trip`); a rider
+        cancelling on their own did not. A started trip is the driver's to finish.
+        """
+        from app.modules.dispatch.models import Trip, TripEvent, TripStop
+        from app.modules.fleet.models import Vehicle
+
+        trip = await self.session.get(Trip, trip_id)
+        if trip is None or trip.status not in (str(TripStatus.planned), str(TripStatus.dispatched)):
+            return
+        # Sessions here do not autoflush: the skipped stops must reach the query below.
+        await self.session.flush()
+        live = await self.session.scalar(
+            select(func.count())
+            .select_from(TripStop)
+            .where(TripStop.trip_id == trip.id)
+            .where(TripStop.status.not_in((str(StopStatus.done), str(StopStatus.skipped))))
+        )
+        if live:
+            return
+
+        reason = "Every rider cancelled"
+        event = transition_trip(TripStatus(trip.status), TripStatus.cancelled, Actor.system, reason)
+        self.session.add(
+            TripEvent(
+                operator_id=trip.operator_id,
+                trip_id=trip.id,
+                from_status=trip.status,
+                to_status=event.to_status,
+                actor_type=actor_type_for(Actor.system),
+                reason=reason,
+                at=self.clock.now(),
+                data={"action": "trip_cancelled"},
+            )
+        )
+        trip.status = event.to_status
+
+        # Only if this was the cab's last live trip; a vehicle with another one stays on_trip.
+        other_live = await self.session.scalar(
+            select(func.count())
+            .select_from(Trip)
+            .where(Trip.vehicle_id == trip.vehicle_id)
+            .where(Trip.id != trip.id)
+            .where(
+                Trip.status.in_(
+                    (
+                        str(TripStatus.planned),
+                        str(TripStatus.dispatched),
+                        str(TripStatus.in_progress),
+                    )
+                )
+            )
+        )
+        vehicle = await self.session.get(Vehicle, trip.vehicle_id)
+        if not other_live and vehicle is not None and vehicle.status == str(VehicleStatus.on_trip):
+            vehicle.status = transition_vehicle(
+                VehicleStatus.on_trip, VehicleStatus.available, Actor.system, reason
+            ).to_status
+        logger.info("trip_cancelled_empty", trip_id=str(trip.id), reason=reason)
+
+    async def _user_of_employee(self, employee_id: uuid.UUID) -> uuid.UUID | None:
+        return await self.session.scalar(select(Employee.user_id).where(Employee.id == employee_id))
+
+    async def _driver_user_of_trip(self, trip_id: uuid.UUID | None) -> uuid.UUID | None:
+        """The driver losing a rider, if the request had already been put on a trip."""
+        if trip_id is None:
+            return None
+        from app.modules.dispatch.models import Trip
+        from app.modules.fleet.models import Driver
+
+        user_id: uuid.UUID | None = await self.session.scalar(
+            select(Driver.user_id).join(Trip, Trip.driver_id == Driver.id).where(Trip.id == trip_id)
+        )
+        return user_id
+
+    # --- expiry (Clock-driven, no wall-clock sleep) -------------------------
+
+    async def run_due_expiries(self, operator_id: uuid.UUID | None = None) -> ExpirySweep:
+        """Expire what is due and warn about what is nearly due.
+
+        Called by the Celery beat loop in production and by `/simctl/clock` in sim
+        (`architecture.md` §3.3), so advancing a simulated clock really does expire
+        requests. It checks due items rather than sleeping.
+        """
+        now = self.clock.now()
+        expired = await self._expire_due(now, operator_id)
+        warned = await self._warn_near_expiry(now, operator_id)
+        escalated = await self._escalate_unassigned(now, operator_id)
+        await self._close_unassigned_alert(now, operator_id)
+        if expired or warned or escalated:
+            logger.info(
+                "expiry_sweep",
+                expired=expired,
+                warned=warned,
+                escalated=escalated,
+                at=now.isoformat(),
+            )
+        return ExpirySweep(expired=expired, warned=warned, escalated=escalated)
+
+    async def _expire_due(self, now: datetime, operator_id: uuid.UUID | None) -> int:
+        query = (
+            select(RideRequest)
+            .where(RideRequest.status == RequestStatus.queued)
+            .where(RideRequest.expires_at <= now)
+        )
+        if operator_id is not None:
+            query = query.where(RideRequest.operator_id == operator_id)
+
+        count = 0
+        for request in (await self.session.execute(query)).scalars().all():
+            self._apply(
+                request,
+                transition_request(
+                    RequestStatus.queued,
+                    RequestStatus.expired,
+                    RequestContext(actor=Actor.system, reason="Not assigned before expiry"),
+                ),
+                actor_user_id=None,
+            )
+            await close_offers_for(self.session, request.id, SuggestionStatus.expired, now)
+            count += 1
+
+        if count:
+            await self.session.flush()
+        return count
+
+    async def _warn_near_expiry(self, now: datetime, operator_id: uuid.UUID | None) -> int:
+        """Raise one alert per request, 15 minutes before it expires."""
+        query = (
+            select(RideRequest)
+            .where(RideRequest.status == RequestStatus.queued)
+            .where(RideRequest.near_expiry_alerted_at.is_(None))
+            .where(RideRequest.expires_at > now)
+            .where(RideRequest.expires_at <= now + NEAR_EXPIRY_WARNING)
+        )
+        if operator_id is not None:
+            query = query.where(RideRequest.operator_id == operator_id)
+
+        count = 0
+        for request in (await self.session.execute(query)).scalars().all():
+            self.session.add(
+                Alert(
+                    operator_id=request.operator_id,
+                    type=AlertType.request_near_expiry,
+                    severity=AlertSeverity.warning,
+                    request_id=request.id,
+                    status=AlertStatus.open,
+                    data={
+                        "expires_at": request.expires_at.isoformat(),
+                        "employee_id": str(request.employee_id),
+                    },
+                )
+            )
+            await self.notifications.notify(
+                NotificationType.request_near_expiry,
+                Audience(operator_id=request.operator_id),
+                {
+                    "request_id": str(request.id),
+                    "expires_at": request.expires_at.isoformat(),
+                },
+            )
+            request.near_expiry_alerted_at = now
+            count += 1
+
+        if count:
+            await self.session.flush()
+        return count
+
+    async def _escalate_unassigned(self, now: datetime, operator_id: uuid.UUID | None) -> int:
+        """Escalate a request nobody has served yet (`allocation-rules.md` section 3.1).
+
+        Waiting is not a plan. After `alert_wait_minutes` - the operator's own answer to
+        "how long is too long", and the threshold their board already turns red at - and
+        once the cab is actually due, the search for a cab widens (derived from the wait in
+        `widened_candidate_eta_minutes`, so there is nothing to store), `forced_priority`
+        and `escalated_at` are set, and the supervisor's board alert is refreshed.
+
+        It stays **one request with one waiting clock**. Cancelling and re-creating it
+        would be the obvious reading of "retry" and would report a rider who waited fifty
+        minutes as having waited ten, which is the one number the pilot is judged on.
+
+        It also leaves `urgency` alone. Urgency is what the *rider* declared, and a first
+        cut overwrote it with `high` - which in a surge made 142 of 150 requests "high",
+        destroying both the rider's own answer and the field's meaning (ADR-0021).
+        """
+        query = (
+            select(RideRequest)
+            .where(RideRequest.status == RequestStatus.queued)
+            .where(RideRequest.escalated_at.is_(None))
+            # A held request is waiting because a supervisor decided it should
+            # (`control-model.md` §3, B26). Escalating it would alert them about their
+            # own decision and force priority on a rider they deliberately set aside.
+            .where((RideRequest.hold_until.is_(None)) | (RideRequest.hold_until <= now))
+        )
+        if operator_id is not None:
+            query = query.where(RideRequest.operator_id == operator_id)
+
+        count = 0
+        escalated_by_operator: dict[uuid.UUID, list[RideRequest]] = {}
+        # One config read per operator, not per request: this sweep runs on every
+        # simulated clock jump, and a per-row read is how OQ-26 cost ten seconds a jump.
+        settings: dict[uuid.UUID, tuple[int, int]] = {}
+        for request in (await self.session.execute(query)).scalars().all():
+            if request.operator_id not in settings:
+                values = await self.config.all_values(request.operator_id)
+                settings[request.operator_id] = (
+                    int(values["alert_wait_minutes"]),
+                    int(values["pickup_window_minutes"]),
+                )
+            after, window = settings[request.operator_id]
+
+            if request.queued_at > now - timedelta(minutes=after):
+                continue
+            # ...and the cab has to actually be due. A rider who asks at 06:00 for a
+            # 09:30 pickup is not being failed at 06:10, and escalating them would force
+            # priority on the whole morning and mean nothing when it mattered.
+            if now < request.requested_time - timedelta(minutes=window):
+                continue
+
+            request.forced_priority = True
+            request.escalated_at = now
+            escalated_by_operator.setdefault(request.operator_id, []).append(request)
+            count += 1
+
+        for each_operator, requests in escalated_by_operator.items():
+            await self._refresh_unassigned_alert(each_operator, requests, now)
+
+        if count:
+            await self.session.flush()
+        return count
+
+    async def _refresh_unassigned_alert(
+        self, operator_id: uuid.UUID, escalated: list[RideRequest], now: datetime
+    ) -> None:
+        """One rolling alert per operator, not one per abandoned rider (ADR-0022).
+
+        One alert per request is right for a quiet morning and unusable in a bad one: a
+        live `evening_surge` run escalated 142 of 150 requests and would have raised 142
+        alerts. The count is honest and the board is useless - and the one alert that
+        matters next is lost among them.
+
+        So the alert carries the count and the longest wait, and is updated in place as
+        more riders join it. The per-request detail stays on the request, which is where
+        the supervisor is already looking.
+        """
+        longest = max((now - request.queued_at).total_seconds() / 60.0 for request in escalated)
+        alert = await self.session.scalar(
+            select(Alert)
+            .where(Alert.operator_id == operator_id)
+            .where(Alert.type == str(AlertType.request_unassigned))
+            .where(Alert.status.in_([str(AlertStatus.open), str(AlertStatus.acknowledged)]))
+        )
+        if alert is None:
+            self.session.add(
+                Alert(
+                    operator_id=operator_id,
+                    type=AlertType.request_unassigned,
+                    severity=AlertSeverity.warning,
+                    status=AlertStatus.open,
+                    data={
+                        "riders": len(escalated),
+                        "longest_wait_minutes": round(longest, 1),
+                    },
+                )
+            )
+            return
+
+        previous = alert.data or {}
+        alert.data = {
+            "riders": int(previous.get("riders", 0)) + len(escalated),
+            "longest_wait_minutes": round(
+                max(longest, float(previous.get("longest_wait_minutes", 0.0))), 1
+            ),
+        }
+
+    async def _close_unassigned_alert(self, now: datetime, operator_id: uuid.UUID | None) -> int:
+        """Resolve the rolling alert once nobody is left unserved (ADR-0022).
+
+        A condition alert that outlives its condition is worse than no alert: it says
+        riders are stranded when they are not, and the next real one then looks like the
+        same stale row. The alert survives with `resolved_at`, so the history is kept.
+        """
+        query = (
+            select(Alert)
+            .where(Alert.type == str(AlertType.request_unassigned))
+            .where(Alert.status.in_([str(AlertStatus.open), str(AlertStatus.acknowledged)]))
+        )
+        if operator_id is not None:
+            query = query.where(Alert.operator_id == operator_id)
+
+        closed = 0
+        for alert in (await self.session.execute(query)).scalars().all():
+            still_unserved = await self.session.scalar(
+                select(func.count())
+                .select_from(RideRequest)
+                .where(RideRequest.operator_id == alert.operator_id)
+                .where(RideRequest.status == RequestStatus.queued)
+                .where(RideRequest.escalated_at.is_not(None))
+            )
+            if still_unserved:
+                continue
+            alert.status = AlertStatus.resolved
+            alert.resolved_at = now
+            closed += 1
+
+        if closed:
+            await self.session.flush()
+        return closed
+
+    # --- internals ----------------------------------------------------------
+
+    def _apply(
+        self, request: RideRequest, event: TransitionEvent, actor_user_id: uuid.UUID | None
+    ) -> None:
+        """Persist a transition and its event together. The only writer of `status`."""
+        request.status = event.to_status
+        self._record(
+            request,
+            event.from_status,
+            RequestStatus(event.to_status),
+            event.actor,
+            actor_user_id,
+            reason=event.reason,
+            notify=[str(recipient) for recipient in event.notify],
+        )
+
+    def _record(
+        self,
+        request: RideRequest,
+        from_status: str | None,
+        to_status: RequestStatus,
+        actor: Actor,
+        actor_user_id: uuid.UUID | None,
+        reason: str | None = None,
+        notify: list[str] | None = None,
+    ) -> None:
+        self.session.add(
+            RideRequestEvent(
+                operator_id=request.operator_id,
+                request_id=request.id,
+                from_status=from_status,
+                to_status=str(to_status),
+                actor_type=_actor_type(actor),
+                actor_user_id=actor_user_id,
+                reason=reason,
+                at=self.clock.now(),
+                data={"notify": notify} if notify else None,
+            )
+        )
+
+    async def events_for(self, request_id: uuid.UUID) -> list[RideRequestEvent]:
+        result = await self.session.execute(
+            select(RideRequestEvent)
+            .where(RideRequestEvent.request_id == request_id)
+            .order_by(RideRequestEvent.at, RideRequestEvent.created_at)
+        )
+        return list(result.scalars().all())
+
+
+def is_terminal(status: str) -> bool:
+    return is_terminal_request(RequestStatus(status))
+
+
+def _actor_for(role: Role) -> Actor:
+    return Actor(str(role))
+
+
+def _actor_type(actor: Actor) -> ActorType:
+    return actor_type_for(actor)

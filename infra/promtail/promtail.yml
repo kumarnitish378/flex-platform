@@ -1,0 +1,57 @@
+# Promtail: ship every container's logs to Loki (task R01).
+#
+# Discovery is through the Docker socket rather than a static list of files, so a
+# container added to the compose is shipped without anyone remembering to add it here -
+# and a container that is missing from Grafana means it is not running, which is useful
+# information rather than a configuration gap.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+
+    relabel_configs:
+      # Compose puts the service name in a label; it is far more stable than the
+      # container name, which carries the project prefix and the replica number.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: deployment
+
+    pipeline_stages:
+      # The backend logs structured JSON (`app/core/logging.py`). Lifting `level` and
+      # `event` into labels is what makes `{service="api", level="error"}` a query
+      # rather than a full-text scan. `request_id` is deliberately NOT a label: it is
+      # unique per request, so it would create a stream per request. Grafana's derived
+      # field in the Loki datasource reads it out of the line instead.
+      - json:
+          expressions:
+            level: level
+            event: event
+            timestamp: timestamp
+      - labels:
+          level:
+          event:
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          # A container with a skewed clock must not reorder everyone else's lines.
+          action_on_failure: fudge
+
+      # Caddy also logs JSON, but with its own field names, so the stage above finds
+      # nothing and the line is shipped unparsed - which is correct and harmless.

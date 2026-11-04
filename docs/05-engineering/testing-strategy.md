@@ -11,7 +11,7 @@
 | App unit/widget | Providers, repositories (mocked API), screens render per role | flutter_test, mocktail | `app/test/` |
 | App integration | Login → request → track flow against sim backend | integration_test | `app/integration_test/` |
 | Simulator scenarios | End-to-end system behaviour | `make sim-quick`, `make sim-full` | `simulator/` |
-| Load | GPS ingestion and API under load (Phase 3+) | locust or sim S14 | `simulator/` |
+| Load | GPS ingestion and API under load (Phase 3+) | `make loadtest` (`scripts/loadtest.py`, `docs/runbook-load-test.md`): 35 cabs, 300 riders, 2 supervisors against the running stack; sim S14 for multi-operator (Phase 5) | `scripts/`, `simulator/` |
 
 ## 2. Coverage targets
 - `app/domain/`: ≥ 95% line and branch coverage.

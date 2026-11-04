@@ -51,7 +51,7 @@ def test_smoke_tiny_is_valid() -> None:
     assert scenario.seed == 42
     assert scenario.vehicle_count == 3
     assert scenario.employee_count == 10
-    assert scenario.duration_hours == 1
+    assert scenario.duration_hours == 2
 
 
 def test_smoke_tiny_uses_approx_routing() -> None:

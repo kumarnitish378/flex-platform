@@ -11,12 +11,13 @@ Principle: **modes decide who normally assigns; overrides let a human step in on
 
 - Modes control **assignment only**. Tracking, ETA and notifications work in every mode.
 - Phase 1 supports `manual` only. Phase 2 adds `semi_auto`. Phase 3 adds `full_auto`.
+- Since Phase 3 one batch optimizer serves all three (`allocation-rules.md` §6): its plan is **applied** (actor `optimizer`, one state-machine transition per rider) in `full_auto`, **offered** as the rank-1 suggestion in `semi_auto`, and **recorded as a hint** in `manual`.
 
 ## 2. Mode scopes and precedence
 A `mode_setting` row has optional `client_id`, `zone_id`, `direction`, `weekdays`, `start_time`, `end_time` and a `mode`. For a request, the **most specific matching** setting wins:
 
 1. Global emergency pause (`automation_paused = true`) → effectively `manual` for everything.
-2. VIP request → always assigned immediately in `full_auto` behaviour **if** a VIP vehicle is available and scope is not paused; otherwise alert supervisor.
+2. VIP request → always assigned immediately in `full_auto` behaviour **if** a VIP vehicle is available and scope is not paused; otherwise alert supervisor. "Immediately" is literal (B34): a VIP skips the micro-batch window, because the window exists to pool riders and a VIP is never pooled. With no VIP vehicle the request stays queued and a `vip_no_vehicle` alert is raised with the rules that excluded every cab; an ordinary cab is never substituted. The alert resolves itself when the VIP is assigned.
 3. Setting matching client + zone + time window
 4. client + time window
 5. zone + time window
@@ -55,14 +56,17 @@ Ties at the same specificity: the most recently updated setting wins, and the ad
 - VIP and high urgency requests use half the timeout.
 
 ## 5. Mode-switch prompts (Phase 3)
-The system suggests switching a scope to `manual` (never switches by itself) when any is true in the last 15 minutes:
+The system suggests switching a scope to `manual` (never switches by itself) when any is true in the last 15 minutes (B35: a `mode_prompt` alert per scope, resolved by the platform when the condition clears; `domain/mode_prompts.py`):
 - ≥ 30% of suggestions rejected in that scope,
 - median ETA error > 10 minutes,
 - pending requests > 2× normal for that time slot,
 - ≥ 20% of vehicles in the scope stale or out of service.
 
+How each is measured (B35): a **scope** is a mode setting currently on `semi_auto` or `full_auto` whose window is open, and a request belongs to the scope `resolve_mode` assigns it to. *Rejected* = rank-1 suggestions a person rejected over those a person or the failsafe settled (a suggestion superseded because the world moved is not a verdict). *ETA error* = the median of |actual - planned| pickup, for pickups completed in the window. *Normal* = the mean number pending at this time of day over the last `mode_prompt_baseline_days` days, in this scope; with no history the condition cannot fire. *Fleet* = vehicles not off duty that are out of service or have no ping within `stale_gps_seconds` (vehicles carry no scope, so this is operator-wide). The three ratio-style conditions need `mode_prompt_min_samples` (provisional, 5) observations: a percentage of one is not a signal.
+
 ## 6. Degradation
 - Optimizer/worker down → scopes in `full_auto`/`semi_auto` behave as `manual`; alert shown.
+  **How the platform knows (B36, `domain/optimizer_health.py`):** the last `optimizer_failure_threshold` (3) batch runs all failed, within `optimizer_failure_memory_minutes` (15); or a request has been ready for `optimizer_stall_seconds` (180, never under three batch windows) with no run started since - a worker that is not running leaves no failed runs to count. While down: nothing is applied or offered (the optimizer is still *attempted* each window, as the probe, but its plan is only a hint), `/dispatch/requests/{id}/mode` answers `manual` with reason `optimizer_down`, and one `system` alert (`data.kind = optimizer_down`) is open. **Recovery needs no one:** the first run that does not fail clears the alert and the scope returns. A paused operator is never reported as down, supervisors can always assign by hand, and an offer made before the outage still reaches its failsafe - none of that depends on the optimizer.
 - **Routing degradation ladder** (ADR-0010 §3.4 of `architecture.md`): Redis cache hit → `osrm` provider →
   `approx`. The `approx` step is used whenever OSRM is down, slow, erroring **or the shared 1 request/second
   limit on the public server is exhausted**; it estimates from straight-line distance × 1.4 and the

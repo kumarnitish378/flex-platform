@@ -1,0 +1,458 @@
+"""Scenario reset: wipe and reseed the sim database (B19).
+
+The fixture is the one `testing-strategy.md` §4 specifies — 2 offices, 3 zones,
+20 employees, 6 vehicles — plus one login per role, so the simulator's agents have
+someone to authenticate as.
+
+Everything is derived from a fixed seed, so two resets produce identical ids and the
+same run really is reproducible (`simulator-spec.md` §13).
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Sequence
+
+from geoalchemy2.shape import from_shape
+from shapely.geometry import Point as ShapelyPoint
+from shapely.geometry import Polygon as ShapelyPolygon
+from sqlalchemy import delete, select
+
+from app.core.clock import Clock
+from app.core.logging import get_logger
+from app.core.security import create_access_token
+from app.core.settings import Settings
+from app.domain.enums import Role, TrackerType, VehicleType
+from app.modules.alerts.models import Alert
+from app.modules.auth.models import AppUser, Device, OtpChallenge, RefreshToken, UserRole
+from app.modules.config.models import OperatorConfig, OperatorConfigHistory
+from app.modules.dispatch.models import Trip, TripEvent, TripStop
+from app.modules.dispatch.optimizer_models import OptimizerHint, OptimizerRun
+from app.modules.dispatch.override_models import OverrideLog
+from app.modules.dispatch.suggestion_models import Suggestion
+from app.modules.fleet.duty_models import DutySession
+from app.modules.fleet.models import Driver, Vehicle
+from app.modules.modes.models import ModeSetting
+from app.modules.notifications.models import Notification
+from app.modules.people.models import Employee, SavedPlace
+from app.modules.reports.models import TripRating
+from app.modules.requests.models import RideRequest, RideRequestEvent
+from app.modules.routing.speed_models import RoadSpeedProfile, SpeedProfileState
+from app.modules.simctl.schemas import ResetResult, SeededUser
+from app.modules.tenancy.models import Client, ClientPolicy, Office, Operator, Zone
+
+logger = get_logger(__name__)
+
+#: Deterministic namespace so every reset produces the same ids.
+SEED_NAMESPACE = uuid.UUID("5ca8cab5-0000-4000-8000-000000000000")
+
+OPERATOR_NAME = "Sim Cabs"
+CLIENT_NAME = "Sim Client"
+
+# Delhi NCR fixture points (the pair used throughout the docs).
+OFFICES = (("B200", 28.5703, 77.3218), ("Tower C", 28.5450, 77.3300))
+ZONES = (("sector_62", 28.62, 77.36), ("sector_135", 28.50, 77.38), ("sector_168", 28.46, 77.40))
+EMPLOYEE_COUNT = 20
+VEHICLES = (
+    ("SIM0001", VehicleType.sedan_4, 4),
+    ("SIM0002", VehicleType.sedan_4, 4),
+    ("SIM0003", VehicleType.sedan_4, 4),
+    ("SIM0004", VehicleType.suv_6, 6),
+    ("SIM0005", VehicleType.suv_6, 6),
+    ("SIM0006", VehicleType.vip, 4),
+)
+#: One login per role, matching dev-environment.md §6's numbering style.
+#: Seeded tokens must outlive a whole simulated run. A scenario covers hours of simulated
+#: time in seconds of real time, so a 15-minute production TTL expires mid-run and every
+#: agent starts getting 401s. This was 12 hours and S02 runs 16, which silently 401'd
+#: every agent for the back third of the run - so it now covers the longest scenario the
+#: format allows (`duration_hours` is capped at 14 days). Safe only because `/simctl/*`
+#: cannot exist outside APP_ENV=sim (ADR-0008).
+SIM_TOKEN_TTL_SECONDS = 15 * 24 * 3600
+
+#: Distinct phone blocks per role, so seeded accounts cannot collide on the unique index.
+_PHONE_BLOCK = {Role.driver: "1", Role.employee: "2"}
+
+SEED_USERS = (
+    (Role.operator_admin, "+910000000001"),
+    (Role.supervisor, "+910000000002"),
+    (Role.client_admin, "+910000000003"),
+    (Role.driver, "+910000000004"),
+    (Role.employee, "+910000000005"),
+)
+
+#: Deleted in dependency order — children before parents.
+TRUNCATION_ORDER = (
+    Alert,
+    Notification,
+    TripRating,
+    # Trips before requests and drivers: `trip_stop.request_id` and `trip.driver_id` are
+    # both RESTRICT/CASCADE parents, so deleting a driver with a trip is a foreign-key
+    # violation. This list predates B14; a table added later and forgotten here breaks
+    # the *second* reset, not the first, which is a miserable thing to debug.
+    TripEvent,
+    TripStop,
+    # Before the trip, request and vehicle it names (B26). The FKs cascade, so leaving
+    # it out would work - and would make this list quietly wrong.
+    OverrideLog,
+    Trip,
+    RideRequestEvent,
+    # Before the request and the vehicle it names (B25).
+    Suggestion,
+    # Names requests only in JSON, so it has no foreign key to order around (B30).
+    OptimizerHint,
+    OptimizerRun,
+    # Not tenant tables, but a run that inherits the speeds an earlier run learned is
+    # not the same experiment (B37): two runs of one seed must see the same world.
+    RoadSpeedProfile,
+    SpeedProfileState,
+    RideRequest,
+    SavedPlace,
+    Employee,
+    # Before driver and vehicle, which it references. Left behind, a seeded driver looks
+    # already on duty on the next run and cannot sign in.
+    DutySession,
+    Driver,
+    Vehicle,
+    Office,
+    ClientPolicy,
+    # Before client and zone, which it references. The FKs cascade, so leaving it out
+    # would work - and would make this list quietly wrong, which is worse than broken:
+    # the next person adding a table copies the pattern they see.
+    ModeSetting,
+    Client,
+    Zone,
+    OperatorConfigHistory,
+    OperatorConfig,
+    UserRole,
+    Device,
+    RefreshToken,
+    OtpChallenge,
+    AppUser,
+    Operator,
+)
+
+
+def _id(*parts: object) -> uuid.UUID:
+    """A stable id for a fixture entity."""
+    return uuid.uuid5(SEED_NAMESPACE, ":".join(str(part) for part in parts))
+
+
+#: Seats per vehicle type, matching the fixture in `testing-strategy.md` section 4.
+SEATS: dict[VehicleType, int] = {
+    VehicleType.sedan_4: 4,
+    VehicleType.suv_6: 6,
+    VehicleType.vip: 4,
+}
+
+
+def _fleet(count: int) -> tuple[tuple[str, VehicleType, int], ...]:
+    """The fixture fleet, extended if a scenario wants more cabs than it lists.
+
+    The first six keep their fixed registrations so existing tests and their ids stay
+    stable; anything beyond repeats the same mix, which is what a real operator's fleet
+    looks like anyway.
+    """
+    if count <= len(VEHICLES):
+        return VEHICLES[:count]
+
+    extra = []
+    for index in range(len(VEHICLES), count):
+        _rego, vehicle_type, seats = VEHICLES[index % len(VEHICLES)]
+        extra.append((f"SIM{index + 1:04d}", vehicle_type, seats))
+    return VEHICLES + tuple(extra)
+
+
+def _fleet_from_spec(
+    groups: Sequence[tuple[VehicleType, int]],
+) -> tuple[tuple[str, VehicleType, int], ...]:
+    """Exactly the cabs a scenario asked for.
+
+    Composition matters, not just the count: a VIP scenario seeded from the fixture mix
+    gets one VIP car where it asked for two, and then tests nothing it claims to. Seat
+    counts come from the type, so pooling capacity follows the scenario too.
+    """
+    built: list[tuple[str, VehicleType, int]] = []
+    for vehicle_type, count in groups:
+        for _ in range(count):
+            index = len(built) + 1
+            built.append((f"SIM{index:04d}", vehicle_type, SEATS[vehicle_type]))
+    return tuple(built)
+
+
+def _point(lat: float, lng: float) -> object:
+    return from_shape(ShapelyPoint(lng, lat), srid=4326)
+
+
+def _square(lat: float, lng: float, size: float = 0.02) -> object:
+    return from_shape(
+        ShapelyPolygon(
+            [
+                (lng, lat),
+                (lng + size, lat),
+                (lng + size, lat + size),
+                (lng, lat + size),
+                (lng, lat),
+            ]
+        ),
+        srid=4326,
+    )
+
+
+class SimControlService:
+    def __init__(self, session, clock: Clock, settings: Settings) -> None:  # type: ignore[no-untyped-def]
+        self.session = session
+        self.clock = clock
+        self.settings = settings
+
+    async def reset(
+        self,
+        employees: int | None = None,
+        vehicles: int | None = None,
+        vip_employees: int | None = None,
+        fleet: Sequence[tuple[VehicleType, int]] | None = None,
+        night_escort_employees: int | None = None,
+    ) -> ResetResult:
+        await self._truncate()
+        employee_count = employees or EMPLOYEE_COUNT
+        result = await self._seed(
+            employee_count=employee_count,
+            vehicle_count=vehicles or len(VEHICLES),
+            fleet=fleet,
+            # One by default, which is the historic fixture. A VIP scenario asks for more.
+            vip_employee_count=min(
+                vip_employees if vip_employees is not None else 1, employee_count
+            ),
+            night_escort_count=night_escort_employees or 0,
+        )
+        await self.session.flush()
+        logger.info("simctl_reset", operator_id=str(result.operator_id), at=result.now.isoformat())
+        return result
+
+    async def _truncate(self) -> None:
+        """Wipe every table this fixture touches.
+
+        Whole-table deletes rather than per-operator: a sim database has exactly one
+        tenant, and leaving rows behind between scenarios is how a run stops being
+        reproducible.
+        """
+        for model in TRUNCATION_ORDER:
+            await self.session.execute(delete(model))
+        await self.session.flush()
+
+    async def _seed(
+        self,
+        employee_count: int,
+        vehicle_count: int,
+        vip_employee_count: int = 1,
+        fleet: Sequence[tuple[VehicleType, int]] | None = None,
+        night_escort_count: int = 0,
+    ) -> ResetResult:
+        operator = Operator(id=_id("operator"), name=OPERATOR_NAME)
+        self.session.add(operator)
+        await self.session.flush()
+
+        corporate = Client(id=_id("client"), operator_id=operator.id, name=CLIENT_NAME)
+        self.session.add(corporate)
+        self.session.add(
+            ClientPolicy(id=_id("policy"), operator_id=operator.id, client_id=corporate.id)
+        )
+        await self.session.flush()
+
+        office_ids = []
+        for name, lat, lng in OFFICES:
+            office = Office(
+                id=_id("office", name),
+                operator_id=operator.id,
+                client_id=corporate.id,
+                name=name,
+                location=_point(lat, lng),
+            )
+            self.session.add(office)
+            office_ids.append(office.id)
+
+        zone_ids = []
+        for name, lat, lng in ZONES:
+            zone = Zone(
+                id=_id("zone", name), operator_id=operator.id, name=name, area=_square(lat, lng)
+            )
+            self.session.add(zone)
+            zone_ids.append(zone.id)
+        await self.session.flush()
+
+        users = await self._seed_users(operator.id, corporate.id)
+
+        employee_ids = []
+        for index in range(employee_count):
+            # Spread homes across the zones so pooling has something to work with.
+            base_lat, base_lng = ZONES[index % len(ZONES)][1:]
+            employee = Employee(
+                id=_id("employee", index),
+                operator_id=operator.id,
+                client_id=corporate.id,
+                name=f"Sim Employee {index + 1:02d}",
+                phone=f"+9190000{index:05d}",
+                office_id=office_ids[index % len(office_ids)],
+                home_location=_point(base_lat + index * 0.001, base_lng + index * 0.001),
+                priority=5,
+                is_vip=index < vip_employee_count,
+                # The riders after the VIPs, so the two groups never overlap: a VIP is
+                # never pooled anyway, and a flagged VIP would test nothing.
+                night_escort_required=(
+                    vip_employee_count <= index < vip_employee_count + night_escort_count
+                ),
+            )
+            # Every employee gets a login, not just the first: the simulator's employee
+            # agents each create their own requests, and `/ride-requests` scopes a
+            # rider to their own employee record (M05).
+            if index == 0:
+                rider = next(u for u in users if u.role == str(Role.employee))
+                employee.user_id = rider.user_id
+            else:
+                extra = await self._seed_login(
+                    operator.id, Role.employee, index, client_id=corporate.id
+                )
+                employee.user_id = extra.user_id
+                users.append(extra)
+            self.session.add(employee)
+            employee_ids.append(employee.id)
+
+        driver_ids = []
+        vehicle_ids = []
+        vip_vehicle_ids = []
+        cabs = _fleet_from_spec(fleet) if fleet else _fleet(vehicle_count)
+        for index, (rego, vehicle_type, seats) in enumerate(cabs):
+            vehicle = Vehicle(
+                id=_id("vehicle", rego),
+                operator_id=operator.id,
+                registration_no=rego,
+                vehicle_type=vehicle_type,
+                seat_capacity=seats,
+                tracker_type=TrackerType.app,
+            )
+            self.session.add(vehicle)
+            vehicle_ids.append(vehicle.id)
+            if vehicle_type is VehicleType.vip:
+                vip_vehicle_ids.append(vehicle.id)
+
+            driver = Driver(
+                id=_id("driver", index),
+                operator_id=operator.id,
+                name=f"Sim Driver {index + 1}",
+                phone=f"+9191000{index:05d}",
+                default_vehicle_id=vehicle.id,
+            )
+            # Every driver gets a login, not just the first: M04 signs one driver into
+            # each cab, and a fleet sharing one account cannot - a driver may hold only
+            # one open duty session (B11).
+            if index == 0:
+                seeded_driver = next(u for u in users if u.role == str(Role.driver))
+                driver.user_id = seeded_driver.user_id
+            else:
+                extra = await self._seed_login(operator.id, Role.driver, index)
+                driver.user_id = extra.user_id
+                users.append(extra)
+            self.session.add(driver)
+            driver_ids.append(driver.id)
+
+        await self.session.flush()
+
+        return ResetResult(
+            operator_id=operator.id,
+            client_id=corporate.id,
+            office_ids=office_ids,
+            zone_ids=zone_ids,
+            employee_ids=employee_ids,
+            vip_employee_ids=employee_ids[:vip_employee_count],
+            night_escort_employee_ids=employee_ids[
+                vip_employee_count : vip_employee_count + night_escort_count
+            ],
+            vehicle_ids=vehicle_ids,
+            vip_vehicle_ids=vip_vehicle_ids,
+            driver_ids=driver_ids,
+            users=users,
+            now=self.clock.now(),
+        )
+
+    async def _seed_login(
+        self,
+        operator_id: uuid.UUID,
+        role: Role,
+        index: int,
+        client_id: uuid.UUID | None = None,
+    ) -> SeededUser:
+        """One more account for a person the simulator needs to act as.
+
+        The per-role logins in `SEED_USERS` are one each; agents need one *per* driver and
+        per employee, because a driver may hold only one open duty session (B11) and a
+        rider may only create requests for themselves (B09). Returned in `users` alongside
+        the role logins.
+        """
+        key = f"{role}-{index}"
+        phone = f"+9100{_PHONE_BLOCK[role]}{index:05d}"
+        user = AppUser(id=_id("user", key), phone=phone, name=f"Sim {role} {index}")
+        self.session.add(user)
+        await self.session.flush()
+        self.session.add(
+            UserRole(
+                id=_id("role", key),
+                user_id=user.id,
+                role=role,
+                operator_id=operator_id,
+                client_id=client_id,
+            )
+        )
+        token, _ = create_access_token(
+            user_id=user.id,
+            role=str(role),
+            secret=self.settings.jwt_secret.get_secret_value(),
+            clock=self.clock,
+            ttl_seconds=SIM_TOKEN_TTL_SECONDS,
+            operator_id=operator_id,
+            client_id=client_id,
+        )
+        return SeededUser(role=str(role), phone=phone, user_id=user.id, access_token=token)
+
+    async def _seed_users(self, operator_id: uuid.UUID, client_id: uuid.UUID) -> list[SeededUser]:
+        """One login per role, with a ready-to-use access token.
+
+        Handing back tokens skips the OTP round trip for every agent at start-up. It is
+        safe only because this endpoint cannot exist outside APP_ENV=sim.
+        """
+        seeded: list[SeededUser] = []
+        for role, phone in SEED_USERS:
+            user = AppUser(id=_id("user", role), phone=phone, name=f"Sim {role}")
+            self.session.add(user)
+            await self.session.flush()
+
+            scoped_client = client_id if role in (Role.client_admin, Role.employee) else None
+            self.session.add(
+                UserRole(
+                    id=_id("role", role),
+                    user_id=user.id,
+                    role=role,
+                    operator_id=operator_id,
+                    client_id=scoped_client,
+                )
+            )
+
+            token, _ = create_access_token(
+                user_id=user.id,
+                role=str(role),
+                secret=self.settings.jwt_secret.get_secret_value(),
+                clock=self.clock,
+                ttl_seconds=SIM_TOKEN_TTL_SECONDS,
+                operator_id=operator_id,
+                client_id=scoped_client,
+            )
+            seeded.append(
+                SeededUser(role=str(role), phone=phone, user_id=user.id, access_token=token)
+            )
+
+        await self.session.flush()
+        return seeded
+
+    async def count_rows(self, model: type) -> int:
+        """Small helper used by the tests to prove truncation happened."""
+        result = await self.session.execute(select(model))
+        return len(list(result.scalars().all()))

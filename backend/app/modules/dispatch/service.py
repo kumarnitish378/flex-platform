@@ -1,0 +1,1546 @@
+"""Dispatch: the board, candidate vehicles, and manual assignment (B14).
+
+This is the screen that replaces the phone call. A supervisor sees the queue, sees which
+cabs could take it and what that would cost the people already on board, and presses a
+button. Everything here serves that loop.
+
+Three rules shape the code:
+
+* **The pure part is pure.** Sequencing and the hard-rule checks live in
+  `app/domain/dispatch.py` and take a duration callable, so this module's job is loading
+  facts and persisting the result.
+* **One routing call per question.** Candidates ask for one ETA matrix covering every
+  vehicle, not one call per vehicle; an insertion asks for one matrix covering the trip's
+  stops. On the shared public OSRM that difference is the whole rate-limit budget
+  (ADR-0010).
+* **Violations are reported, capacity is refused** (ADR-0011). A supervisor overriding the
+  optimizer is the purpose of manual mode; five people in a four-seat car is not an
+  override, it is a stranded rider.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.clock import Clock
+from app.core.events import (
+    Event,
+    EventPublisher,
+    NullEventPublisher,
+    operator_channel,
+    trip_channel,
+    user_channel,
+)
+from app.core.geo import coords as _coords
+from app.core.geo import to_point as _point
+from app.core.logging import get_logger
+from app.domain.cost import (
+    CostInput,
+    CostWeights,
+    ExistingRider,
+    assignment_cost,
+    effective_rider,
+)
+from app.domain.dispatch import (
+    AssignmentFacts,
+    DetourLimits,
+    Duration,
+    Insertion,
+    Place,
+    Rider,
+    Violation,
+    best_insertion,
+    build_plan,
+    check_hard_rules,
+    pickup_time,
+    widened_candidate_eta_minutes,
+)
+from app.domain.enums import Direction, Urgency
+from app.domain.errors import Conflict, NotFound
+from app.domain.geo import LatLng
+from app.domain.hold_window import HoldFacts
+from app.domain.hold_window import release_at as hold_release_at
+from app.domain.notifications import NotificationType
+from app.domain.overrides import still_applies
+from app.domain.policy import EffectivePolicy
+from app.domain.policy import resolve as resolve_policy
+from app.domain.rules import assignable
+from app.domain.state_machines import (
+    Actor,
+    RequestContext,
+    RequestStatus,
+    StopStatus,
+    TripStatus,
+    VehicleStatus,
+    actor_type_for,
+    transition_request,
+    transition_vehicle,
+)
+from app.domain.suggestions import SuggestionFacts, named_riders
+from app.domain.suggestions import reasons as render_reasons
+from app.domain.timeofday import local_time
+from app.modules.config.service import ConfigService
+from app.modules.dispatch.escort import EscortService
+from app.modules.dispatch.models import MODE_MANUAL, Trip, TripEvent, TripStop
+from app.modules.fleet.duty_models import DutySession
+from app.modules.fleet.models import Vehicle
+from app.modules.notifications.service import Audience, NotificationService
+from app.modules.people.models import Employee
+from app.modules.requests.models import RideRequest, RideRequestEvent
+from app.modules.tenancy.models import Office, Operator
+from app.modules.tenancy.policy_service import ClientPolicyService
+
+logger = get_logger(__name__)
+
+#: Trips a vehicle can still be busy with.
+LIVE_TRIP_STATUSES = (TripStatus.planned, TripStatus.dispatched, TripStatus.in_progress)
+#: Requests that still occupy a seat.
+ON_BOARD_STATUSES = (RequestStatus.assigned, RequestStatus.picked_up)
+#: Requests a supervisor can still assign.
+ASSIGNABLE_STATUSES = (RequestStatus.queued, RequestStatus.suggested)
+
+#: Actors that assign without a human choosing the vehicle. The evening hold window
+#: (B29) binds exactly these: a supervisor deciding by hand is allowed to send a cab
+#: early, the platform is not.
+AUTOMATIC_ACTORS = frozenset({Actor.system_failsafe, Actor.optimizer})
+
+#: How far back to look for a vehicle's last ping. Anything older is stale several times
+#: over, and the bound keeps the query off older partitions of `location_ping`.
+POSITION_LOOKBACK = timedelta(hours=1)
+
+
+@dataclass(frozen=True, slots=True)
+class TripRiderView:
+    request_id: uuid.UUID
+    rider_first_name: str
+    added_minutes: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedAssignment:
+    """What the optimizer decided about one placement, handed to `assign` (B32)."""
+
+    #: Every request on the resulting trip, in stop order.
+    order: tuple[uuid.UUID, ...]
+    #: Seconds from now until each *new* rider is collected.
+    pickup_eta_seconds: dict[uuid.UUID, float]
+    #: Minutes beyond riding alone, for everyone on the trip.
+    excess_minutes: dict[uuid.UUID, float]
+    mode_used: str = "full_auto"
+
+
+@dataclass(frozen=True, slots=True)
+class Position:
+    lat: float
+    lng: float
+    recorded_at: datetime
+
+    @property
+    def place(self) -> Place:
+        return Place(self.lat, self.lng)
+
+
+@dataclass(slots=True)
+class VehicleLive:
+    vehicle: Vehicle
+    position: Position | None
+    stale: bool
+    active_trip_id: uuid.UUID | None
+    seats_free: int
+
+
+@dataclass(slots=True)
+class Candidate:
+    vehicle: Vehicle
+    trip_id: uuid.UUID | None
+    eta_to_pickup_seconds: float
+    eta_approximate: bool
+    seats_free_after: int
+    #: Age of the position this ETA was computed from, by the injected Clock. `None`
+    #: when the vehicle has never reported one.
+    gps_age_seconds: float | None = None
+    added_minutes: dict[uuid.UUID, float] = field(default_factory=dict)
+    new_trip: bool = True
+    violations: list[Violation] = field(default_factory=list)
+    #: Empty kilometres this assignment adds. Only a cab opening a new trip runs empty
+    #: to the pickup; one already carrying riders adds *detour*, which is charged
+    #: through `added_minutes`. Counting both would be the same minutes twice.
+    empty_km_added: float = 0.0
+    #: Minutes-equivalent (`allocation-rules.md` §4). `None` until scored.
+    cost: float | None = None
+    #: The §5 phrases: "8 min away", "2 seats left", "+4 min for Rahul", ...
+    reasons: list[str] = field(default_factory=list)
+
+    @property
+    def sort_key(self) -> tuple[int, float, float, str]:
+        """Best first.
+
+        Clean candidates ahead of ones that break a hard rule - Phase 1 behaviour, kept,
+        because a supervisor needs to see the 35-minute cab that is over the limit
+        rather than an empty list (ADR-0011). Within each group **cost** decides, with
+        §4's documented tie-break: lower cost, then sooner, then lower vehicle id.
+
+        Phase 1 ordered by ETA alone. Cost is a better answer to the same question -
+        which cab should I send - because it also weighs the rider's priority, the
+        detour inflicted on people already aboard, and the price of waking an idle cab.
+        """
+        return (
+            1 if self.violations else 0,
+            self.cost if self.cost is not None else self.eta_to_pickup_seconds,
+            self.eta_to_pickup_seconds,
+            str(self.vehicle.id),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuleInputs:
+    """The per-rider facts §2 needs, loaded once for a whole candidate list."""
+
+    limits: dict[uuid.UUID, DetourLimits]
+    #: Straight-line seconds from each rider's pickup to their drop, for rule 7.
+    direct: dict[uuid.UUID, float]
+    #: Requests whose rider is flagged `night_escort_required` (rule 11).
+    night_escort_required: frozenset[uuid.UUID] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class AffectedRider:
+    """A rider already aboard whom an insertion would detour."""
+
+    name: str
+    priority: int
+    urgency: str
+
+
+def _wait_minutes(request: RideRequest, candidate: Candidate, now: datetime) -> float:
+    """Minutes from when the rider expected to be collected to when they would be.
+
+    `allocation-rules.md` §4: "minutes from requested time (or now if later) to pickup
+    ETA". A request whose time has already passed waits from now, not from a moment in
+    the past - otherwise an hour-old request scores an hour of wait against every
+    candidate equally and stops discriminating between them.
+    """
+    from_time = max(request.requested_time, now)
+    arrival = now + timedelta(seconds=candidate.eta_to_pickup_seconds)
+    return max((arrival - from_time).total_seconds() / 60.0, 0.0)
+
+
+def _trip_label(trip_id: uuid.UUID | None) -> str | None:
+    """A short handle a human can say out loud, e.g. `T-9F3C`.
+
+    The operator's own trip numbering does not exist yet, and `allocation-rules.md` §5's
+    "T-102" is illustrative. Four hex characters is enough to tell apart the handful of
+    trips live at once and short enough to read down a phone line.
+    """
+    return f"T-{trip_id.hex[-4:].upper()}" if trip_id is not None else None
+
+
+class DispatchService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        clock: Clock,
+        eta_service: Any,
+        config: ConfigService | None = None,
+        events: EventPublisher | None = None,
+        notifications: NotificationService | None = None,
+    ) -> None:
+        self.session = session
+        self.clock = clock
+        self.eta = eta_service
+        self.config = config or ConfigService(session, clock)
+        self.events = events or NullEventPublisher()
+        self.notifications = notifications or NotificationService(session, clock)
+
+    # --- the board ------------------------------------------------------------
+
+    async def requests(
+        self,
+        operator_id: uuid.UUID,
+        statuses: list[str] | None = None,
+        client_id: uuid.UUID | None = None,
+    ) -> list[RideRequest]:
+        """The queue. Defaults to everything still open, oldest first (SUP-02)."""
+        wanted = statuses or [
+            RequestStatus.requested,
+            RequestStatus.queued,
+            RequestStatus.suggested,
+            RequestStatus.assigned,
+            RequestStatus.picked_up,
+        ]
+        query = (
+            select(RideRequest)
+            .where(RideRequest.operator_id == operator_id)
+            .where(RideRequest.status.in_([str(status) for status in wanted]))
+            .order_by(RideRequest.created_at)
+        )
+        if client_id is not None:
+            query = query.where(RideRequest.client_id == client_id)
+        return list((await self.session.execute(query)).scalars().all())
+
+    async def live_vehicles(self, operator_id: uuid.UUID) -> list[VehicleLive]:
+        """Every vehicle with its last known position and load (SUP-01)."""
+        vehicles = list(
+            (
+                await self.session.execute(
+                    select(Vehicle)
+                    .where(Vehicle.operator_id == operator_id)
+                    .order_by(Vehicle.registration_no)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        positions = await self.latest_positions(operator_id)
+        trips = await self._live_trips(operator_id)
+        loads = await self._riders_by_trip(operator_id)
+        stale_after = int(await self.config.get(operator_id, "stale_gps_seconds"))
+        now = self.clock.now()
+
+        live: list[VehicleLive] = []
+        for vehicle in vehicles:
+            position = positions.get(vehicle.id)
+            trip = trips.get(vehicle.id)
+            on_board = len(loads.get(trip.id, [])) if trip else 0
+            live.append(
+                VehicleLive(
+                    vehicle=vehicle,
+                    position=position,
+                    stale=_is_stale(position, now, stale_after),
+                    active_trip_id=trip.id if trip else None,
+                    seats_free=max(0, vehicle.seat_capacity - on_board),
+                )
+            )
+        return live
+
+    async def automation_paused(self, operator_id: uuid.UUID) -> bool:
+        paused = await self.session.scalar(
+            text("SELECT automation_paused FROM operator WHERE id = :id").bindparams(id=operator_id)
+        )
+        if paused is None:
+            raise NotFound("Operator not found")
+        return bool(paused)
+
+    async def set_automation_paused(
+        self, operator_id: uuid.UUID, paused: bool, reason_code: str, note: str | None = None
+    ) -> bool:
+        """SUP-05: one switch, visible to every supervisor."""
+        await self.session.execute(
+            text("UPDATE operator SET automation_paused = :paused WHERE id = :id").bindparams(
+                paused=paused, id=operator_id
+            )
+        )
+        logger.info(
+            "automation_pause_changed",
+            operator_id=str(operator_id),
+            paused=paused,
+            reason_code=reason_code,
+        )
+        await self.events.publish(
+            Event(
+                name="automation.changed",
+                channel=operator_channel(operator_id, "requests"),
+                payload={"automation_paused": paused, "reason_code": reason_code, "note": note},
+            )
+        )
+        return paused
+
+    # --- the evening hold window (B29) --------------------------------------------
+
+    async def hold_release(
+        self,
+        request: RideRequest,
+        *,
+        employee: Employee | None = None,
+        settings: dict[str, Any] | None = None,
+        policy: EffectivePolicy | None = None,
+    ) -> datetime | None:
+        """When this request stops being held, or `None` if it never was.
+
+        Derived from the request and the Clock on every read and stored nowhere, like the
+        override expiries (B26): a window has to end with nothing running, and a stored
+        flag would need a sweep to flip it back.
+        """
+        now = self.clock.now()
+        operator_id = request.operator_id
+        employee = employee or await self._employee(operator_id, request.employee_id)
+        settings = settings or await self.config.all_values(operator_id)
+        policy = (
+            policy
+            or (await self.client_policies(operator_id, {request.client_id}, settings))[
+                request.client_id
+            ]
+        )
+        return hold_release_at(
+            HoldFacts(
+                direction=Direction(request.direction),
+                queued_at=request.queued_at,
+                requested_time=request.requested_time,
+                is_vip=bool(employee.is_vip),
+                priority=employee.priority,
+                urgency=Urgency(request.urgency),
+                no_sharing=request.no_sharing or not policy.pooling_allowed,
+                forced_priority=request.forced_priority
+                and still_applies(request.override_until, now),
+            ),
+            int(settings["hold_window_min_minutes"]),
+        )
+
+    async def is_held(self, request: RideRequest) -> bool:
+        """True while the evening hold window is still open for this request."""
+        released = await self.hold_release(request)
+        return released is not None and self.clock.now() < released
+
+    # --- candidates -------------------------------------------------------------
+
+    async def candidates(self, operator_id: uuid.UUID, request_id: uuid.UUID) -> list[Candidate]:
+        """Vehicles that could take this request, best first (`allocation-rules.md` 3).
+
+        On-duty vehicles only: an `off_duty` or `out_of_service` cab has no driver to send.
+        Everything else is listed **with** its violations rather than filtered out, because
+        an empty candidate list tells a supervisor nothing, and "the nearest cab is 35
+        minutes away, over the limit" is exactly what they need to decide what to do next.
+
+        A vehicle with no recent ping is skipped: its ETA is not unknown-but-guessable, it
+        is unknowable, and a made-up number here becomes a promise to a rider.
+        """
+        request = await self._request(operator_id, request_id)
+        office = await self._office(operator_id, request.office_id)
+        employee = await self._employee(operator_id, request.employee_id)
+        settings = await self.config.all_values(operator_id)
+
+        vehicles = list(
+            (
+                await self.session.execute(
+                    select(Vehicle)
+                    .where(Vehicle.operator_id == operator_id)
+                    .where(
+                        Vehicle.status.in_(
+                            [str(VehicleStatus.available), str(VehicleStatus.on_trip)]
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        positions = await self.latest_positions(operator_id)
+        usable = [vehicle for vehicle in vehicles if vehicle.id in positions]
+        if not usable:
+            return []
+
+        pickup = _pickup_place(request, office)
+        # One table call for every vehicle, not one route call each (ADR-0010).
+        matrix = await self.eta.eta_matrix(
+            [LatLng(positions[vehicle.id].lat, positions[vehicle.id].lng) for vehicle in usable],
+            [LatLng(pickup.lat, pickup.lng)],
+        )
+
+        trips = await self._live_trips(operator_id)
+        loads = await self._riders_by_trip(operator_id)
+        now = self.clock.now()
+        policy = (await self.client_policies(operator_id, {request.client_id}, settings))[
+            request.client_id
+        ]
+        timezone = await self.operator_timezone(operator_id)
+
+        candidates: list[Candidate] = []
+        for index, vehicle in enumerate(usable):
+            eta = matrix[index][0]
+            trip = trips.get(vehicle.id)
+            on_board = loads.get(trip.id, []) if trip else []
+            insertion = None
+            if trip is not None and on_board:
+                insertion = await self._insertion_for(
+                    trip, on_board, request, office, positions[vehicle.id].place
+                )
+
+            facts = await self._facts(
+                request=request,
+                employee=employee,
+                vehicle=vehicle,
+                trip=trip,
+                other_riders=bool(on_board),
+                position=positions[vehicle.id],
+                eta_seconds=eta.seconds,
+                settings=settings,
+                now=now,
+                policy=policy,
+                timezone=timezone,
+                insertion=insertion,
+            )
+            inputs = await self._detour_inputs(operator_id, request, on_board, office)
+            candidates.append(
+                Candidate(
+                    vehicle=vehicle,
+                    trip_id=trip.id if trip is not None else None,
+                    eta_to_pickup_seconds=eta.seconds,
+                    eta_approximate=eta.approximate,
+                    seats_free_after=vehicle.seat_capacity - len(on_board) - 1,
+                    gps_age_seconds=facts.gps_age_seconds,
+                    added_minutes=insertion.added_minutes if insertion else {},
+                    new_trip=trip is None,
+                    violations=check_hard_rules(
+                        facts,
+                        insertion,
+                        inputs.limits,
+                        inputs.direct,
+                        inputs.night_escort_required,
+                    ),
+                    empty_km_added=(eta.distance_meters / 1000.0) if trip is None else 0.0,
+                )
+            )
+
+        await self._score(operator_id, request, employee, candidates, settings, now)
+        candidates.sort(key=lambda candidate: candidate.sort_key)
+        return candidates
+
+    async def suggestions(
+        self, operator_id: uuid.UUID, request_id: uuid.UUID, limit: int = 3
+    ) -> list[Candidate]:
+        """The best scored candidates that break no hard rule (`control-model.md` §1).
+
+        Not simply the first three of `candidates()`, because the two answer different
+        questions. A candidate list is everything a supervisor *could* choose,
+        violations included, so they can see that the only cab within reach is twenty
+        minutes over the limit. A suggestion is the system **recommending** something,
+        and `allocation-rules.md` §2 is explicit that there hard rules are filters,
+        never traded off against cost.
+
+        An empty list therefore means the opposite of "no cabs": it means none of them
+        is allowed. `candidates()` carries the reasons, each naming the config key that
+        excluded it.
+
+        A request still inside its evening hold window is not offered anything (B29): the
+        platform is deliberately waiting for a rider to share with.
+        """
+        if await self.is_held(await self._request(operator_id, request_id)):
+            return []
+        scored = await self.candidates(operator_id, request_id)
+        return [candidate for candidate in scored if assignable(candidate.violations)][:limit]
+
+    # --- scoring ------------------------------------------------------------------
+
+    async def _score(
+        self,
+        operator_id: uuid.UUID,
+        request: RideRequest,
+        employee: Employee,
+        candidates: list[Candidate],
+        settings: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        """Attach §4's cost and §5's phrases to every candidate, in place."""
+        if not candidates:
+            return
+
+        weights = CostWeights(
+            weight_wait=float(settings["weight_wait"]),
+            weight_empty_km=float(settings["weight_empty_km"]),
+            cost_new_vehicle=float(settings["cost_new_vehicle"]),
+            urgency_factor_high=float(settings["urgency_factor_high"]),
+            urgency_factor_medium=float(settings["urgency_factor_medium"]),
+            urgency_factor_low=float(settings["urgency_factor_low"]),
+        )
+        priority, urgency = effective_rider(
+            employee.priority,
+            request.urgency,
+            # Expired overrides stop weighing (B26): a request forced to the front of
+            # the queue for this morning's crisis must not still be there tomorrow.
+            forced_priority=request.forced_priority and still_applies(request.override_until, now),
+        )
+        # Named here, not in the domain: the sentence says "+4 min for Rahul", and only
+        # the database knows who Rahul is.
+        others = await self._affected_riders(operator_id, candidates)
+
+        for candidate in candidates:
+            on_board = tuple(
+                ExistingRider(
+                    request_id=rider_id,
+                    priority=others[rider_id].priority,
+                    urgency=Urgency(others[rider_id].urgency),
+                    added_minutes=added,
+                )
+                for rider_id, added in candidate.added_minutes.items()
+                if rider_id in others
+            )
+            breakdown = assignment_cost(
+                CostInput(
+                    priority=priority,
+                    urgency=urgency,
+                    wait_minutes=_wait_minutes(request, candidate, now),
+                    empty_km_added=candidate.empty_km_added,
+                    new_trip=candidate.new_trip,
+                    riders_on_board=on_board,
+                    eta_to_pickup_seconds=candidate.eta_to_pickup_seconds,
+                    vehicle_id=candidate.vehicle.id,
+                ),
+                weights,
+            )
+            candidate.cost = breakdown.total
+            candidate.reasons = render_reasons(
+                SuggestionFacts(
+                    eta_to_pickup_seconds=candidate.eta_to_pickup_seconds,
+                    seats_free_after=candidate.seats_free_after,
+                    empty_km_added=candidate.empty_km_added,
+                    new_trip=candidate.new_trip,
+                    riders=tuple(
+                        named_riders(
+                            {str(key): value for key, value in candidate.added_minutes.items()},
+                            {str(key): rider.name for key, rider in others.items()},
+                        )
+                    ),
+                    trip_label=_trip_label(candidate.trip_id),
+                    eta_approximate=candidate.eta_approximate,
+                )
+            )
+
+    async def _affected_riders(
+        self, operator_id: uuid.UUID, candidates: list[Candidate]
+    ) -> dict[uuid.UUID, AffectedRider]:
+        """Name, priority and urgency of every rider some candidate would detour."""
+        request_ids = {rider_id for candidate in candidates for rider_id in candidate.added_minutes}
+        if not request_ids:
+            return {}
+
+        rows = (
+            await self.session.execute(
+                select(RideRequest.id, Employee.name, Employee.priority, RideRequest.urgency)
+                .join(Employee, Employee.id == RideRequest.employee_id)
+                .where(RideRequest.operator_id == operator_id)
+                .where(RideRequest.id.in_(request_ids))
+            )
+        ).all()
+        return {row[0]: AffectedRider(name=row[1], priority=row[2], urgency=row[3]) for row in rows}
+
+    # --- assignment ---------------------------------------------------------------
+
+    async def assign(
+        self,
+        operator_id: uuid.UUID,
+        request_id: uuid.UUID,
+        vehicle_id: uuid.UUID,
+        actor: Actor,
+        actor_user_id: uuid.UUID | None,
+        trip_id: uuid.UUID | None = None,
+        reason_code: str | None = None,
+        note: str | None = None,
+        is_override: bool = False,
+        plan: PlannedAssignment | None = None,
+    ) -> Trip:
+        """Put a request on a vehicle: a new trip, or a seat on an existing one (SUP-03).
+
+        Refuses on capacity, on an unknown id, and on any transition the state machine
+        does not allow. Everything else is recorded as an accepted violation (ADR-0011).
+
+        `plan` is the optimizer's decision, already judged against every hard rule by the
+        evaluator it shares with manual assignment (B32). It carries the stop order and the
+        pickup ETA the solver worked out; everything else - the state machine, the lock
+        guard, capacity, the driver on duty, the hold window - is checked here exactly as
+        for a person, because those are the parts a plan computed a moment ago cannot vouch
+        for.
+        """
+        request = await self._request(operator_id, request_id)
+        vehicle = await self._vehicle(operator_id, vehicle_id)
+        office = await self._office(operator_id, request.office_id)
+        employee = await self._employee(operator_id, request.employee_id)
+        settings = await self.config.all_values(operator_id)
+        now = self.clock.now()
+
+        if request.status not in [str(status) for status in ASSIGNABLE_STATUSES]:
+            # The state machine would refuse too, but this says why in the supervisor's
+            # language rather than as an edge that does not exist.
+            raise Conflict(
+                f"A request that is {request.status} cannot be assigned",
+                {"request_id": str(request_id), "status": request.status},
+            )
+
+        if actor in AUTOMATIC_ACTORS:
+            released = await self.hold_release(request, employee=employee, settings=settings)
+            if released is not None and now < released:
+                raise Conflict(
+                    "This request is inside its evening hold window",
+                    {"request_id": str(request_id), "held_until": released.isoformat()},
+                )
+
+        trip = await self._target_trip(operator_id, trip_id, vehicle)
+        on_board = await self._riders_of(trip) if trip is not None else []
+
+        seats_needed = len(on_board) + 1
+        if seats_needed > vehicle.seat_capacity:
+            raise Conflict(
+                "The vehicle does not have a free seat",
+                {
+                    "vehicle_id": str(vehicle_id),
+                    "seat_capacity": vehicle.seat_capacity,
+                    "riders_after": seats_needed,
+                },
+            )
+
+        driver_id = await self._driver_on_duty(vehicle_id)
+        if driver_id is None:
+            raise Conflict("The vehicle has no driver on duty", {"vehicle_id": str(vehicle_id)})
+
+        position = (await self.latest_positions(operator_id)).get(vehicle_id)
+        eta_seconds, eta_approximate = await self._eta_to_pickup(position, request, office)
+        if plan is not None and request.id in plan.pickup_eta_seconds:
+            # The solver's own figure: for the third rider on a route it is the time to
+            # reach *them*, not the time from the cab's position straight to their door.
+            eta_seconds = plan.pickup_eta_seconds[request.id]
+
+        insertion = (
+            await self._insertion_for(
+                trip, on_board, request, office, position.place if position else None
+            )
+            if trip is not None and on_board and plan is None
+            else None
+        )
+        facts = await self._facts(
+            request=request,
+            employee=employee,
+            vehicle=vehicle,
+            trip=trip,
+            other_riders=bool(on_board),
+            position=position,
+            eta_seconds=eta_seconds,
+            settings=settings,
+            now=now,
+            policy=(await self.client_policies(operator_id, {request.client_id}, settings))[
+                request.client_id
+            ],
+            timezone=await self.operator_timezone(operator_id),
+            insertion=insertion,
+        )
+        inputs = await self._detour_inputs(operator_id, request, on_board, office)
+        violations = (
+            []
+            if plan is not None
+            else check_hard_rules(
+                facts, insertion, inputs.limits, inputs.direct, inputs.night_escort_required
+            )
+        )
+
+        created = trip is None
+        if trip is None:
+            trip = Trip(
+                operator_id=operator_id,
+                vehicle_id=vehicle_id,
+                driver_id=driver_id,
+                direction=request.direction,
+                office_id=request.office_id,
+                status=TripStatus.planned,
+                pooling_blocked=request.no_sharing or employee.is_vip,
+                planned_start=now,
+                mode_used=plan.mode_used if plan is not None else MODE_MANUAL,
+            )
+            self.session.add(trip)
+            await self.session.flush()
+
+        riders = [*on_board, _rider_of(request)]
+        if insertion is not None:
+            riders = list(insertion.plan.order)
+        if plan is not None:
+            by_id = {rider.request_id: rider for rider in riders}
+            ordered = [by_id[rid] for rid in plan.order if rid in by_id]
+            riders = ordered + [rider for rider in riders if rider not in ordered]
+        await self._write_stops(trip, riders, office, eta_seconds, eta_approximate, now)
+        await self._record_pooling_cost(riders, insertion, inputs.direct, plan)
+
+        # The request moves through the state machine; nothing writes `status` directly.
+        event = transition_request(
+            RequestStatus(request.status),
+            RequestStatus.assigned,
+            RequestContext(
+                actor=actor,
+                # Gated on expiry like every other read of the lock (B26): an override
+                # that has lapsed must not still be refusing transitions.
+                is_locked=request.is_locked and still_applies(request.override_until, now),
+                # **Only** when this is a different cab from the one the request is
+                # pinned to. Found by S09: with this hardcoded True, a lock refused the
+                # very assignment it existed to force - the failsafe offered the locked
+                # vehicle, the state machine refused it as "a locked request can only
+                # change vehicle through a supervisor override", and the request could
+                # then never be assigned by anybody, by hand or otherwise.
+                changes_vehicle=request.lock_vehicle_id != vehicle_id,
+                # A locked request moves only through an explicit override, and only
+                # one carrying a reason - the state machine has enforced that since
+                # Phase 1, and B26 is the first caller able to say yes.
+                is_override=is_override,
+            ),
+        )
+        request.status = event.to_status
+        request.trip_id = trip.id
+        self.session.add(
+            RideRequestEvent(
+                operator_id=operator_id,
+                request_id=request.id,
+                from_status=event.from_status,
+                to_status=event.to_status,
+                actor_type=actor_type_for(actor),
+                actor_user_id=actor_user_id,
+                reason=note,
+                at=now,
+                data={
+                    "trip_id": str(trip.id),
+                    "vehicle_id": str(vehicle_id),
+                    "notify": [str(recipient) for recipient in event.notify],
+                },
+            )
+        )
+
+        if vehicle.status == str(VehicleStatus.available):
+            vehicle_event = transition_vehicle(
+                VehicleStatus.available, VehicleStatus.on_trip, actor=actor
+            )
+            vehicle.status = vehicle_event.to_status
+
+        self.record_trip_event(
+            trip,
+            from_status=None if created else trip.status,
+            to_status=trip.status,
+            actor=actor,
+            actor_user_id=actor_user_id,
+            now=now,
+            reason=note,
+            data={
+                "action": "trip_created" if created else "rider_added",
+                "request_id": str(request.id),
+                "reason_code": reason_code,
+                # Recorded so an override against the rules stays visible (ADR-0011).
+                "violations_accepted": [str(violation) for violation in violations],
+                "planned_by": "optimizer" if plan is not None else None,
+            },
+        )
+        await self.session.flush()
+
+        # The night escort flag exists from the moment the trip is planned (OQ-10): a woman who
+        # would be alone, or last out, shows on the board and raises its alert now, not at the
+        # next sweep.
+        await EscortService(self.session, self.clock, self.config).sync([trip])
+
+        await self._notify_assigned(trip, request, employee, vehicle, driver_id, eta_seconds)
+        logger.info(
+            "request_assigned",
+            request_id=str(request.id),
+            trip_id=str(trip.id),
+            vehicle_id=str(vehicle_id),
+            new_trip=created,
+            violations=[str(violation) for violation in violations],
+        )
+        return trip
+
+    async def _record_pooling_cost(
+        self,
+        riders: list[Rider],
+        insertion: Insertion | None,
+        direct: dict[uuid.UUID, float],
+        plan: PlannedAssignment | None,
+    ) -> None:
+        """Store what pooling cost each rider on the trip, in minutes beyond riding alone.
+
+        Measured the way the plan that placed them measured it - the optimizer's own times
+        for its plans, the dispatch service's for a person's - so the figure on the board
+        is the figure the decision was made on. A lone rider is zero by definition.
+        """
+        ids = [rider.request_id for rider in riders]
+        excess: dict[uuid.UUID, float | None]
+        if plan is not None and plan.excess_minutes:
+            excess = {rid: plan.excess_minutes.get(rid) for rid in ids}
+        elif insertion is not None:
+            excess = {
+                rid: max(insertion.plan.ride_seconds.get(rid, 0.0) - direct.get(rid, 0.0), 0.0)
+                / 60.0
+                for rid in ids
+            }
+        else:
+            excess = {rid: 0.0 for rid in ids}
+        rows = (
+            (await self.session.execute(select(RideRequest).where(RideRequest.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            value = excess.get(row.id)
+            if value is not None:
+                row.pooling_added_minutes = value
+
+    async def _notify_assigned(
+        self,
+        trip: Trip,
+        request: RideRequest,
+        employee: Employee,
+        vehicle: Vehicle,
+        driver_id: uuid.UUID,
+        eta_seconds: float,
+    ) -> None:
+        """SUP-03: the employee and the driver hear about it within 10 seconds.
+
+        `trip-lifecycle.md` section 6 names the recipients; the state machine returns
+        them, and these are the channels they listen on (`architecture.md` section 4).
+        """
+        payload = {
+            "trip_id": str(trip.id),
+            "request_id": str(request.id),
+            "vehicle_id": str(vehicle.id),
+            "registration_no": vehicle.registration_no,
+            "driver_id": str(driver_id),
+            "pickup_eta_seconds": int(eta_seconds),
+        }
+        await self.events.publish(Event("request.assigned", trip_channel(trip.id), payload))
+        if employee.user_id is not None:
+            await self.events.publish(
+                Event("request.assigned", user_channel(employee.user_id), payload)
+            )
+        driver_user_id = await self._driver_user_id(driver_id)
+        if driver_user_id is not None:
+            await self.events.publish(Event("trip.assigned", user_channel(driver_user_id), payload))
+        await self.events.publish(
+            Event("trip.assigned", operator_channel(trip.operator_id, "requests"), payload)
+        )
+
+        # `trip-lifecycle.md` section 6: "request -> assigned | Employee (push), driver
+        # (push)". The realtime event updates a screen already open; the push reaches a
+        # phone in a pocket, which is the one that matters at 7am.
+        await self.notifications.notify(
+            NotificationType.request_assigned,
+            Audience(
+                employee=employee.user_id,
+                driver=driver_user_id,
+                operator_id=trip.operator_id,
+            ),
+            {
+                **payload,
+                "registration_no": vehicle.registration_no,
+                "pickup_eta_minutes": round(eta_seconds / 60),
+                "landmark": request.landmark,
+            },
+        )
+
+    # --- stops --------------------------------------------------------------------
+
+    async def _write_stops(
+        self,
+        trip: Trip,
+        riders: list[Rider],
+        office: Office,
+        eta_seconds: float,
+        eta_approximate: bool,
+        now: datetime,
+    ) -> None:
+        """Rewrite the trip's stops from the rider order.
+
+        Rewriting rather than patching keeps `sequence` contiguous and unique without a
+        renumbering dance. Stops that already happened are left exactly as they were: a
+        driver who has arrived somewhere cannot have that undone by a later insertion.
+        """
+        existing = list(
+            (
+                await self.session.execute(
+                    select(TripStop).where(TripStop.trip_id == trip.id).order_by(TripStop.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Keyed by rider and kind, and **every** existing stop is reused, not only the
+        # finished ones. Deleting and recreating pending rows changed their ids under a
+        # driver already holding them, and their next tap came back 404 - found by the
+        # S02 simulator run. A re-sequenced stop is the same stop.
+        keep = {(stop.request_id, stop.stop_type): stop for stop in existing}
+        plan = build_plan(
+            Direction(trip.direction),
+            Place(*_coords(office.location)),
+            riders,
+            self._planner_duration(),
+        )
+
+        planned_keys = {(stop.request_id, str(stop.kind)) for stop in plan.stops}
+        for key, stop in keep.items():
+            if key not in planned_keys:
+                # A rider who is no longer on the trip at all.
+                await self.session.delete(stop)
+        await self.session.flush()
+
+        eta_at = now + timedelta(seconds=eta_seconds)
+        # Two passes: clear the sequences first, because `(trip_id, sequence)` is unique
+        # and re-ordering in place would collide with a row that has not moved yet.
+        for offset, planned in enumerate(plan.stops):
+            kept = keep.get((planned.request_id, str(planned.kind)))
+            if kept is not None:
+                kept.sequence = -(offset + 1)
+        await self.session.flush()
+
+        for planned in plan.stops:
+            kept = keep.get((planned.request_id, str(planned.kind)))
+            if kept is not None:
+                kept.sequence = planned.sequence
+                continue
+            self.session.add(
+                TripStop(
+                    operator_id=trip.operator_id,
+                    trip_id=trip.id,
+                    sequence=planned.sequence,
+                    stop_type=planned.kind,
+                    request_id=planned.request_id,
+                    location=_point(planned.place.lat, planned.place.lng),
+                    status=StopStatus.pending,
+                    planned_eta=eta_at,
+                    latest_eta=eta_at,
+                    eta_approximate=eta_approximate,
+                )
+            )
+        await self.session.flush()
+
+    @staticmethod
+    def _planner_duration() -> Duration:
+        """A duration callable for `build_plan` that needs no network.
+
+        Writing the stops does not re-decide the order - `best_insertion` already did that
+        with real ETAs - so this only has to be consistent, not accurate. Asking OSRM again
+        here would spend rate-limit budget reproducing an answer we already have.
+        """
+        return _haversine_seconds
+
+    # --- fact loading -----------------------------------------------------------------
+
+    async def latest_positions(self, operator_id: uuid.UUID) -> dict[uuid.UUID, Position]:
+        """Each vehicle's most recent ping.
+
+        Read from `location_ping` rather than Redis: Redis holds the live map's hot path,
+        but it expires and can be cold after a restart, and a dispatch decision made from
+        a missing key would silently be a dispatch decision made from no information.
+        """
+        rows = await self.session.execute(
+            text(
+                """
+                SELECT DISTINCT ON (vehicle_id)
+                       vehicle_id,
+                       recorded_at,
+                       ST_Y(location::geometry) AS lat,
+                       ST_X(location::geometry) AS lng
+                FROM location_ping
+                WHERE operator_id = :operator_id AND recorded_at >= :since
+                ORDER BY vehicle_id, recorded_at DESC
+                """
+            ).bindparams(operator_id=operator_id, since=self.clock.now() - POSITION_LOOKBACK)
+        )
+        return {
+            row.vehicle_id: Position(lat=row.lat, lng=row.lng, recorded_at=row.recorded_at)
+            for row in rows
+        }
+
+    async def live_trips(self, operator_id: uuid.UUID) -> dict[uuid.UUID, Trip]:
+        """The open trip per vehicle, if any."""
+        return await self._live_trips(operator_id)
+
+    async def _live_trips(self, operator_id: uuid.UUID) -> dict[uuid.UUID, Trip]:
+        """The open trip per vehicle, if any."""
+        trips = (
+            (
+                await self.session.execute(
+                    select(Trip)
+                    .where(Trip.operator_id == operator_id)
+                    .where(Trip.status.in_([str(status) for status in LIVE_TRIP_STATUSES]))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {trip.vehicle_id: trip for trip in trips}
+
+    async def _riders_by_trip(self, operator_id: uuid.UUID) -> dict[uuid.UUID, list[Rider]]:
+        """Riders still occupying a seat, grouped by trip."""
+        rows = (
+            (
+                await self.session.execute(
+                    select(RideRequest)
+                    .where(RideRequest.operator_id == operator_id)
+                    .where(RideRequest.trip_id.is_not(None))
+                    .where(RideRequest.status.in_([str(s) for s in ON_BOARD_STATUSES]))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        grouped: dict[uuid.UUID, list[Rider]] = {}
+        for row in rows:
+            assert row.trip_id is not None
+            grouped.setdefault(row.trip_id, []).append(_rider_of(row))
+        return grouped
+
+    async def _riders_of(self, trip: Trip) -> list[Rider]:
+        by_trip = await self._riders_by_trip(trip.operator_id)
+        return by_trip.get(trip.id, [])
+
+    async def _insertion_for(
+        self,
+        trip: Trip,
+        on_board: list[Rider],
+        request: RideRequest,
+        office: Office,
+        origin: Place | None = None,
+    ) -> Insertion:
+        """Where the new rider fits, and what it costs the others.
+
+        One matrix call covering every stop place, then pure arithmetic over every
+        insertion position.
+        """
+        newcomer = _rider_of(request)
+        office_place = Place(*_coords(office.location))
+        riders = [*on_board, newcomer]
+        places = _unique_places(
+            [rider.place for rider in riders]
+            + [rider.pickup for rider in riders if rider.pickup is not None]
+            + [office_place]
+            # The cab itself, so the route-aware en-route ceiling can be judged from the
+            # same single matrix call (B33) instead of costing a second one.
+            + ([origin] if origin is not None else [])
+        )
+        duration = await self._duration_table(places)
+        return best_insertion(
+            Direction(trip.direction),
+            office_place,
+            on_board,
+            newcomer,
+            duration,
+            origin,
+        )
+
+    async def _duration_table(self, places: list[Place]) -> Duration:
+        """A `duration(a, b)` callable backed by one pre-fetched matrix."""
+        points = [LatLng(place.lat, place.lng) for place in places]
+        matrix = await self.eta.eta_matrix(points, points)
+        lookup: dict[tuple[Place, Place], float] = {
+            (places[row], places[column]): matrix[row][column].seconds
+            for row in range(len(places))
+            for column in range(len(places))
+        }
+
+        def duration(first: Place, second: Place) -> float:
+            return lookup.get((first, second), _haversine_seconds(first, second))
+
+        return duration
+
+    async def _facts(
+        self,
+        request: RideRequest,
+        employee: Employee,
+        vehicle: Vehicle,
+        trip: Trip | None,
+        other_riders: bool,
+        position: Position | None,
+        eta_seconds: float,
+        settings: dict[str, Any],
+        now: datetime,
+        policy: EffectivePolicy | None = None,
+        timezone: str = "UTC",
+        insertion: Insertion | None = None,
+    ) -> AssignmentFacts:
+        # A client with no policy gets the operator's numbers, which is every client
+        # today; resolving here keeps the callers that have not loaded one working.
+        effective = policy or resolve_policy(settings)
+        # When the rider would really be collected: along the insertion's route if there
+        # is one (B33), otherwise straight from the cab. Rule 8 is about that moment, not
+        # about how far away the cab is now.
+        arrival = (
+            insertion.pickup_arrival_seconds
+            if insertion is not None and insertion.pickup_arrival_seconds is not None
+            else eta_seconds
+        )
+        pickup_at = pickup_time(now, arrival)
+        return AssignmentFacts(
+            vehicle_id=vehicle.id,
+            vehicle_status=vehicle.status,
+            vehicle_type=vehicle.vehicle_type,
+            gps_age_seconds=(
+                (now - position.recorded_at).total_seconds() if position is not None else None
+            ),
+            stale_gps_seconds=int(settings["stale_gps_seconds"]),
+            eta_to_pickup_seconds=eta_seconds,
+            # Widened for a request nobody has served yet, so a long wait stops being
+            # offered only cabs that were never going to arrive (ADR-0019).
+            candidate_max_eta_minutes=widened_candidate_eta_minutes(
+                base_minutes=int(settings["candidate_max_eta_minutes"]),
+                waited_minutes=(now - request.queued_at).total_seconds() / 60.0,
+                # The first widening happens when the wait becomes "too long" by the
+                # operator's own threshold; after that, once per retry interval.
+                escalate_after_minutes=int(settings["alert_wait_minutes"]),
+                retry_after_minutes=int(settings["retry_after_minutes"]),
+                widen_minutes=int(settings["retry_eta_widen_minutes"]),
+                ceiling_minutes=int(settings["retry_eta_max_minutes"]),
+            ),
+            enroute_reuse_max_eta_minutes=int(settings["enroute_reuse_max_eta_minutes"]),
+            # The client's own window where they set one (§1, per-client). Not
+            # stricter-only: how long their people will wait at the kerb is their call.
+            pickup_window_minutes=effective.pickup_window_minutes,
+            requested_time=request.requested_time,
+            pickup_at=pickup_at,
+            # Local, because "20:00-06:00" is a wall clock and not UTC.
+            pickup_time_local=local_time(pickup_at, timezone),
+            night_safety_enabled=effective.night_safety_enabled,
+            night_start=effective.night_start,
+            night_end=effective.night_end,
+            night_safety_positions=effective.night_safety_positions,
+            direction=Direction(request.direction),
+            office_id=request.office_id,
+            employee_is_vip=employee.is_vip,
+            # A client who does not allow pooling at all is the same thing, rule by
+            # rule, as every one of their riders asking not to share (§1, B28).
+            request_no_sharing=request.no_sharing or not effective.pooling_allowed,
+            # Gated on expiry, never read raw: `control-model.md` §3 rule 5 requires an
+            # override to stop applying with **nothing running**, so the question is
+            # asked here on every read rather than by a sweep that flips the column
+            # back (B26). `override_until` NULL means the flag was not set by an
+            # override, or was set without an end - either way it still applies.
+            lock_vehicle_id=(
+                request.lock_vehicle_id if still_applies(request.override_until, now) else None
+            ),
+            trip_direction=Direction(trip.direction) if trip is not None else None,
+            trip_office_id=trip.office_id if trip is not None else None,
+            trip_pooling_blocked=(
+                trip.pooling_blocked and still_applies(trip.override_until, now)
+                if trip is not None
+                else False
+            ),
+            trip_has_other_riders=other_riders,
+        )
+
+    async def _detour_inputs(
+        self,
+        operator_id: uuid.UUID,
+        request: RideRequest,
+        on_board: list[Rider],
+        office: Office,
+    ) -> RuleInputs:
+        """Everything §2 needs that varies per rider: limits, direct times, flags.
+
+        One loader rather than three, because all of it comes from the same two rows -
+        the rider's request and their client's policy - and a second pass would be a
+        second chance for the two to disagree about whose client is whose.
+
+        Limits are operator config tightened by the client policy: rule 7 uses the
+        **stricter** of the two, which `domain/policy.py` now decides from the config
+        registry rather than from a list restated here.
+        """
+        settings = await self.config.all_values(operator_id)
+
+        request_ids = [rider.request_id for rider in on_board] + [request.id]
+        rows = list(
+            (
+                await self.session.execute(
+                    select(RideRequest, Employee.night_escort_required)
+                    .join(Employee, Employee.id == RideRequest.employee_id)
+                    .where(RideRequest.id.in_(request_ids))
+                )
+            ).all()
+        )
+        policies = await self.client_policies(
+            operator_id, {row[0].client_id for row in rows}, settings
+        )
+
+        limits: dict[uuid.UUID, DetourLimits] = {}
+        flagged: set[uuid.UUID] = set()
+        for row, escort_required in rows:
+            policy = policies[row.client_id]
+            limits[row.id] = DetourLimits(
+                max_detour_factor=policy.max_detour_factor,
+                max_detour_minutes=policy.max_detour_minutes,
+            )
+            if escort_required:
+                flagged.add(row.id)
+
+        office_place = Place(*_coords(office.location))
+        direct: dict[uuid.UUID, float] = {}
+        for row, _ in rows:
+            rider = _rider_of(row)
+            direction = Direction(row.direction)
+            direct[row.id] = _haversine_seconds(
+                rider.pickup_place(direction, office_place),
+                rider.drop_place(direction, office_place),
+            )
+        return RuleInputs(limits=limits, direct=direct, night_escort_required=frozenset(flagged))
+
+    async def client_policies(
+        self,
+        operator_id: uuid.UUID,
+        client_ids: set[uuid.UUID],
+        settings: dict[str, Any] | None = None,
+    ) -> dict[uuid.UUID, EffectivePolicy]:
+        """Operator config resolved against each client's own policy (B28)."""
+        return await ClientPolicyService(self.session, self.clock, self.config).effective(
+            operator_id, client_ids, settings
+        )
+
+    async def operator_timezone(self, operator_id: uuid.UUID) -> str:
+        """The wall clock the night window and the mode windows are written in."""
+        timezone: str | None = await self.session.scalar(
+            select(Operator.timezone).where(Operator.id == operator_id)
+        )
+        return timezone or "UTC"
+
+    async def _eta_to_pickup(
+        self, position: Position | None, request: RideRequest, office: Office
+    ) -> tuple[float, bool]:
+        """Zero when the vehicle's position is unknown; `gps_stale` already flags that."""
+        if position is None:
+            return 0.0, True
+        pickup = _pickup_place(request, office)
+        estimate = await self.eta.eta(
+            LatLng(position.lat, position.lng), LatLng(pickup.lat, pickup.lng)
+        )
+        return estimate.seconds, estimate.approximate
+
+    # --- loading and refusals ------------------------------------------------------
+
+    async def _request(self, operator_id: uuid.UUID, request_id: uuid.UUID) -> RideRequest:
+        request = await self.session.scalar(
+            select(RideRequest)
+            .where(RideRequest.id == request_id)
+            .where(RideRequest.operator_id == operator_id)
+        )
+        if request is None:
+            # Another operator's id is a 404, not a 403: a 403 confirms it exists.
+            raise NotFound("Ride request not found")
+        return request
+
+    async def _vehicle(self, operator_id: uuid.UUID, vehicle_id: uuid.UUID) -> Vehicle:
+        vehicle = await self.session.scalar(
+            select(Vehicle)
+            .where(Vehicle.id == vehicle_id)
+            .where(Vehicle.operator_id == operator_id)
+        )
+        if vehicle is None:
+            raise NotFound("Vehicle not found")
+        return vehicle
+
+    async def _office(self, operator_id: uuid.UUID, office_id: uuid.UUID) -> Office:
+        office = await self.session.scalar(
+            select(Office).where(Office.id == office_id).where(Office.operator_id == operator_id)
+        )
+        if office is None:
+            raise NotFound("Office not found")
+        return office
+
+    async def _employee(self, operator_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:
+        employee = await self.session.scalar(
+            select(Employee)
+            .where(Employee.id == employee_id)
+            .where(Employee.operator_id == operator_id)
+        )
+        if employee is None:
+            raise NotFound("Employee not found")
+        return employee
+
+    async def _target_trip(
+        self, operator_id: uuid.UUID, trip_id: uuid.UUID | None, vehicle: Vehicle
+    ) -> Trip | None:
+        """The trip to add to: the one asked for, or the vehicle's open trip, or none."""
+        if trip_id is None:
+            return (await self._live_trips(operator_id)).get(vehicle.id)
+
+        trip = await self.session.scalar(
+            select(Trip).where(Trip.id == trip_id).where(Trip.operator_id == operator_id)
+        )
+        if trip is None:
+            raise NotFound("Trip not found")
+        if trip.vehicle_id != vehicle.id:
+            raise Conflict(
+                "That trip belongs to a different vehicle",
+                {"trip_id": str(trip_id), "trip_vehicle_id": str(trip.vehicle_id)},
+            )
+        if trip.status not in [str(status) for status in LIVE_TRIP_STATUSES]:
+            raise Conflict(
+                f"A {trip.status} trip cannot take a new rider", {"trip_id": str(trip_id)}
+            )
+        return trip
+
+    async def _driver_on_duty(self, vehicle_id: uuid.UUID) -> uuid.UUID | None:
+        driver_id: uuid.UUID | None = await self.session.scalar(
+            select(DutySession.driver_id)
+            .where(DutySession.vehicle_id == vehicle_id)
+            .where(DutySession.ended_at.is_(None))
+        )
+        return driver_id
+
+    async def _driver_user_id(self, driver_id: uuid.UUID) -> uuid.UUID | None:
+        from app.modules.fleet.models import Driver
+
+        user_id: uuid.UUID | None = await self.session.scalar(
+            select(Driver.user_id).where(Driver.id == driver_id)
+        )
+        return user_id
+
+    def record_trip_event(
+        self,
+        trip: Trip,
+        from_status: str | None,
+        to_status: str,
+        actor: Actor,
+        actor_user_id: uuid.UUID | None,
+        now: datetime,
+        reason: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self.session.add(
+            TripEvent(
+                operator_id=trip.operator_id,
+                trip_id=trip.id,
+                from_status=from_status,
+                to_status=to_status,
+                actor_type=actor_type_for(actor),
+                actor_user_id=actor_user_id,
+                reason=reason,
+                at=now,
+                data=data,
+            )
+        )
+
+    async def trips(self, operator_id: uuid.UUID, statuses: list[str] | None = None) -> list[Trip]:
+        """Every trip for the operator, newest plan first.
+
+        One read for a whole board. Thirty-five drivers each polling `/driver/trips` is
+        thirty-five round trips per simulated minute, and because the simulator's client
+        is synchronous inside one SimPy loop, each one stops the world - the remaining
+        cost OQ-26 named after the clock-jump queries were fixed.
+
+        Defaults to the live statuses: a board asking "what is happening now" should not
+        have to enumerate them, and a day of completed trips would bury the answer.
+        """
+        wanted = statuses or [str(status) for status in LIVE_TRIP_STATUSES]
+        rows = await self.session.execute(
+            select(Trip)
+            .where(Trip.operator_id == operator_id)
+            .where(Trip.status.in_(wanted))
+            .order_by(Trip.planned_start)
+        )
+        return list(rows.scalars().all())
+
+    async def stops_by_trip(self, trip_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[TripStop]]:
+        """Every stop for these trips in **one** query, grouped by trip.
+
+        The whole point of the endpoint above is to replace N calls with one; building
+        the response with one stop query per trip would put the N straight back.
+        """
+        if not trip_ids:
+            return {}
+        rows = await self.session.execute(
+            select(TripStop)
+            .where(TripStop.trip_id.in_(trip_ids))
+            .order_by(TripStop.trip_id, TripStop.sequence)
+        )
+        grouped: dict[uuid.UUID, list[TripStop]] = {}
+        for stop in rows.scalars().all():
+            grouped.setdefault(stop.trip_id, []).append(stop)
+        return grouped
+
+    async def riders_by_trip(
+        self, stops: dict[uuid.UUID, list[TripStop]]
+    ) -> dict[uuid.UUID, list[TripRiderView]]:
+        """Who is on each trip, in stop order, and what pooling cost them (B32).
+
+        One query for every trip's riders, for the same reason `stops_by_trip` is one:
+        the board reads every live trip at once.
+        """
+        request_ids = {stop.request_id for trip_stops in stops.values() for stop in trip_stops}
+        if not request_ids:
+            return {}
+        rows = await self.session.execute(
+            select(RideRequest.id, Employee.name, RideRequest.pooling_added_minutes)
+            .join(Employee, Employee.id == RideRequest.employee_id)
+            .where(RideRequest.id.in_(request_ids))
+        )
+        known = {row[0]: row for row in rows}
+        grouped: dict[uuid.UUID, list[TripRiderView]] = {}
+        for trip_id, trip_stops in stops.items():
+            seen: set[uuid.UUID] = set()
+            riders: list[TripRiderView] = []
+            for stop in sorted(trip_stops, key=lambda s: s.sequence):
+                if stop.request_id in seen or stop.request_id not in known:
+                    continue
+                seen.add(stop.request_id)
+                _, name, added = known[stop.request_id]
+                riders.append(
+                    TripRiderView(
+                        request_id=stop.request_id,
+                        rider_first_name=str(name).split(" ")[0],
+                        added_minutes=added,
+                    )
+                )
+            grouped[trip_id] = riders
+        return grouped
+
+    async def stops_of(self, trip_id: uuid.UUID) -> list[TripStop]:
+        return list(
+            (
+                await self.session.execute(
+                    select(TripStop).where(TripStop.trip_id == trip_id).order_by(TripStop.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+# --- helpers ------------------------------------------------------------------------
+
+
+def _rider_place(request: RideRequest) -> Place:
+    """The rider's own end of the journey: home for `to_office`, the drop otherwise."""
+    return Place(*_coords(request.location))
+
+
+def _pickup_override(request: RideRequest) -> Place | None:
+    """Set only when the rider is not where their direction says they are (ADR-0016)."""
+    if request.pickup_location is None:
+        return None
+    return Place(*_coords(request.pickup_location))
+
+
+def _rider_of(request: RideRequest) -> Rider:
+    """The planner's view of one request, carrying any pickup override with it."""
+    return Rider(request.id, _rider_place(request), _pickup_override(request))
+
+
+def _pickup_place(request: RideRequest, office: Office) -> Place:
+    """Where the vehicle collects them."""
+    return _rider_of(request).pickup_place(
+        Direction(request.direction), Place(*_coords(office.location))
+    )
+
+
+def _is_stale(position: Position | None, now: datetime, stale_after_seconds: int) -> bool:
+    if position is None:
+        return True
+    return (now - position.recorded_at).total_seconds() > stale_after_seconds
+
+
+#: Fallback speed for planning arithmetic when no matrix entry covers a pair. Matches the
+#: `approx` provider's assumption (ADR-0010, OQ-22) rather than inventing a second number.
+FALLBACK_SPEED_MPS = 24_000 / 3600
+DETOUR_FACTOR = 1.4
+
+
+def _haversine_seconds(first: Place, second: Place) -> float:
+    from app.domain.gps import distance_m
+
+    metres = distance_m(first.lat, first.lng, second.lat, second.lng) * DETOUR_FACTOR
+    return metres / FALLBACK_SPEED_MPS
+
+
+def _unique_places(places: list[Place]) -> list[Place]:
+    seen: dict[Place, None] = {}
+    for place in places:
+        seen.setdefault(place, None)
+    return list(seen)
+
+
+#: Public names for the helpers the optimizer's loader shares with this service, so it
+#: does not reach for underscore-prefixed functions across a module boundary.
+rider_of = _rider_of
+haversine_seconds = _haversine_seconds

@@ -1,0 +1,79 @@
+# Self-hosted map services (task I02b). OPTIONAL in development, REQUIRED before the
+# paid pilot (ADR-0010 §A3, OQ-21).
+#
+# An overlay, not a standalone file. Use it with whichever base compose you are running:
+#
+#   make up-maps                                      # development
+#   docker compose -f infra/docker-compose.staging.yml \
+#                  -f infra/docker-compose.maps.yml up -d     # staging
+#
+# Prepare the data first - these containers serve files, they do not build them:
+#
+#   infra/scripts/prepare_maps.sh all
+#
+# Then repoint the URLs, **and change nothing else**. That is the whole point of the
+# provider interface from I02: every map URL in this project is read from configuration
+# (CLAUDE.md hard rule 7), so switching off the public servers is an env change.
+#
+#   OSRM_URL=http://localhost:5000        (http://osrm:5000 from another container)
+#   TILES_URL=http://localhost:8081/styles/basic/{z}/{x}/{y}.png
+#   OSM_RATE_LIMIT_PER_SECOND=50          # your own server; the 1/s budget was theirs
+#
+# Nominatim is deliberately absent: Phase 1 ships no geocoding, and a self-hosted
+# instance is task I02c. The public one must never be used - its policy forbids
+# vehicle-tracking applications (ADR-0010 §A1).
+
+services:
+  osrm:
+    image: osrm/osrm-backend:v5.25.0
+    container_name: smartcab-osrm
+    restart: unless-stopped
+    # MLD, matching how prepare_maps.sh built the graph. Starting an MLD graph with the
+    # default CH algorithm fails with "Could not find any metrics" - which reads like
+    # missing data rather than a mismatched flag.
+    command: ["osrm-routed", "--algorithm", "mld", "--max-table-size", "2000", "/data/ncr.osrm"]
+    ports:
+      # Published in development so `curl localhost:5000` works. In staging, drop the
+      # port and let the backend reach it at `osrm:5000` on the compose network - it is
+      # not a public service.
+      - "${OSRM_PORT:-5000}:5000"
+    volumes:
+      - ./maps/data:/data:ro
+      - ./scripts/osrm_healthcheck.sh:/opt/osrm_healthcheck.sh:ro
+    healthcheck:
+      # A real route across the NCR, not a TCP probe, and spoken over bash's /dev/tcp
+      # because this image has no HTTP client. The reasoning is in the script.
+      test: ["CMD", "bash", "/opt/osrm_healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  tileserver:
+    image: maptiler/tileserver-gl:v4.11.1
+    container_name: smartcab-tileserver
+    restart: unless-stopped
+    # `tileserver-gl`, not `-light`: Phase 1 serves **raster** tiles (ADR-0010 §A2), and
+    # only the full image can rasterise the vector MBTiles that Planetiler produces.
+    # The vector tiles stay available for when MapLibre takes over (OQ-35).
+    command: ["--config", "/config/config.json", "--port", "8080"]
+    ports:
+      - "${TILES_PORT:-8081}:8080"
+    volumes:
+      - ./tiles/config.json:/config/config.json:ro
+      - ./tiles/styles:/config/styles:ro
+      - ./maps/tiles:/data:ro
+      # Glyph PBFs, downloaded by `prepare_maps.sh fonts`. tileserver-gl rasterises
+      # text server-side, so without this mount every tile comes back correct and
+      # silent - roads and water, no street names.
+      - ./maps/fonts:/fonts:ro
+      - ./scripts/tileserver_healthcheck.sh:/opt/tileserver_healthcheck.sh:ro
+    healthcheck:
+      # A real tile over Noida, not `/health`: the process answers `/health` even when
+      # the MBTiles failed to open, and then serves blank tiles that are valid PNGs.
+      # Spoken through node, the server's own runtime - this image has no curl either.
+      test: ["CMD", "bash", "/opt/tileserver_healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s

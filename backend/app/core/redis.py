@@ -39,12 +39,16 @@ class RedisLike(Protocol):
 
 
 def create_redis(settings: Settings) -> Redis:
-    return Redis.from_url(
+    # Assigned to a typed local first: `from_url` is annotated loosely in redis-py 6.4
+    # (pinned to <6.5 because Celery's broker goes through kombu - B20), and this module
+    # is checked strictly.
+    client: Redis = Redis.from_url(
         settings.redis_url,
         decode_responses=True,  # the cache stores JSON strings
         socket_connect_timeout=2.0,
         socket_timeout=2.0,
     )
+    return client
 
 
 def redis_check(redis: Any) -> CheckFn:

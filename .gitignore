@@ -2,6 +2,25 @@
 .env
 .env.*
 !.env.example
+key.properties
+app/android/key.properties
+*.jks
+*.keystore
+# The staging template is committed; the filled-in infra/.env.staging never is, and is
+# still caught by the `.env.*` rule above.
+!.env.staging.example
+
+# --- prepared map data (task I02b) ------------------------------------------
+# Hundreds of megabytes of OSM extract, OSRM graph and MBTiles, rebuilt monthly by
+# infra/scripts/prepare_maps.sh. infra/maps/README.md records what was built and when,
+# and IS committed.
+infra/maps/data/
+infra/maps/tiles/
+infra/maps/fonts/
+
+# --- phone testing (make phone-dev) ---
+.phone-dev/
+.loadtest/
 
 # --- Python ----------------------------------------------------------------
 __pycache__/
@@ -19,6 +38,8 @@ dist/
 build/
 
 # --- Flutter / Dart --------------------------------------------------------
+.gradle/
+**/.gradle/
 app/.dart_tool/
 app/.flutter-plugins
 app/.flutter-plugins-dependencies
@@ -34,6 +55,8 @@ runs/
 
 # --- Infra / map data (large, never committed) -----------------------------
 infra/data/
+# Broker credential files are generated from the vehicle registry at runtime.
+infra/mosquitto/config/generated/
 infra/tiles/*.mbtiles
 *.osm.pbf
 *.osrm*
@@ -44,3 +67,11 @@ infra/tiles/*.mbtiles
 *.swp
 .DS_Store
 Thumbs.db
+
+# Downloaded build tools, cached per machine. `scripts/api_client.py` fetches the
+# openapi-generator jar here on first run; it is pinned by version, so a checkout
+# reproduces the same client without carrying 27 MB of jar in history.
+.tooling/
+
+# Celery beat state written by `make phone-dev`
+backend/celerybeat-schedule*

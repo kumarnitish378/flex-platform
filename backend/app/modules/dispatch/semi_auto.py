@@ -1,0 +1,722 @@
+"""Semi-auto assignment and the failsafe sweep (`control-model.md` §1, §4 — B25).
+
+Two halves of one piece of due work, run by one sweep:
+
+1. **Offer.** A queued request in a `semi_auto` scope with no live offer gets the top
+   suggestions and a timer.
+2. **Fire.** An offer whose timer has run out is assigned, or escalated once and then
+   assigned, per `failsafe_action`.
+
+Both are **Clock-driven**, like every other sweep in this system: `/simctl/clock` runs
+them when the simulator jumps time, and the Celery beat runs them in production. That is
+ADR-0008's whole point, and the guard in `tests/unit/test_due_work_schedule.py` fails if
+the two ever diverge - which is the B20 failure, where three sweeps had one caller
+between them and none of it ran in production.
+
+**Nothing here assigns a suggestion without re-checking the hard rules.** The world
+moves between the offer and the timeout: the cab gets another rider, goes off duty, or
+drifts out of range. Assigning a stale offer because it was the best answer four minutes
+ago is exactly the failure a human would have caught.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import StrEnum
+from typing import Any, cast
+
+from sqlalchemy import CursorResult, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.clock import Clock
+from app.core.events import EventPublisher, NullEventPublisher
+from app.core.logging import get_logger
+from app.core.settings import Settings
+from app.domain.dispatch import Violation
+from app.domain.enums import ActorType, AlertType, Urgency
+from app.domain.errors import Conflict, NotFound, ValidationFailed
+from app.domain.failsafe import (
+    FailsafeAction,
+    FailsafeOutcome,
+    SuggestionStatus,
+    decide,
+    timeout_for,
+)
+from app.domain.optimizer import Placement
+from app.domain.state_machines import Actor, RequestStatus
+from app.modules.config.service import ConfigService
+from app.modules.dispatch.service import DispatchService, PlannedAssignment
+from app.modules.dispatch.suggestion_models import Suggestion
+from app.modules.modes.service import ModeService
+from app.modules.people.models import Employee
+from app.modules.requests.models import RideRequest
+
+logger = get_logger(__name__)
+
+#: How many of the ranked candidates become an offer. `control-model.md` §1: "the
+#: system suggests top 3 with reasons".
+OFFER_COUNT = 3
+
+#: Rule 7 and the en-route ceiling, which the optimizer measures on the routing matrix over the
+#: whole route and the single-insertion evaluator measures differently. A plan that still matches
+#: its trip is trusted on these; every other rule is judged again at the moment of assigning.
+PLAN_VOUCHED = frozenset(
+    {
+        Violation.detour_factor_exceeded,
+        Violation.detour_minutes_exceeded,
+        Violation.enroute_reuse_eta_exceeded,
+    }
+)
+
+#: Statuses a request can be in and still want a suggestion.
+OFFERABLE_STATUSES = (str(RequestStatus.requested), str(RequestStatus.queued))
+
+
+class SupervisorDecision(StrEnum):
+    """`control-model.md` §1: "one-tap approve or override"."""
+
+    approve = "approve"
+    choose_other = "choose_other"
+    reject = "reject"
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionResult:
+    suggestion_id: uuid.UUID
+    decision: SupervisorDecision
+    status: SuggestionStatus
+    trip_id: uuid.UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class SemiAutoSweep:
+    """What one pass did. Every number is something an operator could ask about."""
+
+    #: Always 0 since B32: offers are made by the batch optimizer, not by this sweep.
+    #: Kept so the field the schema and the tests already name does not vanish.
+    offered: int = 0
+    assigned: int = 0
+    escalated: int = 0
+    #: Offers withdrawn because the hard rules stopped holding. Counted separately from
+    #: rejections: the supervisor never turned these down, the world moved.
+    superseded: int = 0
+    no_candidate: int = 0
+
+
+async def close_offers_for(
+    session: AsyncSession,
+    request_id: uuid.UUID,
+    status: SuggestionStatus,
+    now: datetime,
+) -> int:
+    """Close every open offer for a request that can no longer be assigned (M09).
+
+    A free function rather than a method, so the request service can call it without
+    building a `DispatchService` it has no use for.
+
+    Found by S08. A rider gave up, their request was cancelled, and the offers already
+    made for it stayed `offered` - so the supervisor's board kept showing an offer for
+    a ride that no longer existed, and answering it returned 409 every time. The sweep
+    does supersede a stale offer, but only the **rank 1** one and only when its
+    failsafe timer comes due; the second and third choices sat open for the rest of the
+    run. In the simulator that was 39 identical refusals. On a real board it is a row
+    that cannot be cleared.
+    """
+    result = await session.execute(
+        update(Suggestion)
+        .where(Suggestion.request_id == request_id)
+        .where(Suggestion.status == str(SuggestionStatus.offered))
+        .values(status=str(status), decided_at=now)
+    )
+    # `rowcount` lives on the cursor result; the typed facade does not declare it.
+    return int(cast("CursorResult[Any]", result).rowcount or 0)
+
+
+class SemiAutoService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        clock: Clock,
+        dispatch: DispatchService,
+        settings: Settings | None = None,
+        events: EventPublisher | None = None,
+    ) -> None:
+        self.session = session
+        self.clock = clock
+        self.dispatch = dispatch
+        self.settings = settings
+        self.events = events or NullEventPublisher()
+        self.config = ConfigService(session, clock)
+        self.modes = ModeService(session, clock)
+
+    # --- the sweep ----------------------------------------------------------
+
+    async def run_due_semi_auto(self, operator_id: uuid.UUID | None = None) -> SemiAutoSweep:
+        """One pass: offer what needs offering, fire what has timed out.
+
+        Named `run_due_*` so the schedule guard sees it: any sweep reachable from a
+        clock jump must also be reachable from the beat.
+        """
+        # Offers are no longer made here. Since B32 the batch optimizer proposes trips
+        # for a `semi_auto` scope and `offer_planned` records them, so that a suggestion
+        # can pool riders - which a request-at-a-time offer cannot. This sweep keeps the
+        # other half: acting on an offer nobody answered.
+        fired = await self._fire_due(operator_id)
+
+        sweep = SemiAutoSweep(
+            assigned=fired.assigned,
+            escalated=fired.escalated,
+            superseded=fired.superseded,
+        )
+        if any((sweep.assigned, sweep.escalated, sweep.superseded)):
+            logger.info(
+                "semi_auto_sweep",
+                assigned=sweep.assigned,
+                escalated=sweep.escalated,
+                superseded=sweep.superseded,
+            )
+        return sweep
+
+    async def offer_planned(
+        self, request: RideRequest, placement: Placement, reasons: list[str]
+    ) -> list[Suggestion]:
+        """Record the optimizer's proposal for this request as offers, and start the timer.
+
+        Rank 1 is the **planned** placement: the cab and trip the batch chose, which may
+        pool this rider with others in a way no single-request ranking could. Ranks 2 and 3
+        are the best single-insertion alternatives from the Phase 2 candidate scoring, so
+        the supervisor still has somebody else to pick - `control-model.md` §1 promises the
+        top three, and a plan is one answer.
+
+        Returns an empty list only when there is nothing to offer, which cannot happen for
+        a placed request; it is the caller's cue that the request is not queued any more.
+        """
+        if request.status not in OFFERABLE_STATUSES:
+            return []
+        now = self.clock.now()
+        due_at = now + await self._timeout_for(request)
+        made = [
+            Suggestion(
+                id=uuid.uuid4(),
+                operator_id=request.operator_id,
+                request_id=request.id,
+                vehicle_id=placement.vehicle_id,
+                trip_id=placement.trip_id,
+                rank=1,
+                cost=placement.cost,
+                reasons=reasons,
+                plan={
+                    "order": [str(rid) for rid in placement.order],
+                    "pickup_eta_seconds": {
+                        str(rid): seconds for rid, seconds in placement.pickup_eta_seconds.items()
+                    },
+                    "excess_minutes": {
+                        str(rid): minutes for rid, minutes in placement.excess_minutes.items()
+                    },
+                },
+                status=str(SuggestionStatus.offered),
+                offered_at=now,
+                failsafe_due_at=due_at,
+            )
+        ]
+        alternatives = [
+            candidate
+            for candidate in await self.dispatch.suggestions(
+                request.operator_id, request.id, limit=OFFER_COUNT
+            )
+            if candidate.vehicle.id != placement.vehicle_id
+        ][: OFFER_COUNT - 1]
+        for rank, candidate in enumerate(alternatives, start=2):
+            made.append(
+                Suggestion(
+                    id=uuid.uuid4(),
+                    operator_id=request.operator_id,
+                    request_id=request.id,
+                    vehicle_id=candidate.vehicle.id,
+                    trip_id=candidate.trip_id,
+                    rank=rank,
+                    cost=candidate.cost or 0.0,
+                    reasons=list(candidate.reasons),
+                    status=str(SuggestionStatus.offered),
+                    offered_at=now,
+                    failsafe_due_at=due_at,
+                )
+            )
+        self.session.add_all(made)
+        await self.session.flush()
+        logger.info(
+            "suggestions_offered",
+            request_id=str(request.id),
+            count=len(made),
+            due_at=due_at.isoformat(),
+            planned_by="optimizer",
+        )
+        return made
+
+    async def offers(
+        self,
+        operator_id: uuid.UUID,
+        status: str = str(SuggestionStatus.offered),
+        request_id: uuid.UUID | None = None,
+    ) -> list[Suggestion]:
+        """The stored offers in one state, newest first (B25's record, read at last).
+
+        The table has existed since B25 and nothing could read it, which made
+        `/suggestions/{id}/decision` uncallable by any client: the id it needs was
+        never returned anywhere. Found writing M09's supervisor, which has to answer
+        offers rather than make assignments.
+        """
+        query = (
+            select(Suggestion)
+            .where(Suggestion.operator_id == operator_id)
+            .where(Suggestion.status == status)
+            .order_by(Suggestion.offered_at.desc(), Suggestion.rank)
+        )
+        if request_id is not None:
+            query = query.where(Suggestion.request_id == request_id)
+        return list((await self.session.execute(query)).scalars().all())
+
+    async def offer(self, request: RideRequest) -> list[Suggestion]:
+        """Record the top suggestions for this request and start the timer.
+
+        Returns an empty list when nothing is permitted - which is not an error. §2's
+        rules are filters here, and "no cab may take this" is a real answer that leaves
+        the request queued for a human. The escalation ladder in B09/ADR-0019 is what
+        notices a request nobody serves.
+        """
+        candidates = await self.dispatch.suggestions(
+            request.operator_id, request.id, limit=OFFER_COUNT
+        )
+        if not candidates:
+            return []
+
+        now = self.clock.now()
+        due_at = now + await self._timeout_for(request)
+        made: list[Suggestion] = []
+        for rank, candidate in enumerate(candidates, start=1):
+            suggestion = Suggestion(
+                id=uuid.uuid4(),
+                operator_id=request.operator_id,
+                request_id=request.id,
+                vehicle_id=candidate.vehicle.id,
+                trip_id=candidate.trip_id,
+                rank=rank,
+                cost=candidate.cost or 0.0,
+                reasons=list(candidate.reasons),
+                status=str(SuggestionStatus.offered),
+                offered_at=now,
+                failsafe_due_at=due_at,
+            )
+            self.session.add(suggestion)
+            made.append(suggestion)
+        await self.session.flush()
+
+        logger.info(
+            "suggestions_offered",
+            request_id=str(request.id),
+            count=len(made),
+            due_at=due_at.isoformat(),
+        )
+        return made
+
+    async def _fire_due(self, operator_id: uuid.UUID | None) -> SemiAutoSweep:
+        """Act on every offer whose timer has run out."""
+        now = self.clock.now()
+        query = (
+            select(Suggestion)
+            .where(Suggestion.status == str(SuggestionStatus.offered))
+            .where(Suggestion.rank == 1)
+            .where(Suggestion.failsafe_due_at <= now)
+        )
+        if operator_id is not None:
+            query = query.where(Suggestion.operator_id == operator_id)
+        due = list((await self.session.execute(query)).scalars().all())
+
+        assigned = escalated = superseded = 0
+        for suggestion in due:
+            request = await self.session.get(RideRequest, suggestion.request_id)
+            if request is None or request.status not in OFFERABLE_STATUSES:
+                # Somebody assigned or cancelled it by hand. Nothing to do, and the
+                # offer should stop being listed as open.
+                await self._close(suggestion, SuggestionStatus.superseded)
+                superseded += 1
+                continue
+
+            action = FailsafeAction(
+                str(await self.config.get(request.operator_id, "failsafe_action"))
+            )
+            decision = decide(
+                offered_at=suggestion.offered_at,
+                now=now,
+                timeout=await self._timeout_for(request),
+                action=action,
+                already_escalated=suggestion.escalated_at is not None,
+                supervisor_online=await self._supervisor_online(request.operator_id),
+            )
+
+            if decision.outcome is FailsafeOutcome.wait:
+                continue
+            if decision.outcome is FailsafeOutcome.escalate:
+                await self._escalate(suggestion, request, decision.next_due_at)
+                escalated += 1
+                continue
+
+            if await self._assign_from(suggestion, request):
+                assigned += 1
+            else:
+                superseded += 1
+
+        return SemiAutoSweep(assigned=assigned, escalated=escalated, superseded=superseded)
+
+    # --- a supervisor answering ---------------------------------------------
+
+    async def decide_on(
+        self,
+        operator_id: uuid.UUID,
+        suggestion_id: uuid.UUID,
+        decision: SupervisorDecision,
+        actor: Actor,
+        actor_user_id: uuid.UUID | None,
+        vehicle_id: uuid.UUID | None = None,
+        note: str | None = None,
+    ) -> DecisionResult:
+        """Answer one suggestion (`control-model.md` §1: approve, change, or reject).
+
+        `choose_other` is recorded as a **rejection** of what was offered, with the
+        chosen vehicle noted. It is a different ride, and counting it as acceptance
+        would let the Phase 2 metric flatter itself: the supervisor looked at the
+        system's answer and picked something else.
+        """
+        if decision is SupervisorDecision.reject:
+            await self.reject(operator_id, suggestion_id, actor_user_id, note)
+            return DecisionResult(suggestion_id, decision, SuggestionStatus.rejected, None)
+
+        if decision is SupervisorDecision.choose_other:
+            if vehicle_id is None:
+                raise ValidationFailed(
+                    "choose_other needs the vehicle_id you are choosing instead",
+                    {"decision": str(decision)},
+                )
+            suggestion = await self._open_suggestion(operator_id, suggestion_id)
+            request = await self.session.get(RideRequest, suggestion.request_id)
+            if request is None:
+                raise NotFound("Ride request not found")
+            trip = await self.dispatch.assign(
+                operator_id=operator_id,
+                request_id=request.id,
+                vehicle_id=vehicle_id,
+                actor=actor,
+                actor_user_id=actor_user_id,
+            )
+            await self._close(
+                suggestion,
+                SuggestionStatus.rejected,
+                by=actor_user_id,
+                at=self.clock.now(),
+                note=note or f"chose vehicle {vehicle_id} instead",
+            )
+            await self._close_siblings(suggestion, SuggestionStatus.superseded)
+            logger.info(
+                "suggestion_overridden",
+                suggestion_id=str(suggestion_id),
+                chosen_vehicle_id=str(vehicle_id),
+            )
+            return DecisionResult(suggestion_id, decision, SuggestionStatus.rejected, trip.id)
+
+        trip_id = await self.accept(operator_id, suggestion_id, actor, actor_user_id)
+        return DecisionResult(suggestion_id, decision, SuggestionStatus.accepted, trip_id)
+
+    async def accept(
+        self,
+        operator_id: uuid.UUID,
+        suggestion_id: uuid.UUID,
+        actor: Actor,
+        actor_user_id: uuid.UUID | None,
+    ) -> uuid.UUID:
+        """Take the system's recommendation. Returns the trip id.
+
+        The hard rules are re-checked here too, not only in the failsafe: a supervisor
+        reading a screen that is two minutes old is looking at the same stale offer the
+        sweep would have refused.
+        """
+        suggestion = await self._open_suggestion(operator_id, suggestion_id)
+        request = await self.session.get(RideRequest, suggestion.request_id)
+        if request is None:
+            raise NotFound("Ride request not found")
+
+        trip = await self.dispatch.assign(
+            operator_id=operator_id,
+            request_id=request.id,
+            vehicle_id=suggestion.vehicle_id,
+            actor=actor,
+            actor_user_id=actor_user_id,
+            trip_id=suggestion.trip_id,
+            plan=await self._plan_for(suggestion, request, "semi_auto"),
+        )
+        await self._close(
+            suggestion, SuggestionStatus.accepted, by=actor_user_id, at=self.clock.now()
+        )
+        await self._close_siblings(suggestion, SuggestionStatus.superseded)
+        logger.info("suggestion_accepted", suggestion_id=str(suggestion.id), trip_id=str(trip.id))
+        return trip.id
+
+    async def reject(
+        self,
+        operator_id: uuid.UUID,
+        suggestion_id: uuid.UUID,
+        actor_user_id: uuid.UUID | None,
+        note: str | None = None,
+    ) -> None:
+        """Turn one suggestion down.
+
+        The request stays queued and the remaining offers stay open: rejecting the
+        system's first choice is not the same as rejecting all three, and treating it
+        that way would push a supervisor back to the manual board for no reason.
+        """
+        suggestion = await self._open_suggestion(operator_id, suggestion_id)
+        await self._close(
+            suggestion,
+            SuggestionStatus.rejected,
+            by=actor_user_id,
+            at=self.clock.now(),
+            note=note,
+        )
+        logger.info("suggestion_rejected", suggestion_id=str(suggestion.id), note=note)
+
+    async def open_for(self, operator_id: uuid.UUID, request_id: uuid.UUID) -> list[Suggestion]:
+        rows = (
+            await self.session.execute(
+                select(Suggestion)
+                .where(Suggestion.operator_id == operator_id)
+                .where(Suggestion.request_id == request_id)
+                .where(Suggestion.status == str(SuggestionStatus.offered))
+                .order_by(Suggestion.rank)
+            )
+        ).scalars()
+        return list(rows)
+
+    # --- helpers ------------------------------------------------------------
+
+    async def _plan_for(
+        self, suggestion: Suggestion, request: RideRequest, mode_used: str
+    ) -> PlannedAssignment | None:
+        """The stored plan as an assignment, if the trip it was made for is still as it left it.
+
+        "As it left it" means nobody is on the trip that the plan did not know about; riders
+        the plan expected who have not been assigned yet (a pooled batch is accepted one rider
+        at a time) are fine, because `assign` orders by the plan and keeps only who is present.
+        Pickup ETAs are shortened by the time the offer has been open.
+        """
+        data = suggestion.plan
+        if not data:
+            return None
+        order = tuple(uuid.UUID(rid) for rid in data["order"])
+        if request.id not in order:
+            return None
+
+        trip_id = suggestion.trip_id
+        if trip_id is None:
+            live = await self.dispatch.live_trips(request.operator_id)
+            trip = live.get(suggestion.vehicle_id)
+            trip_id = trip.id if trip is not None else None
+        if trip_id is not None:
+            aboard = set(
+                (
+                    await self.session.execute(
+                        select(RideRequest.id)
+                        .where(RideRequest.trip_id == trip_id)
+                        .where(
+                            RideRequest.status.in_(
+                                [str(RequestStatus.assigned), str(RequestStatus.picked_up)]
+                            )
+                        )
+                    )
+                ).scalars()
+            )
+            if not aboard <= set(order):
+                return None
+
+        elapsed = max((self.clock.now() - suggestion.offered_at).total_seconds(), 0.0)
+        return PlannedAssignment(
+            order=order,
+            pickup_eta_seconds={
+                uuid.UUID(rid): max(float(seconds) - elapsed, 0.0)
+                for rid, seconds in data["pickup_eta_seconds"].items()
+            },
+            excess_minutes={
+                uuid.UUID(rid): float(minutes) for rid, minutes in data["excess_minutes"].items()
+            },
+            mode_used=mode_used,
+        )
+
+    async def _assign_from(self, suggestion: Suggestion, request: RideRequest) -> bool:
+        """Assign the offered vehicle, if the rules still hold. True when it happened."""
+        # An optimizer offer carries the plan that chose it. The plan was judged by the
+        # optimizer's own evaluator, which measures rule 7 on the routing matrix; the
+        # single-insertion candidate evaluator measures it differently and vetoed pooled
+        # placements the plan had passed. Withdrawing those at the timer meant the batch
+        # re-offered the same cab and an unanswered rider was never assigned in
+        # `semi_auto`. So a plan that still matches the trip is applied as the plan.
+        held = await self.dispatch.is_held(request)
+        planned = None if held else await self._plan_for(suggestion, request, "semi_auto")
+        # Everything about the *vehicle and the rider's situation* is re-read now (out of
+        # service, GPS gone quiet, a lock, a no-sharing rider aboard, the night rule...). The
+        # plan vouches only for the detour arithmetic it did itself.
+        ours = [
+            candidate
+            for candidate in await self.dispatch.candidates(request.operator_id, request.id)
+            if candidate.vehicle.id == suggestion.vehicle_id
+        ]
+        vouched = PLAN_VOUCHED if planned is not None else frozenset()
+        still_valid = not held and any(
+            all(violation in vouched for violation in candidate.violations) for candidate in ours
+        )
+        if not still_valid:
+            # The world moved. Withdraw rather than assign: the next sweep offers again
+            # from the cabs that are actually available now.
+            await self._close(suggestion, SuggestionStatus.superseded)
+            await self._close_siblings(suggestion, SuggestionStatus.superseded)
+            logger.info(
+                "suggestion_superseded",
+                suggestion_id=str(suggestion.id),
+                reason="hard rules no longer hold",
+                held=held,
+                violations=[str(v) for candidate in ours for v in candidate.violations],
+            )
+            return False
+
+        try:
+            trip = await self.dispatch.assign(
+                operator_id=request.operator_id,
+                request_id=request.id,
+                vehicle_id=suggestion.vehicle_id,
+                actor=Actor(str(ActorType.system_failsafe)),
+                actor_user_id=None,
+                trip_id=suggestion.trip_id,
+                plan=planned,
+            )
+        except (Conflict, NotFound) as exc:
+            logger.info(
+                "failsafe_assign_refused",
+                suggestion_id=str(suggestion.id),
+                error=type(exc).__name__,
+            )
+            await self._close(suggestion, SuggestionStatus.superseded)
+            return False
+
+        await self._close(suggestion, SuggestionStatus.failsafe_assigned, at=self.clock.now())
+        await self._close_siblings(suggestion, SuggestionStatus.superseded)
+        logger.info(
+            "failsafe_assigned",
+            suggestion_id=str(suggestion.id),
+            trip_id=str(trip.id),
+            actor=str(ActorType.system_failsafe),
+        )
+        return True
+
+    async def _escalate(
+        self, suggestion: Suggestion, request: RideRequest, next_due_at: datetime | None
+    ) -> None:
+        """Alert, keep the offer open, and give it one more timeout."""
+        from app.modules.alerts.service import AlertService
+
+        suggestion.escalated_at = self.clock.now()
+        if next_due_at is not None:
+            suggestion.failsafe_due_at = next_due_at
+        await self.session.flush()
+
+        # `AlertType.failsafe` already exists and already maps to `warning`; inventing
+        # a `suggestion_unanswered` type would split the same event across two names.
+        await AlertService(self.session, self.clock, self.events).raise_alert(
+            request.operator_id,
+            AlertType.failsafe,
+            request_id=request.id,
+            data={
+                "suggestion_id": str(suggestion.id),
+                "vehicle_id": str(suggestion.vehicle_id),
+                # When it assigns itself if still nobody answers - the one fact a
+                # supervisor reading this alert actually needs.
+                "assigns_at": next_due_at.isoformat() if next_due_at else None,
+            },
+            dedupe=True,
+        )
+        logger.info("suggestion_escalated", suggestion_id=str(suggestion.id))
+
+    async def _timeout_for(self, request: RideRequest) -> timedelta:
+        employee = await self.session.get(Employee, request.employee_id)
+        base = int(await self.config.get(request.operator_id, "failsafe_timeout_seconds"))
+        return timeout_for(
+            base,
+            urgency=Urgency(request.urgency),
+            is_vip=bool(employee.is_vip) if employee is not None else False,
+        )
+
+    async def _supervisor_online(self, operator_id: uuid.UUID) -> bool:
+        """Is anyone watching this operator's board?
+
+        **Always true for now (OQ-37).** `control-model.md` §4 shortcuts the timeout
+        when no supervisor is logged in, and this platform has no presence tracking -
+        the WebSocket hub knows its own connections but keeps nothing shared, so two
+        API processes cannot answer the question between them.
+
+        Answering "yes" is the safe wrong answer: the failsafe waits its full timeout
+        rather than firing at once. Answering "no" by default would auto-assign
+        instantly in every semi-auto scope, which is full-auto wearing semi-auto's name.
+        """
+        del operator_id
+        return True
+
+    async def _open_suggestion(
+        self, operator_id: uuid.UUID, suggestion_id: uuid.UUID
+    ) -> Suggestion:
+        suggestion = (
+            (
+                await self.session.execute(
+                    select(Suggestion)
+                    .where(Suggestion.operator_id == operator_id)
+                    .where(Suggestion.id == suggestion_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if suggestion is None:
+            raise NotFound("Suggestion not found")
+        if suggestion.status != str(SuggestionStatus.offered):
+            raise Conflict(f"This suggestion was already {suggestion.status}")
+        return suggestion
+
+    async def _close(
+        self,
+        suggestion: Suggestion,
+        status: SuggestionStatus,
+        *,
+        by: uuid.UUID | None = None,
+        at: datetime | None = None,
+        note: str | None = None,
+    ) -> None:
+        suggestion.status = str(status)
+        suggestion.decided_at = at
+        suggestion.decided_by = by
+        suggestion.decided_note = note
+        await self.session.flush()
+
+    async def _close_siblings(self, suggestion: Suggestion, status: SuggestionStatus) -> None:
+        """The other ranks for the same request. One answer settles all of them."""
+        siblings = (
+            (
+                await self.session.execute(
+                    select(Suggestion)
+                    .where(Suggestion.request_id == suggestion.request_id)
+                    .where(Suggestion.id != suggestion.id)
+                    .where(Suggestion.status == str(SuggestionStatus.offered))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for sibling in siblings:
+            sibling.status = str(status)
+        await self.session.flush()

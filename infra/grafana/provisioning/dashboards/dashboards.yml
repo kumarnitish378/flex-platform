@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: smartcab
+    orgId: 1
+    folder: Smart Cab
+    type: file
+    disableDeletion: false
+    # The dashboards are files in the repository, not objects edited in the UI: a
+    # dashboard that exists only in Grafana's database is lost with the box.
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

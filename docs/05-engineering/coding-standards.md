@@ -57,10 +57,14 @@ backend/
 
 ### Layout (feature-first)
 ```
-app/lib/
+app/
+  packages/smart_cab_api/   # generated OpenAPI client (do not edit by hand); a separate
+                            # package because dart-dio emits its own pubspec and needs
+                            # build_runner, neither of which can live inside lib/
+lib/
   main.dart
   core/            # config, env, theme, router, api client wiring, auth/session, clock, errors
-  data/api/        # generated OpenAPI client (do not edit by hand)
+  data/api/        # hand-written wrapper over the generated client: auth interceptor, repositories
   data/local/      # drift DB (offline queue), secure storage
   services/        # location_service, mqtt_service, push_service, ws_service
   features/

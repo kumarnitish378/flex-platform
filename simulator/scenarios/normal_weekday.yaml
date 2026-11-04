@@ -1,0 +1,62 @@
+# S02 normal_weekday (scenarios.md): 35 cabs, 300 employees, 2 shifts, a manual_nearest
+# supervisor. The baseline the pilot is measured against, and the scenario M06 exists to
+# make meaningful: one human dispatching one request at a time.
+#
+# Not part of `make sim-quick` - it runs 16 simulated hours and needs a live backend.
+# Run it with:
+#   python -m sim run scenarios/normal_weekday.yaml --platform http://localhost:8000/api/v1
+name: normal_weekday
+version: 1
+seed: 42
+start: "2026-10-05T00:30:00Z"      # 06:00 IST
+duration_hours: 16
+speed_factor: 60                   # an hour a minute, so the backend can keep up
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    alert_wait_minutes: 20
+
+modes:
+  - {mode: manual}
+
+fleet:
+  - {type: sedan_4, count: 25, depot: [28.5355, 77.3910]}
+  - {type: suv_6, count: 8, depot: [28.5355, 77.3910]}
+  - {type: vip, count: 2, depot: [28.5355, 77.3910]}
+
+drivers:
+  shift_start_ist: "06:00"
+  shift_end_ist: "22:00"
+  late_start_p: 0.05
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 300
+      home_zones: [sector_135, sector_168, sector_62]
+      vip_share: 0.01
+      priority_dist: {1: 0.02, 3: 0.08, 5: 0.8, 8: 0.1}
+      shifts:
+        - {start_ist: "09:30", end_ist: "18:30", share: 0.8}
+        - {start_ist: "13:00", end_ist: "22:00", share: 0.2}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+assertions:
+  # From scenarios.md. These are targets for the finished product, not a promise the
+  # Phase 1 manual loop already keeps - one supervisor dispatching by hand is exactly the
+  # bottleneck the later phases automate, and this scenario is how that gets measured.
+  all_requests_terminal: true
+  p90_wait_minutes_max: 30
+  gave_up_max: 6                   # 2% of 300
+  invalid_transitions: 0
+  api_5xx_max: 0

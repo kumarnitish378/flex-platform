@@ -1,16 +1,24 @@
-# S01 smoke_tiny (scenarios.md): 3 cabs, 10 employees, 1 hour.
+# S01 smoke_tiny (scenarios.md): 3 cabs, 10 employees, 2 hours.
 # The CI scenario - it must stay small and fast.
 name: smoke_tiny
 version: 1
 seed: 42
 start: "2026-10-05T00:30:00Z"      # 06:00 IST
-duration_hours: 1
+# Two hours, not one: at the `approx` provider's city speeds a cross-town pickup is a 25-30 minute
+# drive, so with an hour a pooled rider's pickup could land either side of the closing time and
+# the run passed or failed on live timing (about one run in two on CI). Riders still waiting when
+# the window closes are 'unresolved' by design (OQ-29); this scenario must not depend on that edge.
+duration_hours: 2
 speed_factor: 60
 routing: approx                    # ADR-0010 rule 6: never the public OSM servers
 
 operator:
   config_overrides:
     alert_wait_minutes: 20
+    # S01 is one hour long, so an unassigned request must be able to reach a terminal
+    # state inside it. The product default is 120 minutes, which would leave every
+    # request still queued when the run ends.
+    request_expiry_minutes: 30
 
 modes:
   - {mode: manual}
@@ -35,7 +43,11 @@ clients:
       vip_share: 0.0
       priority_dist: {5: 1.0}
       shifts:
-        - {start_ist: "09:30", end_ist: "18:30", share: 1.0}
+        # Chosen so the to_office demand lands inside the one-hour window: requests go
+        # in at shift_start - Normal(45, 10) min, around 06:05 IST here. Early in the
+        # window on purpose: a rider needs time to be assigned, collected and dropped
+        # before the hour is up, or the run can never show a completed ride.
+        - {start_ist: "06:50", end_ist: "15:50", share: 1.0}
 
 supervisor:
   policy: manual_nearest

@@ -1,0 +1,658 @@
+"""Simulator control endpoints (B19, ADR-0008).
+
+Acceptance: 404 in dev; in sim, advancing the clock triggers expiry deterministically.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.clock import FakeClock
+from app.core.settings import Settings
+from app.main import create_app
+from app.modules.auth.models import AppUser
+from app.modules.fleet.models import Driver, Vehicle
+from app.modules.people.models import Employee
+from app.modules.requests.models import RideRequest
+from app.modules.simctl.router import SIM_RUN_KEY
+from app.modules.simctl.service import EMPLOYEE_COUNT, OFFICES, SEED_USERS, VEHICLES, ZONES
+from app.modules.tenancy.models import Office, Operator, Zone
+
+NOW = datetime(2026, 9, 24, 4, 30, tzinfo=UTC)
+JWT_SECRET = "simctl-tests-secret-0123456789abcdefg"
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock(NOW)
+
+
+def sim_settings() -> Settings:
+    return Settings(
+        app_env="sim",
+        simctl_enabled=True,
+        database_url="postgresql+asyncpg://test:test@localhost:5432/test",
+        jwt_secret=JWT_SECRET,
+    )
+
+
+def dev_settings() -> Settings:
+    return Settings(
+        app_env="dev",
+        database_url="postgresql+asyncpg://test:test@localhost:5432/test",
+        jwt_secret=JWT_SECRET,
+    )
+
+
+class _NoClose:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> AsyncSession:
+        return self._session
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+
+def build(settings: Settings, session: AsyncSession, clock: FakeClock) -> FastAPI:
+    app = create_app(settings=settings, clock=clock)
+
+    class _Factory:
+        def __call__(self) -> object:
+            return _NoClose(session)
+
+    app.state.session_factory = _Factory()
+    return app
+
+
+@pytest_asyncio.fixture
+async def sim_client(
+    database_ready: bool, db_session: AsyncSession, clock: FakeClock
+) -> AsyncIterator[AsyncClient]:
+    app = build(sim_settings(), db_session, clock)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test/api/v1") as c:
+        yield c
+
+
+@pytest_asyncio.fixture
+async def dev_client(
+    database_ready: bool, db_session: AsyncSession, clock: FakeClock
+) -> AsyncIterator[AsyncClient]:
+    app = build(dev_settings(), db_session, clock)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test/api/v1") as c:
+        yield c
+
+
+# --- environment gating -----------------------------------------------------------
+
+
+async def test_the_optimizer_switch_is_sim_only_and_reports_what_a_jump_did(
+    sim_client: AsyncClient, dev_client: AsyncClient
+) -> None:
+    """S12 (B36): the optimizer can be killed from outside, and a clock jump says what ran."""
+    assert (await dev_client.put("/simctl/optimizer", json={"available": False})).status_code == 404
+
+    off = await sim_client.put("/simctl/optimizer", json={"available": False})
+    assert off.status_code == 200 and off.json() == {"available": False}
+    jump = (await sim_client.put("/simctl/clock", json={"advance_seconds": 60})).json()
+    assert jump["optimizer_runs"] == 0 and jump["optimizer_failed"] == 0  # nothing queued yet
+    assert (await sim_client.put("/simctl/optimizer", json={"available": True})).json() == {
+        "available": True
+    }
+
+
+async def test_clock_is_404_in_dev(dev_client: AsyncClient) -> None:
+    """B19 acceptance: the endpoints do not exist outside sim."""
+    assert (await dev_client.get("/simctl/clock")).status_code == 404
+    assert (await dev_client.put("/simctl/clock", json={"advance_seconds": 60})).status_code == 404
+
+
+async def test_reset_is_404_in_dev(dev_client: AsyncClient) -> None:
+    assert (await dev_client.post("/simctl/reset", json={})).status_code == 404
+
+
+async def test_the_routes_are_absent_not_merely_guarded() -> None:
+    """A flag can be flipped by accident; an unregistered route cannot."""
+    dev = create_app(settings=dev_settings(), clock=FakeClock(NOW))
+    assert not [p for p in dev.openapi()["paths"] if "simctl" in p]
+
+
+async def test_the_routes_exist_in_sim(sim_client: AsyncClient) -> None:
+    assert (await sim_client.get("/simctl/clock")).status_code == 200
+
+
+# --- the clock ----------------------------------------------------------------------
+
+
+async def test_get_returns_the_current_sim_time(sim_client: AsyncClient) -> None:
+    body = (await sim_client.get("/simctl/clock")).json()
+    assert body["now"].startswith("2026-09-24T04:30")
+
+
+async def test_advance_moves_the_clock(sim_client: AsyncClient, clock: FakeClock) -> None:
+    response = await sim_client.put("/simctl/clock", json={"advance_seconds": 3600})
+    assert response.status_code == 200
+    assert clock.now() == NOW + timedelta(hours=1)
+    assert response.json()["now"].startswith("2026-09-24T05:30")
+
+
+async def test_setting_an_absolute_time(sim_client: AsyncClient, clock: FakeClock) -> None:
+    target = NOW + timedelta(days=1)
+    response = await sim_client.put("/simctl/clock", json={"now": target.isoformat()})
+    assert response.status_code == 200
+    assert clock.now() == target
+
+
+async def test_both_fields_at_once_is_rejected(sim_client: AsyncClient) -> None:
+    response = await sim_client.put(
+        "/simctl/clock", json={"now": NOW.isoformat(), "advance_seconds": 60}
+    )
+    assert response.status_code == 422
+
+
+async def test_neither_field_is_rejected(sim_client: AsyncClient) -> None:
+    assert (await sim_client.put("/simctl/clock", json={})).status_code == 422
+
+
+async def test_negative_advance_is_rejected(sim_client: AsyncClient) -> None:
+    response = await sim_client.put("/simctl/clock", json={"advance_seconds": -60})
+    assert response.status_code == 422
+
+
+async def test_a_naive_time_is_rejected(sim_client: AsyncClient) -> None:
+    response = await sim_client.put("/simctl/clock", json={"now": "2026-09-25T00:00:00"})
+    assert response.status_code == 422
+    assert "timezone" in response.json()["message"]
+
+
+async def test_the_clock_never_runs_backwards_on_advance(
+    sim_client: AsyncClient, clock: FakeClock
+) -> None:
+    await sim_client.put("/simctl/clock", json={"advance_seconds": 60})
+    await sim_client.put("/simctl/clock", json={"advance_seconds": 60})
+    assert clock.now() == NOW + timedelta(minutes=2)
+
+
+# --- due work runs synchronously ------------------------------------------------------
+
+
+async def test_advancing_the_clock_expires_due_requests(
+    sim_client: AsyncClient, db_session: AsyncSession, clock: FakeClock
+) -> None:
+    """B19 acceptance: advancing the clock triggers expiry, deterministically.
+
+    The PUT returns only after the sweep, so the simulator never races a worker.
+    """
+    reset = (await sim_client.post("/simctl/reset", json={})).json()
+
+    from app.domain.enums import Direction, Role, Urgency
+    from app.modules.requests.service import RideRequestService
+
+    rider = next(u for u in reset["users"] if u["role"] == "employee")
+    service = RideRequestService(db_session, clock)
+    await service.create(
+        operator_id=uuid.UUID(reset["operator_id"]),
+        actor_role=Role.employee,
+        actor_user_id=uuid.UUID(rider["user_id"]),
+        direction=Direction.to_office,
+        requested_time=clock.now() + timedelta(hours=1),
+        urgency=Urgency.medium,
+    )
+
+    # request_expiry_minutes defaults to 120.
+    response = await sim_client.put("/simctl/clock", json={"advance_seconds": 121 * 60})
+
+    assert response.status_code == 200
+    assert response.json()["expired"] == 1
+
+    statuses = (await db_session.execute(select(RideRequest.status))).scalars().all()
+    assert statuses == ["expired"]
+
+
+async def test_the_response_reports_near_expiry_alerts(
+    sim_client: AsyncClient, db_session: AsyncSession, clock: FakeClock
+) -> None:
+    reset = (await sim_client.post("/simctl/reset", json={})).json()
+
+    from app.domain.enums import Direction, Role
+    from app.modules.requests.service import RideRequestService
+
+    rider = next(u for u in reset["users"] if u["role"] == "employee")
+    await RideRequestService(db_session, clock).create(
+        operator_id=uuid.UUID(reset["operator_id"]),
+        actor_role=Role.employee,
+        actor_user_id=uuid.UUID(rider["user_id"]),
+        direction=Direction.to_office,
+        requested_time=clock.now() + timedelta(hours=1),
+    )
+
+    body = (await sim_client.put("/simctl/clock", json={"advance_seconds": 110 * 60})).json()
+    assert body["near_expiry_alerts"] == 1
+    assert body["expired"] == 0
+
+
+# --- reset ------------------------------------------------------------------------------
+
+
+async def test_reset_seeds_the_documented_fixture(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """testing-strategy.md section 4: 2 offices, 3 zones, 20 employees, 6 vehicles."""
+    response = await sim_client.post("/simctl/reset", json={})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert len(body["office_ids"]) == len(OFFICES) == 2
+    assert len(body["zone_ids"]) == len(ZONES) == 3
+    assert len(body["employee_ids"]) == EMPLOYEE_COUNT == 20
+    assert len(body["vehicle_ids"]) == len(VEHICLES) == 6
+    assert len(body["driver_ids"]) == 6
+
+    assert await db_session.scalar(select(func.count()).select_from(Employee)) == 20
+    assert await db_session.scalar(select(func.count()).select_from(Vehicle)) == 6
+    assert await db_session.scalar(select(func.count()).select_from(Office)) == 2
+    assert await db_session.scalar(select(func.count()).select_from(Zone)) == 3
+
+
+async def test_reset_returns_a_usable_token_per_role(sim_client: AsyncClient) -> None:
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    roles = {user["role"] for user in body["users"]}
+    assert roles == {"operator_admin", "supervisor", "client_admin", "driver", "employee"}
+
+    # The tokens must actually work, or every agent stalls at start-up.
+    supervisor = next(u for u in body["users"] if u["role"] == "supervisor")
+    me = await sim_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {supervisor['access_token']}"}
+    )
+    assert me.status_code == 200
+    assert me.json()["roles"][0]["role"] == "supervisor"
+
+
+async def test_reset_is_deterministic(sim_client: AsyncClient) -> None:
+    """simulator-spec.md section 13: same inputs, same run - including the ids."""
+    first = (await sim_client.post("/simctl/reset", json={})).json()
+    second = (await sim_client.post("/simctl/reset", json={})).json()
+
+    assert first["operator_id"] == second["operator_id"]
+    assert first["employee_ids"] == second["employee_ids"]
+    assert first["vehicle_ids"] == second["vehicle_ids"]
+
+
+async def test_reset_truncates_previous_data(
+    sim_client: AsyncClient, db_session: AsyncSession, clock: FakeClock
+) -> None:
+    reset = (await sim_client.post("/simctl/reset", json={})).json()
+
+    from app.domain.enums import Direction, Role
+    from app.modules.requests.service import RideRequestService
+
+    rider = next(u for u in reset["users"] if u["role"] == "employee")
+    await RideRequestService(db_session, clock).create(
+        operator_id=uuid.UUID(reset["operator_id"]),
+        actor_role=Role.employee,
+        actor_user_id=uuid.UUID(rider["user_id"]),
+        direction=Direction.to_office,
+        requested_time=clock.now() + timedelta(hours=1),
+    )
+    assert await db_session.scalar(select(func.count()).select_from(RideRequest)) == 1
+
+    await sim_client.post("/simctl/reset", json={})
+    assert await db_session.scalar(select(func.count()).select_from(RideRequest)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(Operator)) == 1
+
+
+async def test_reset_can_set_the_start_time(sim_client: AsyncClient, clock: FakeClock) -> None:
+    start = datetime(2026, 10, 5, 0, 30, tzinfo=UTC)
+    body = (await sim_client.post("/simctl/reset", json={"start_time": start.isoformat()})).json()
+    assert clock.now() == start
+    assert body["now"].startswith("2026-10-05T00:30")
+
+
+async def test_scenario_yaml_is_refused_rather_than_ignored(
+    sim_client: AsyncClient,
+) -> None:
+    """Half-honouring the field would be worse than not accepting it."""
+    response = await sim_client.post("/simctl/reset", json={"scenario_yaml": "name: x"})
+    assert response.status_code == 422
+    assert "not supported yet" in response.json()["message"]
+
+
+async def test_the_fixture_has_one_vip_vehicle_and_one_vip_employee(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """S07 (vip_burst) needs both to exist."""
+    await sim_client.post("/simctl/reset", json={})
+    vehicles = (await db_session.execute(select(Vehicle))).scalars().all()
+    employees = (await db_session.execute(select(Employee))).scalars().all()
+    assert sum(1 for v in vehicles if v.vehicle_type == "vip") == 1
+    assert sum(1 for e in employees if e.is_vip) == 1
+
+
+async def test_the_seeded_rider_is_linked_to_an_employee(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Without the link the rider agent cannot create a request."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    rider = next(u for u in body["users"] if u["role"] == "employee")
+
+    employee = (
+        (
+            await db_session.execute(
+                select(Employee).where(Employee.user_id == uuid.UUID(rider["user_id"]))
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    assert employee is not None
+
+
+async def test_the_seeded_driver_is_linked_to_a_driver_record(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    seeded = next(u for u in body["users"] if u["role"] == "driver")
+    driver = (
+        (
+            await db_session.execute(
+                select(Driver).where(Driver.user_id == uuid.UUID(seeded["user_id"]))
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    assert driver is not None
+    assert driver.default_vehicle_id is not None
+
+
+async def test_every_seeded_user_exists(sim_client: AsyncClient, db_session: AsyncSession) -> None:
+    """One login per role, plus one per cab and one per employee beyond the first of each.
+
+    The extras exist because a driver may hold only one open duty session (B11) and a
+    rider may only create requests for themselves (B09), so simulated agents cannot share
+    an account (M04, M05).
+    """
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+
+    extra_drivers = len(body["vehicle_ids"]) - 1
+    extra_employees = len(body["employee_ids"]) - 1
+    expected = len(SEED_USERS) + extra_drivers + extra_employees
+
+    assert await db_session.scalar(select(func.count()).select_from(AppUser)) == expected
+    assert len(body["users"]) == expected
+
+
+async def test_every_employee_has_their_own_login(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Each rider agent creates its own requests, so each needs its own account."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+
+    riders = [user for user in body["users"] if user["role"] == "employee"]
+    assert len(riders) == len(body["employee_ids"])
+    assert len({user["user_id"] for user in riders}) == len(riders)
+
+
+async def test_every_cab_has_its_own_driver_login(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A fleet sharing one account cannot all go on duty."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+
+    drivers = [user for user in body["users"] if user["role"] == "driver"]
+    assert len(drivers) == len(body["vehicle_ids"])
+    assert len({user["access_token"] for user in drivers}) == len(drivers)
+
+
+async def test_reset_truncates_every_tenant_table(sim_client: AsyncClient) -> None:
+    """A table missing from `TRUNCATION_ORDER` breaks the *second* reset, not the first.
+
+    That is a miserable bug to meet: the first run is clean, the next one dies on a
+    foreign key. This walks the metadata instead of trusting the list to stay current.
+    """
+    import app.models  # noqa: F401
+    from app.core.db import Base
+    from app.core.models import TenantEntity
+    from app.modules.simctl.service import TRUNCATION_ORDER
+
+    listed = {model.__tablename__ for model in TRUNCATION_ORDER}
+    tenant_tables = {
+        mapper.class_.__tablename__
+        for mapper in Base.registry.mappers
+        if issubclass(mapper.class_, TenantEntity)
+    }
+
+    missing = tenant_tables - listed
+    assert missing == set(), f"reset would leave rows behind in: {sorted(missing)}"
+
+
+async def test_reset_twice_in_a_row_works(sim_client: AsyncClient) -> None:
+    """The simulator resets before every run, so this is the common path, not an edge."""
+    assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
+    assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
+
+
+async def test_seeded_tokens_outlive_the_longest_scenario(
+    sim_client: AsyncClient, clock: FakeClock
+) -> None:
+    """A 12-hour TTL silently 401'd every agent through the back third of a 16-hour run.
+
+    `duration_hours` is capped at 14 days by the scenario format, so the tokens must
+    cover that. Only safe because /simctl/* cannot exist outside APP_ENV=sim.
+    """
+    from app.modules.simctl.service import SIM_TOKEN_TTL_SECONDS
+
+    assert SIM_TOKEN_TTL_SECONDS >= 14 * 24 * 3600
+
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    token = next(user["access_token"] for user in body["users"] if user["role"] == "supervisor")
+
+    # Two weeks of simulated time later, the token still works.
+    clock.advance(timedelta(days=14))
+    response = await sim_client.get(
+        "/dispatch/requests", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+
+
+# --- one run at a time (M08) -------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def unclaimed(sim_client: AsyncClient) -> AsyncIterator[None]:
+    """Leave no claim behind.
+
+    The claim lives in the shared Redis with a two-hour TTL, so a test that sets one and
+    walks away blocks every real scenario run on the machine until it expires. It did.
+    """
+    await _clear_claim(sim_client)
+    yield
+    await _clear_claim(sim_client)
+
+
+async def _clear_claim(client: AsyncClient) -> None:
+    redis = getattr(client._transport.app.state, "redis", None)  # type: ignore[attr-defined]
+    if redis is not None:
+        await redis.delete(SIM_RUN_KEY)
+
+
+async def test_a_second_run_cannot_reset_the_backend(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """A reset truncates everything, so a concurrent run would destroy the first's world.
+
+    Before this, the first run failed much later with an error that said nothing about
+    the real cause - three long scenario runs were lost that way.
+    """
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-a"})).status_code == 200
+
+    response = await sim_client.post("/simctl/reset", json={"run_id": "run-b"})
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["details"]["owner"] == "run-a"
+    assert "destroy" in body["message"]
+
+
+async def test_the_same_run_can_reset_again(sim_client: AsyncClient, unclaimed: None) -> None:
+    """A suite runs several scenarios back to back under one claim."""
+    for _ in range(2):
+        response = await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+        assert response.status_code == 200
+
+
+async def test_a_claim_can_be_taken_over_deliberately(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """For a claim left behind by a run that crashed."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    response = await sim_client.post("/simctl/reset", json={"run_id": "run-b", "force": True})
+
+    assert response.status_code == 200
+
+
+async def test_a_reset_without_a_run_id_is_unaffected(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """Existing callers - and the test suite itself - never claim anything."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    assert (await sim_client.post("/simctl/reset", json={})).status_code == 200
+
+
+# --- the world a scenario actually asked for (S07) ---------------------------
+
+
+async def test_the_fleet_composition_is_honoured(sim_client: AsyncClient) -> None:
+    """Only the vehicle *count* used to be honoured; the mix came from the fixture.
+
+    A scenario asking for two VIP cars silently got one, so a VIP scenario could run
+    green while testing nothing it claimed to.
+    """
+    body = (
+        await sim_client.post(
+            "/simctl/reset",
+            json={"fleet": [{"type": "vip", "count": 2}, {"type": "sedan_4", "count": 6}]},
+        )
+    ).json()
+
+    assert len(body["vehicle_ids"]) == 8
+    assert len(body["vip_vehicle_ids"]) == 2
+
+
+async def test_seat_counts_follow_the_vehicle_type(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Pooling capacity depends on seats, so the type has to bring its own."""
+    await sim_client.post("/simctl/reset", json={"fleet": [{"type": "suv_6", "count": 2}]})
+
+    seats = (await db_session.execute(select(Vehicle.seat_capacity))).scalars().all()
+
+    assert set(seats) == {6}
+
+
+async def test_a_scenario_can_ask_for_several_vips(sim_client: AsyncClient) -> None:
+    body = (
+        await sim_client.post("/simctl/reset", json={"employees": 20, "vip_employees": 5})
+    ).json()
+
+    assert len(body["vip_employee_ids"]) == 5
+    assert set(body["vip_employee_ids"]) <= set(body["employee_ids"])
+
+
+async def test_one_vip_by_default(sim_client: AsyncClient) -> None:
+    """The historic fixture, unchanged for every scenario that does not ask."""
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    assert len(body["vip_employee_ids"]) == 1
+
+
+async def test_more_vips_than_employees_is_clamped(sim_client: AsyncClient) -> None:
+    body = (
+        await sim_client.post("/simctl/reset", json={"employees": 3, "vip_employees": 10})
+    ).json()
+    assert len(body["vip_employee_ids"]) == 3
+
+
+async def test_a_scenario_can_flag_riders_for_a_night_escort(
+    sim_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """S11 (M12): the night-safety rule needs riders it applies to."""
+    from app.modules.people.models import Employee
+
+    body = (
+        await sim_client.post(
+            "/simctl/reset",
+            json={"employees": 20, "vip_employees": 2, "night_escort_employees": 6},
+        )
+    ).json()
+
+    flagged = set(body["night_escort_employee_ids"])
+    assert len(flagged) == 6
+    assert not flagged & set(body["vip_employee_ids"]), "a flagged VIP would test nothing"
+    stored = (
+        (await db_session.execute(select(Employee.id).where(Employee.night_escort_required)))
+        .scalars()
+        .all()
+    )
+    assert {str(v) for v in stored} == flagged
+
+
+async def test_nobody_is_flagged_for_an_escort_unless_asked(sim_client: AsyncClient) -> None:
+    body = (await sim_client.post("/simctl/reset", json={})).json()
+    assert body["night_escort_employee_ids"] == []
+
+
+# --- releasing the claim -----------------------------------------------------
+
+
+async def test_a_finished_run_frees_the_backend(sim_client: AsyncClient, unclaimed: None) -> None:
+    """Otherwise the next run - often the same person seconds later - waits out the TTL."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    released = await sim_client.post("/simctl/release", json={"run_id": "run-a"})
+
+    assert released.json() == {"released": True}
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 200
+
+
+async def test_only_the_holder_may_release(sim_client: AsyncClient, unclaimed: None) -> None:
+    """Otherwise a crashed run's successor could free a claim a live run relies on."""
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    released = await sim_client.post("/simctl/release", json={"run_id": "someone-else"})
+
+    assert released.json() == {"released": False}
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 409
+
+
+async def test_a_claim_never_overwrites_a_live_owner(
+    sim_client: AsyncClient, unclaimed: None
+) -> None:
+    """The invariant a read-then-write claim broke.
+
+    GET-then-SET let a second run read "no owner", then write its own id over one that
+    had been set in between - so two suites both believed they held the backend and
+    raced each other over it. `SET NX` makes the check and the write one operation.
+    """
+    await sim_client.post("/simctl/reset", json={"run_id": "run-a"})
+
+    refused = await sim_client.post("/simctl/reset", json={"run_id": "run-b"})
+    assert refused.status_code == 409
+
+    # The loser must not have stolen the key on its way out: the original owner still
+    # holds it, and can still work.
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-a"})).status_code == 200
+    assert (await sim_client.post("/simctl/reset", json={"run_id": "run-b"})).status_code == 409

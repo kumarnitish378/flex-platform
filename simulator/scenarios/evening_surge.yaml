@@ -1,0 +1,74 @@
+# S03 evening_surge (scenarios.md): 150 drop requests inside 20 minutes.
+#
+# The end of a shift, when everyone wants to leave at once. Where S02 spreads a day's
+# demand across sixteen hours, this compresses a third of it into twenty minutes, which
+# is the shape that actually breaks a manual dispatch loop: one supervisor at one request
+# at a time cannot clear a queue that arrives faster than they can work it.
+#
+# Not part of `make sim-quick` - it needs a live backend and 200 seeded employees.
+name: evening_surge
+version: 1
+seed: 42
+start: "2026-10-05T11:00:00Z"      # 16:30 IST
+duration_hours: 6
+speed_factor: 60
+routing: approx                    # ADR-0010 rule 6: never the public OSM servers
+
+operator:
+  config_overrides:
+    # "alerts raised for > 20 min waits" is S03's own bar, so the threshold has to match
+    # the assertion rather than sit at the product default.
+    alert_wait_minutes: 20
+    # The surge lands at 18:00 and the run ends at 22:30 IST. At the 120-minute product
+    # default a request made late in the surge is still queued when the run stops, so
+    # `all_requests_terminal` could never pass - the scenario would be asserting
+    # something its own window makes impossible rather than measuring the queue.
+    request_expiry_minutes: 60
+
+modes:
+  - {mode: manual}
+
+fleet:
+  - {type: sedan_4, count: 20, depot: [28.5703, 77.3218]}
+  - {type: suv_6, count: 10, depot: [28.5703, 77.3218]}
+
+drivers:
+  shift_start_ist: "16:30"
+  shift_end_ist: "23:00"
+  late_start_p: 0.0
+
+clients:
+  - name: Client A
+    office:
+      name: B200
+      location: [28.5703, 77.3218]
+    employees:
+      count: 200
+      home_zones: [sector_135, sector_168, sector_62]
+      vip_share: 0.0
+      priority_dist: {5: 1.0}
+      shifts:
+        # Everyone finishes together. The ordinary from_office demand already clusters
+        # here; the surge below piles the rest of the floor on top of it.
+        - {start_ist: "09:00", end_ist: "18:00", share: 1.0}
+
+supervisor:
+  policy: manual_nearest
+  reaction_delay_s: [20, 120]
+
+traffic:
+  profile: ncr_default
+
+events:
+  # 150 people heading home inside the same window. `count` rather than a multiplier:
+  # scenarios.md states an absolute number and the whole point is the absolute rate.
+  - {at_ist: "18:00", type: demand_surge, count: 150, direction: from_office}
+
+assertions:
+  # "No request expires" is the sharp one: an expiry here means the queue never drained.
+  # The supervisor queue being visible and the alerts firing are checked by the backend's
+  # own tests (B14, B17); asserting them from the simulator would need the assertion
+  # vocabulary to reach into alerts, which it does not yet (see M08 notes).
+  all_requests_terminal: true
+  invalid_transitions: 0
+  api_5xx_max: 0

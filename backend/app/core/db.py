@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from app.core.settings import Settings
 
@@ -23,7 +24,17 @@ class Base(DeclarativeBase):
     """Declarative base for every SQLAlchemy model in the project."""
 
 
-def create_engine(settings: Settings) -> AsyncEngine:
+def create_engine(settings: Settings, *, pooled: bool = True) -> AsyncEngine:
+    """The async engine.
+
+    `pooled=False` is for a process that runs each unit of work in a **fresh event loop**
+    (the Celery worker: `asyncio.run` per sweep). asyncpg connections belong to the loop that
+    opened them, so a pool would hand the next sweep a connection from a closed loop ("Event
+    loop is closed") and leak the old one until Postgres ran out of clients. With no pool every
+    connection is opened and closed inside the sweep that uses it.
+    """
+    if not pooled:
+        return create_async_engine(settings.database_url, echo=False, poolclass=NullPool)
     return create_async_engine(
         settings.database_url,
         echo=False,
