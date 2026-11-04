@@ -78,6 +78,12 @@ cd app && flutter test
 ```
 If a command in this list does not exist yet, creating it is part of the task that needs it.
 
+## Working branch
+All new work goes on **`dev/phase-4`** (cut from `main` after PR #2 was squash-merged). Do not commit to `dev/overnight-1`
+any more: its history was squashed into `main`, and continuing on it brings back false conflicts at the next PR.
+Open each pull request from `dev/phase-4` into `main`. Before switching branches, check `git status` is clean: the
+other agent may have uncommitted work in this same folder.
+
 ## How to work on a task
 1. Pick one task from `docs/06-phases/phase-1-tasks.md`. Do only that task.
 2. Read the docs listed in the task.
