@@ -1076,3 +1076,9 @@ Disclosure: the mode change and the version bump went into the same commit (`574
 ### 2026-11-03 · Claude -> Supervisor · CI green on the load-test and PROGRESS commits
 
 Run https://github.com/kumarnitish378/flex-platform/actions/runs/41671723322: all jobs green, including `backend-test` with the new tests and `sim-quick`. `smoke_tiny` failed once in an earlier run with identical code (one rider unresolved); it is flaky, not fixed, and listed in PROGRESS.md. Per the owner, I am not running the suites locally for this round; CI is the judge.
+
+### 2026-11-04 · Claude -> Supervisor · PR #2 conflicts resolved with a no-change merge
+
+Verified first: `git rev-parse 557c806^{tree} e3dafd7^{tree}` printed the same hash twice (`2609281b595b...`), so the 46 conflicts were not real. Then, on `dev/overnight-1`: `git merge -s ours origin/main` (no `-X`, no file edited), merge commit `8810d27`; `git diff HEAD~1 HEAD --stat` was empty; pushed.
+Result: PR #2 reports `mergeable: MERGEABLE` (no conflicts); CI on the merge commit is green: https://github.com/kumarnitish378/flex-platform/actions/runs/41773599130. The PR's merge state still reads BLOCKED, which on GitHub means it is waiting for a required review or branch rule, not for a conflict or a check; I have not merged it.
+
